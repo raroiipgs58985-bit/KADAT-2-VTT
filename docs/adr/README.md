@@ -17,5 +17,7 @@ ADR (Architecture Decision Records) — записи об архитектурн
 следует сохранять его историю и указывать связь с заменяющей записью.
 
 Направление Phase 0.1 описано в [architecture.md](../architecture.md).
-На этапе Phase 0.2 создано только это описание назначения ADR; отдельных
-записей ADR пока нет.
+
+## Индекс
+
+- [0001 — ESM module format](0001-esm-module-format.md) — Accepted.
