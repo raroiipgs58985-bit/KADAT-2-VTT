@@ -301,7 +301,7 @@ test('simultaneous equal LV uses opposed Check Engine; higher degrees first', ()
   ).toEqual([2, 4, 1, 1]);
 });
 
-test('equal opposed results stay pending without inventing another tie-break', () => {
+test('equal opposed results resolve through the author-confirmed injected tie-break', () => {
   const state = deepFreeze(twoOverwatchActors());
   const result = resolveOverwatchInterrupts(
     state,
@@ -314,12 +314,21 @@ test('equal opposed results stay pending without inventing another tie-break', (
         context: action('ow:C', 'ranged-attack', 'C').context,
       }),
     ],
-    dice({ sides: 100, value: 40 }, { sides: 100, value: 40 }),
+    dice(
+      { sides: 100, value: 40 },
+      { sides: 100, value: 40 },
+      { sides: 2, value: 1 },
+      { sides: 100, value: 41 },
+      { sides: 100, value: 41 },
+    ),
   );
-  expect(result.status).toBe('pending-opposed-tie');
-  expect(result.state).toBe(state);
-  expect(result.attacks).toEqual([]);
-  expect(result.tiedActors).toEqual([['A', 'C']]);
+  expect(result.status).toBe('resolved');
+  expect(result.attacks.map((attack) => attack.execution.actor.actorId)).toEqual(['A', 'C']);
+  expect(result.orderingDecisions[0]).toMatchObject({
+    orderingResolution: 'RANDOM_TIEBREAK',
+    winnerActorId: 'A',
+  });
+  expect(result.tiedActors).toEqual([]);
 });
 
 test('Overwatch trigger must match the sector and chosen condition', () => {

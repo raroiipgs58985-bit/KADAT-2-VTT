@@ -3,6 +3,9 @@ import type {
   ActionResolution,
   CombatActionState,
   DiceSource,
+  DiceRoll,
+  OverwatchOrderingDecision,
+  OverwatchSkippedAttack,
   OverwatchState,
   RangedAttackRequest,
   ResolutionContext,
@@ -16,6 +19,8 @@ import { resolveCheck } from './checks.js';
 import { prepareRangedAttack, resolveRangedAttack, type OverwatchEvent } from './ranged.js';
 import { validateAmmunition } from './weapons.js';
 import { uniqueIds } from './validation.js';
+import { rollDie } from './dice.js';
+import { sessionLog } from './log.js';
 
 export interface OverwatchActivationRequest extends ActionRequest {
   readonly type: 'overwatch';
@@ -139,7 +144,26 @@ export function orderOverwatchInterrupts(
     };
   });
   const logs = entries.map((entry) => entry.characteristic.log);
-  const tiedActors: string[][] = [];
+  const decisions: OverwatchOrderingDecision[] = [];
+  const overrides = entries.flatMap((entry) => entry.context.overwatchOrderingOverrides ?? []);
+  uniqueIds(
+    overrides.map((override) => override.id),
+    'Overwatch ordering override IDs',
+  );
+  for (const override of overrides) {
+    uniqueIds(override.participatingActorIds, 'Overwatch ordering override actors');
+    if (
+      override.participatingActorIds.length < 2 ||
+      !override.participatingActorIds.includes(override.winnerActorId) ||
+      !override.participatingActorIds.every((id) =>
+        entries.some((entry) => entry.request.actor.actorId === id),
+      ) ||
+      !override.reason.trim() ||
+      !override.provenance.source.id.trim()
+    )
+      throw new Error('Invalid Overwatch ordering override');
+  }
+  const usedOverrides = new Set<string>();
   const values = [...new Set(entries.map((entry) => entry.characteristic.result.finalValue))].sort(
     (a, b) => b - a,
   );
@@ -164,13 +188,88 @@ export function orderOverwatchInterrupts(
       const results = [...new Set(group.map((entry) => entry.opposed?.result.totalDegrees))];
       for (const result of results) {
         const unresolved = group.filter((entry) => entry.opposed?.result.totalDegrees === result);
-        if (unresolved.length > 1)
-          tiedActors.push(unresolved.map((entry) => entry.request.actor.actorId));
+        if (unresolved.length > 1) {
+          const ids = unresolved.map((entry) => entry.request.actor.actorId);
+          const matching = overrides.filter(
+            (override) =>
+              override.participatingActorIds.length === ids.length &&
+              ids.every((id) => override.participatingActorIds.includes(id)),
+          );
+          if (matching.length > 1) throw new Error('Conflicting Overwatch ordering overrides');
+          const override = matching[0];
+          const remaining = [...unresolved];
+          const resolved: typeof unresolved = [];
+          const rolls: DiceRoll[] = [];
+          if (override) {
+            usedOverrides.add(override.id);
+            const index = remaining.findIndex(
+              (entry) => entry.request.actor.actorId === override.winnerActorId,
+            );
+            const winner = remaining.splice(index, 1)[0];
+            if (!winner) throw new Error('Invalid Overwatch ordering winner');
+            resolved.push(winner);
+          }
+          while (remaining.length > 1) {
+            // For a pair: injected d2 = 1 selects the first candidate, 2 the second (50/50).
+            const roll = rollDie(remaining.length, source);
+            rolls.push(roll);
+            const winner = remaining.splice(roll.value - 1, 1)[0];
+            if (!winner) throw new Error('Missing Overwatch ordering candidate');
+            resolved.push(winner);
+          }
+          resolved.push(...remaining);
+          const first = resolved[0];
+          if (!first) throw new Error('Missing Overwatch ordering winner');
+          const decision: OverwatchOrderingDecision = {
+            participants: unresolved.map((entry) => {
+              if (!entry.opposed) throw new Error('Missing opposed LV result');
+              return {
+                actorId: entry.request.actor.actorId,
+                lv: value,
+                opposed: entry.opposed.result,
+              };
+            }),
+            completeTie: true,
+            orderingResolution: override ? 'GM_OVERRIDE' : 'RANDOM_TIEBREAK',
+            winnerActorId: first.request.actor.actorId,
+            orderedActorIds: resolved.map((entry) => entry.request.actor.actorId),
+            provenance: {
+              source: { kind: 'user-ruling', id: 'Phase 2.2B-1.1 Overwatch tie-break' },
+              reason: 'Complete opposed LV tie: GM choice before injected random fallback',
+            },
+            ...(rolls.length
+              ? {
+                  random: {
+                    rolls,
+                    provenance: {
+                      source: { kind: 'injected-rng', id: 'Overwatch ordering DiceSource' },
+                      reason: 'Uniform selection from the remaining tied actors',
+                    },
+                  },
+                }
+              : {}),
+            ...(override ? { override } : {}),
+          };
+          decisions.push(decision);
+          logs.push(
+            sessionLog('overwatch-ordering', state.session, {
+              combatSessionId: state.session.id,
+              actors: ids.map((actorId) => ({ actorId })),
+              beforeActionId: event.actionId,
+              dice: rolls,
+              overwatchOrdering: decision,
+            }),
+          );
+          const start = group.indexOf(unresolved[0]!);
+          group.splice(start, unresolved.length, ...resolved);
+        }
       }
     }
     ordered.push(...group.map((entry) => entry.request));
   }
-  return { ordered, tiedActors, logs };
+  if (overrides.some((override) => !usedOverrides.has(override.id)))
+    throw new Error('Ordering override requires a complete opposed LV tie');
+  return { ordered, tiedActors: [], decisions, logs };
 }
 
 /** The triggering action stays uncommitted until all interruptions have resolved. */
@@ -182,20 +281,27 @@ export function resolveOverwatchInterrupts(
   orderingContexts: Readonly<Record<string, ResolutionContext>> = {},
 ) {
   const ordered = orderOverwatchInterrupts(state, event, requests, source, orderingContexts);
-  if (ordered.tiedActors.length > 0) {
-    return {
-      status: 'pending-opposed-tie' as const,
-      state,
-      attacks: [],
-      logs: ordered.logs,
-      tiedActors: ordered.tiedActors,
-      timeline: [],
-    };
-  }
   let next = state;
   const attacks = [] as ReturnType<typeof resolveRangedAttack>[];
   const logs = [...ordered.logs];
+  const skippedAttacks: OverwatchSkippedAttack[] = [];
   for (const request of ordered.ordered) {
+    // Earlier attacks can change resource/condition legality. Never commit a now-invalid request.
+    try {
+      prepareRangedAttack(next, request, event);
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      const skipped = { actionId: request.id, actor: request.actor, reason: error.message };
+      skippedAttacks.push(skipped);
+      logs.push(
+        sessionLog('overwatch-skipped', next.session, {
+          combatSessionId: next.session.id,
+          beforeActionId: event.actionId,
+          overwatchSkipped: skipped,
+        }),
+      );
+      continue;
+    }
     const attack = resolveRangedAttack(next, request, source, event);
     next = attack.state;
     attacks.push(attack);
@@ -206,6 +312,8 @@ export function resolveOverwatchInterrupts(
     state: next,
     attacks,
     logs,
+    orderingDecisions: ordered.decisions,
+    skippedAttacks,
     tiedActors: [],
     timeline: [
       ...attacks.map((attack) => ({ type: 'overwatch' as const, actionId: attack.execution.id })),

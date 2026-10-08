@@ -1,5 +1,6 @@
 import type { CharacteristicId } from './characteristics.js';
 import type { ActorReference, Provenance, SourceReference } from './identity.js';
+import type { OverwatchOrderingOverride } from './overwatch.js';
 
 export type EffectStage = 'permanent' | 'implant' | 'equipment' | 'temporary';
 
@@ -76,6 +77,7 @@ export interface ResolutionContext {
   readonly effects: readonly EffectInstance[];
   readonly modifiers: readonly ResolutionModifier[];
   readonly overrides: readonly ResolutionOverride[];
+  readonly overwatchOrderingOverrides?: readonly OverwatchOrderingOverride[];
 }
 
 export interface ResolutionTrace {

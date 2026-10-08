@@ -3,6 +3,7 @@ import type { ActorReference } from './identity.js';
 import type { ResolutionOverride, ResolutionTrace } from './resolution.js';
 import type { ActionExecution } from './actions.js';
 import type { RangedAttackResult } from './ranged.js';
+import type { OverwatchOrderingDecision, OverwatchSkippedAttack } from './overwatch.js';
 
 export interface StateMutation {
   readonly type: string;
@@ -35,6 +36,8 @@ export interface CombatLogEntry {
   readonly action?: ActionExecution;
   readonly ranged?: RangedAttackResult;
   readonly beforeActionId?: string;
+  readonly overwatchOrdering?: OverwatchOrderingDecision;
+  readonly overwatchSkipped?: OverwatchSkippedAttack;
 }
 
 export interface LoggedResult<T> {
