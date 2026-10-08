@@ -66,3 +66,8 @@ Realtime не реализован. Renderer и база данных не вы�
 [canonical-data.md](canonical-data.md), система версий и миграций — в
 [versioning.md](versioning.md). Решение Phase 2.1 закреплено в
 [ADR 0002](adr/0002-canonical-data-versioning.md).
+
+Фактическое расширение общих пакетов описано в
+[Infantry Rules Kernel — Phase 2.2A](infantry-combat-kernel.md) и
+[Infantry Ranged Actions — Phase 2.2B-1](infantry-ranged-actions.md).
+Стек и границы Client / Server / Rules Engine сохранены.

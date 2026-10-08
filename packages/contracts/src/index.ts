@@ -5,3 +5,6 @@ export type * from './dice.js';
 export type * from './checks.js';
 export type * from './combat.js';
 export type * from './log.js';
+export type * from './actions.js';
+export type * from './weapons.js';
+export type * from './ranged.js';

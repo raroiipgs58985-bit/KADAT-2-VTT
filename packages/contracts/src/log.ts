@@ -1,6 +1,8 @@
 import type { DamageRoll, DiceRoll } from './dice.js';
 import type { ActorReference } from './identity.js';
 import type { ResolutionOverride, ResolutionTrace } from './resolution.js';
+import type { ActionExecution } from './actions.js';
+import type { RangedAttackResult } from './ranged.js';
 
 export interface StateMutation {
   readonly type: string;
@@ -29,6 +31,10 @@ export interface CombatLogEntry {
   };
   readonly mutations: readonly StateMutation[];
   readonly damage?: DamageRoll;
+  readonly combatSessionId?: string;
+  readonly action?: ActionExecution;
+  readonly ranged?: RangedAttackResult;
+  readonly beforeActionId?: string;
 }
 
 export interface LoggedResult<T> {

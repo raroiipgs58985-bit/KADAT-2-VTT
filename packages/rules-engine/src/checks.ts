@@ -27,8 +27,9 @@ export function resolveCheck(request: CheckRequest, source: DiceSource): LoggedR
   const criticalBand = roll.value <= 5 ? 'success' : roll.value >= 96 ? 'failure' : 'none';
   const success =
     criticalBand === 'success' || (criticalBand !== 'failure' && roll.value <= target);
-  const baseDegrees = success ? 1 + Math.floor((target - roll.value) / 10) : 0;
-  const superDegrees = success ? Math.ceil(request.finalSuper / 2) : 0;
+  const rescued = criticalBand === 'success' && roll.value > target;
+  const baseDegrees = rescued ? 1 : success ? 1 + Math.floor((target - roll.value) / 10) : 0;
+  const superDegrees = success && !rescued ? Math.ceil(request.finalSuper / 2) : 0;
   const result: CheckResult = {
     rawRoll: roll.value,
     baseValue: request.baseValue,

@@ -35,11 +35,14 @@ ResolutionContext содержит потенциальные effects, modifiers
 Check Engine принимает уже разрешённое базовое значение и Super;
 он не знает оружия, режимов огня или приёмов. Target не ограничен 100.
 Критические диапазоны определяют outcome независимо от сравнения с target.
-Формулы степеней используют полный target без добавленного clamping:
-успех `1 + floor((target - roll) / 10)`, провал симметрично
-`1 + floor((roll - target) / 10)`. У критического outcome при необычном
-target арифметическое значение может быть знаковым; ядро не придумывает
-исключение или минимальное число степеней. Super добавляется только при успехе.
+Формулы степеней используют полный target: обычный успех
+`1 + floor((target - roll) / 10)`, провал симметрично
+`1 + floor((roll - target) / 10)`. Дополнение Phase 2.2B-1 из согласованной
+`KADAT_2_INFANTRY_COMBAT_CORE_v0.1_SPEC_B1_RESOLVED.md`: если 01–05 спасает
+проверку при `roll > target`, результат строго `baseDegrees = 1`,
+`superDegrees = 0`, `totalDegrees = 1`, включая отрицательный target.
+При обычном успешном сравнении Super добавляется как прежде.
+Формула провала и диапазон 96–100 не изменены.
 
 ## Dice и damage
 
@@ -79,6 +82,8 @@ Effect data. Число бонуса атак против Stunned не выду
 GM overrides, неизменность исходных данных и invalid transitions.
 Typecheck отдельно проверяет source и test без включения тестов в dist.
 
-Ranged/Melee Attack Resolver, protection, consequences, injuries/wounds,
-ammunition, bleeding, Psykana и другие модули полного Core не реализованы.
+В Phase 2.2A ranged attacks и ammunition были отложены; их реализация
+Phase 2.2B-1 описана в [infantry-ranged-actions.md](infantry-ranged-actions.md).
+Melee, protection, consequences, injuries/wounds, bleeding, Psykana
+и другие модули полного Core не реализованы.
 UI, importer, новые canonical datasets, persistence и networking не добавлены.

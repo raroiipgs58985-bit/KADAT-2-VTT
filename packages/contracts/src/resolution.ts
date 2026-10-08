@@ -10,7 +10,7 @@ export type EffectTarget =
       readonly field: 'value' | 'super';
     }
   | { readonly kind: 'check' }
-  | { readonly kind: 'permission'; readonly permission: 'action' | 'reaction' }
+  | { readonly kind: 'permission'; readonly permission: 'action' | 'reaction' | 'dodge' | 'attack' }
   | { readonly kind: 'combat-modifier'; readonly key: string };
 
 export interface EffectCondition {
@@ -53,12 +53,14 @@ export interface ResolutionModifier {
   readonly source: SourceReference;
   readonly provenance: Provenance;
   readonly condition?: EffectCondition;
+  readonly tags?: readonly string[];
 }
 
 export type ResolutionOverride = {
   readonly subject: 'effect' | 'modifier';
   readonly id: string;
   readonly reason: string;
+  readonly origin?: 'gm' | 'canonical';
 } & (
   | { readonly operation: 'INCLUDE' | 'EXCLUDE' }
   | { readonly operation: 'MODIFY'; readonly value: number }
