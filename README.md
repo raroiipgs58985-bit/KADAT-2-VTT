@@ -6,12 +6,13 @@ KADAT 2 — разрабатываемая браузерная платформ
 
 ## Статус
 
-**Early development / project skeleton — Phase 1.0.**
+**Early development / infantry rules kernel — Phase 2.2A.**
 
 Создан минимальный TypeScript workspace: техническая стартовая страница
-клиента, сервер с `GET /health` и два пустых независимых пакета. Игровая
-механика и игровые подсистемы не реализованы. Realtime, renderer, база данных,
-аутентификация и CI не подключены.
+клиента и сервер с `GET /health`. В общих пакетах реализован deterministic
+rules kernel: характеристики, проверки, броски, инициатива, раунды и Stunned.
+Полный бой, защита, ранения и игровой интерфейс ещё не реализованы.
+Realtime, renderer, база данных, аутентификация и CI не подключены.
 
 ## Основные принципы
 
@@ -43,14 +44,15 @@ apps/
   client/          React + TypeScript + Vite bootstrap
   server/          Fastify bootstrap и health endpoint
 packages/
-  contracts/       пустая граница TypeScript пакета
-  rules-engine/    пустая граница TypeScript пакета
+  contracts/       независимые domain contracts kernel
+  rules-engine/    deterministic resolvers и unit tests
 docs/              документация проекта
 ```
 
-Оба общих пакета пока экспортируют только пустой модуль. У них нет runtime
-зависимостей и игровых контрактов. Сборка каждого пакета создаёт JavaScript
-и объявления типов в его каталоге `dist/`.
+У общих пакетов нет runtime зависимостей. Rules Engine использует contracts
+как локальную type-only workspace зависимость, не зависит от приложений
+и получает источник бросков через явный интерфейс. Сборка каждого пакета
+создаёт JavaScript и объявления типов в его каталоге `dist/`.
 
 ## Окружение и установка
 
@@ -84,14 +86,17 @@ pnpm install --frozen-lockfile
 Сервер по умолчанию слушает `127.0.0.1:3000`. `HOST` и `PORT` позволяют
 переопределить адрес. `GET /health` возвращает `{"status":"ok"}`.
 
-Сейчас есть только технический тест health endpoint через Fastify injection.
-Клиент и пустые общие пакеты пока не содержат тестовых сценариев; их команды
-Vitest допускают отсутствие тестов явно через `--passWithNoTests`.
-Playwright отложен до появления браузерного функционала.
+Есть технический тест health endpoint через Fastify injection и deterministic
+unit tests Rules Engine. Отдельный запуск ядра:
+`pnpm --filter @kadat/rules-engine test`. Отсутствие тестов в Rules Engine
+больше не допускается. Клиент и contracts пока используют `--passWithNoTests`.
+Typecheck Rules Engine также проверяет тесты и предварительно собирает
+объявления contracts. Playwright отложен до браузерного функционала.
 
 ## Документация
 
 - [Правила для coding agents](AGENTS.md).
 - [Архитектура](docs/architecture.md).
 - [Канонические источники правил](docs/rules-sources.md).
+- [Границы и использование Infantry Rules Kernel](docs/infantry-combat-kernel.md).
 - [Назначение Architecture Decision Records](docs/adr/README.md).
