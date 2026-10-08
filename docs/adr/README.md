@@ -21,3 +21,4 @@ ADR (Architecture Decision Records) — записи об архитектурн
 ## Индекс
 
 - [0001 — ESM module format](0001-esm-module-format.md) — Accepted.
+- [0002 — Canonical Data Versioning Architecture](0002-canonical-data-versioning.md) — Accepted.
