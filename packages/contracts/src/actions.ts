@@ -90,7 +90,9 @@ export interface OverwatchState {
 /** Combat subset, not a replacement for a full Actor profile. */
 export interface CombatActorRuntime {
   readonly actor: ActorReference;
-  readonly characteristics: Pick<Characteristics, 'НС' | 'ЛВ'> & MeleeCharacteristics;
+  readonly characteristics: Pick<Characteristics, 'НС' | 'ЛВ'> &
+    MeleeCharacteristics &
+    Partial<Pick<Characteristics, 'ВН'>>;
   readonly movement: number;
   readonly fatigue: number;
   readonly posture: 'standing' | 'prone' | 'kneeling';

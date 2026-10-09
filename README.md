@@ -6,15 +6,16 @@ KADAT 2 — разрабатываемая браузерная платформ
 
 ## Статус
 
-**Early development / infantry melee action engine — Phase 2.2B-2.**
+**Early development / protection & damage foundation — Phase 2.2C-1.**
 
 Создан минимальный TypeScript workspace: техническая стартовая страница
 клиента и сервер с `GET /health`. В общих пакетах реализован deterministic
 rules kernel: характеристики, проверки, броски, инициатива, раунды и Stunned.
 Поверх ядра добавлены действия, Wait, Overwatch и дистанционная атака с Dodge
 до выдачи неразрешённых HitRecords. Добавлены melee action/reaction,
-стойки, хваты, техники и Grapple. Защита, итоговый урон, ранения и игровой
-интерфейс ещё не реализованы.
+стойки, хваты, техники и Grapple. Добавлен protection/damage pipeline до
+`finalDamage`: поля, выбор совместимой защиты, cover, BB и текущий bVN.
+Consequences, состояние ранений и игровой интерфейс ещё не реализованы.
 Realtime, renderer, база данных, аутентификация и CI не подключены.
 
 ## Основные принципы
@@ -104,4 +105,5 @@ Typecheck Rules Engine также проверяет тесты и предва�
 - [Границы и использование Infantry Rules Kernel](docs/infantry-combat-kernel.md).
 - [Действия и дистанционные атаки Phase 2.2B-1](docs/infantry-ranged-actions.md).
 - [Ближний бой и Grapple Phase 2.2B-2](docs/infantry-melee-actions.md).
+- [Защита и урон Phase 2.2C-1](docs/infantry-protection-damage.md).
 - [Назначение Architecture Decision Records](docs/adr/README.md).

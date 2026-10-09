@@ -46,3 +46,13 @@ export type {
 export { resolveMeleeAttack, resolveKnockdown, resolvePalisadeInterrupts } from './melee-attack.js';
 export { resolveParry, resolveMeleeDodge } from './melee-reactions.js';
 export { resolveGrappleAction } from './grapple.js';
+export { prepareDamageExpression, rollAndTransformDamage } from './damage-transformations.js';
+export { resolveFieldProtection, coversLocation } from './field-protection.js';
+export { collectProtectionSources } from './protection-sources.js';
+export { resolveProtectionBundle, resolvePenetration } from './protection-bundle.js';
+export { resolveProtectionDamage, resolveFinalDamage } from './damage-resolution.js';
+export {
+  damageInputFromHit,
+  damageInputFromPrimitiveIntent,
+  resolveCombatHitDamage,
+} from './damage-handoff.js';

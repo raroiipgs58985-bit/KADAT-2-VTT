@@ -70,5 +70,6 @@ Realtime не реализован. Renderer и база данных не вы�
 Фактическое расширение общих пакетов описано в
 [Infantry Rules Kernel — Phase 2.2A](infantry-combat-kernel.md) и
 [Infantry Ranged Actions — Phase 2.2B-1](infantry-ranged-actions.md),
-[Infantry Melee Actions — Phase 2.2B-2](infantry-melee-actions.md).
+[Infantry Melee Actions — Phase 2.2B-2](infantry-melee-actions.md) и
+[Infantry Protection & Damage — Phase 2.2C-1](infantry-protection-damage.md).
 Стек и границы Client / Server / Rules Engine сохранены.

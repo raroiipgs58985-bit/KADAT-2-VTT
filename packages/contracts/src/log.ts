@@ -11,6 +11,7 @@ import type {
   MeleeEffectIntent,
 } from './melee.js';
 import type { ResolutionContext } from './resolution.js';
+import type { DamageResolutionResult } from './protection-damage.js';
 
 export interface StateMutation {
   readonly type: string;
@@ -39,6 +40,7 @@ export interface CombatLogEntry {
   };
   readonly mutations: readonly StateMutation[];
   readonly damage?: DamageRoll;
+  readonly damageResolution?: DamageResolutionResult;
   readonly combatSessionId?: string;
   readonly action?: ActionExecution;
   readonly ranged?: RangedAttackResult;
