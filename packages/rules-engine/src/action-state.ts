@@ -9,6 +9,7 @@ import type {
 import { startTurn, endTurn, startNextRound, validateSession } from './combat.js';
 import { sessionLog } from './log.js';
 import { integer, uniqueIds } from './validation.js';
+import { refreshMeleeTurn } from './melee-state.js';
 
 export function validateActionState(state: CombatActionState): void {
   validateSession(state.session);
@@ -87,13 +88,34 @@ export function beginActionTurn(state: CombatActionState): {
   if (!actorId) throw new Error('Missing active actor');
   const actor = state.actors[actorId];
   if (!actor) throw new Error('Unknown active actor');
-  const next = updateActor(
-    { ...state, session: started.result },
-    clearTransient(actor, ['wait', 'overwatch']),
+  const next = refreshMeleeTurn(
+    updateActor(
+      { ...state, session: started.result },
+      clearTransient(actor, ['wait', 'overwatch']),
+    ),
+    actorId,
   );
   const expiration = sessionLog('action-expiration', started.result, {
     combatSessionId: state.session.id,
     mutations: [
+      ...(state.melee
+        ? [
+            {
+              type: 'melee-turn-refresh',
+              actor: actor.actor,
+              path: `melee.actors.${actorId}`,
+              before: state.melee.actors[actorId],
+              after: next.melee?.actors[actorId],
+            },
+            {
+              type: 'melee-temporary-expiration',
+              actor: actor.actor,
+              path: `actors.${actorId}.effects`,
+              before: actor.effects,
+              after: next.actors[actorId]?.effects,
+            },
+          ]
+        : []),
       ...(actor.wait
         ? [
             {
@@ -126,6 +148,12 @@ export function finishActionTurn(state: CombatActionState): {
   readonly logs: readonly CombatLogEntry[];
 } {
   validateActionState(state);
+  if (
+    state.melee?.followups.some(
+      (entry) => !entry.spent && entry.actor.actorId === state.session.activeActor?.actorId,
+    )
+  )
+    throw new Error('Resolve the immediate Grapple follow-up before ending the turn');
   const ended = endTurn(state.session);
   return { state: { ...state, session: ended.result }, logs: [ended.log] };
 }

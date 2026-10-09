@@ -31,3 +31,18 @@ export { resolveDodge } from './dodge.js';
 export { resolveRange } from './range.js';
 export { effectiveRangedProfile } from './weapons.js';
 export { firstHitLocation, reverseAttackRoll, resolveHitLocations } from './hit-locations.js';
+export { initializeMeleeState } from './melee-state.js';
+export { composeMeleeProfile, meleeBases, meleeTechniques } from './melee-profile.js';
+export {
+  changeMeleeStanceGrip,
+  resolveMeleeOpposedAction,
+  resolveBreakthrough,
+} from './melee-actions.js';
+export type {
+  ChangeMeleeRequest,
+  MeleeOpposedActionRequest,
+  BreakthroughRequest,
+} from './melee-actions.js';
+export { resolveMeleeAttack, resolveKnockdown, resolvePalisadeInterrupts } from './melee-attack.js';
+export { resolveParry, resolveMeleeDodge } from './melee-reactions.js';
+export { resolveGrappleAction } from './grapple.js';

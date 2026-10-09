@@ -9,3 +9,4 @@ export type * from './actions.js';
 export type * from './weapons.js';
 export type * from './ranged.js';
 export type * from './overwatch.js';
+export type * from './melee.js';

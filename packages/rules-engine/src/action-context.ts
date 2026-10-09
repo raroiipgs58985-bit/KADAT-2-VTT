@@ -58,7 +58,17 @@ export function scopedContext(
 }
 
 /** Explicit data-selected numeric hooks feed the existing modifier/override machinery. */
-export function materializeCombatModifiers(context: ResolutionContext): ResolutionContext {
+export function materializeCombatModifiers(
+  context: ResolutionContext,
+  keys: readonly string[] = [
+    'ranged:range',
+    'ranged:mode',
+    'ranged:attack',
+    'attacks-against-Stunned',
+  ],
+  replacementKeys: readonly string[] = ['ranged:range', 'ranged:mode'],
+  reuseMaterialized = false,
+): ResolutionContext {
   const traces = resolveEffects(context);
   const modifiers = [...context.modifiers];
   const overrides = [...context.overrides];
@@ -69,13 +79,7 @@ export function materializeCombatModifiers(context: ResolutionContext): Resoluti
   };
   context.effects.forEach((effect, index) => {
     const target = effect.definition.target;
-    if (
-      target.kind !== 'combat-modifier' ||
-      !['ranged:range', 'ranged:mode', 'ranged:attack', 'attacks-against-Stunned'].includes(
-        target.key,
-      )
-    )
-      return;
+    if (target.kind !== 'combat-modifier' || !keys.includes(target.key)) return;
     if (
       effect.targetActor.actorId !== context.actor.actorId &&
       effect.targetActor.actorId !== context.targetActor?.actorId
@@ -86,13 +90,14 @@ export function materializeCombatModifiers(context: ResolutionContext): Resoluti
     const contribution = traces[index];
     if (!contribution) throw new Error('Missing effect trace');
     const id = `effect:${effect.id}`;
-    modifiers.push({
-      id,
-      value: effect.definition.value,
-      source: effect.source,
-      provenance: effect.provenance,
-      ...(effect.definition.condition ? { condition: effect.definition.condition } : {}),
-    });
+    if (!reuseMaterialized || !modifiers.some((modifier) => modifier.id === id))
+      modifiers.push({
+        id,
+        value: effect.definition.value,
+        source: effect.source,
+        provenance: effect.provenance,
+        ...(effect.definition.condition ? { condition: effect.definition.condition } : {}),
+      });
     if (contribution.override) {
       addOverride({ ...contribution.override, subject: 'modifier', id });
     } else if (!contribution.included) {
@@ -105,7 +110,7 @@ export function materializeCombatModifiers(context: ResolutionContext): Resoluti
       });
     }
     if (effect.definition.operation === 'set' && contribution.included) {
-      if (!['ranged:range', 'ranged:mode'].includes(target.key))
+      if (!replacementKeys.includes(target.key))
         throw new Error('Replacement requires a generic range/mode source');
       if (replacements.has(target.key)) throw new Error('Ambiguous ranged replacement effects');
       replacements.add(target.key);

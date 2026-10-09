@@ -11,7 +11,10 @@ export type EffectTarget =
       readonly field: 'value' | 'super';
     }
   | { readonly kind: 'check' }
-  | { readonly kind: 'permission'; readonly permission: 'action' | 'reaction' | 'dodge' | 'attack' }
+  | {
+      readonly kind: 'permission';
+      readonly permission: 'action' | 'reaction' | 'dodge' | 'attack' | 'parry' | 'counterattack';
+    }
   | { readonly kind: 'combat-modifier'; readonly key: string };
 
 export interface EffectCondition {

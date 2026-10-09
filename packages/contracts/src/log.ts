@@ -4,6 +4,13 @@ import type { ResolutionOverride, ResolutionTrace } from './resolution.js';
 import type { ActionExecution } from './actions.js';
 import type { RangedAttackResult } from './ranged.js';
 import type { OverwatchOrderingDecision, OverwatchSkippedAttack } from './overwatch.js';
+import type {
+  MeleeAttackResult,
+  GrappleActionResult,
+  OpposedResult,
+  MeleeEffectIntent,
+} from './melee.js';
+import type { ResolutionContext } from './resolution.js';
 
 export interface StateMutation {
   readonly type: string;
@@ -38,6 +45,22 @@ export interface CombatLogEntry {
   readonly beforeActionId?: string;
   readonly overwatchOrdering?: OverwatchOrderingDecision;
   readonly overwatchSkipped?: OverwatchSkippedAttack;
+  readonly melee?: MeleeAttackResult;
+  readonly grapple?: GrappleActionResult;
+  readonly opposed?: OpposedResult;
+  readonly meleeIntents?: readonly MeleeEffectIntent[];
+  readonly meleeMovement?: {
+    readonly actorIds: readonly string[];
+    readonly distance: number;
+    readonly stoppedBefore?: string | null;
+    readonly pathSource?: import('./identity.js').SourceReference;
+  };
+  readonly palisadeSkipped?: {
+    readonly actionId: string;
+    readonly actor: ActorReference;
+    readonly reason: string;
+  };
+  readonly opponentContext?: ResolutionContext;
 }
 
 export interface LoggedResult<T> {

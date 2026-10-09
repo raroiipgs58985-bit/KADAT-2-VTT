@@ -4,6 +4,7 @@ import type { ActorReference, Provenance, SourceReference } from './identity.js'
 import type { CombatLogEntry, StateMutation } from './log.js';
 import type { EffectInstance, ResolutionContext } from './resolution.js';
 import type { AmmoContainerInstance, FireMode, WeaponInstance } from './weapons.js';
+import type { GrappleAction, MeleeCharacteristics, MeleeRuntimeState } from './melee.js';
 
 export type CombatActionType =
   | 'free-move'
@@ -21,7 +22,14 @@ export type CombatActionType =
   | 'ranged-attack'
   | 'called-attack'
   | 'clear-malfunction'
-  | 'dodge';
+  | 'dodge'
+  | 'parry'
+  | 'melee-attack'
+  | 'change-stance-grip'
+  | 'feint'
+  | 'pressure'
+  | 'breakthrough'
+  | GrappleAction;
 
 export interface ActionDefinition {
   readonly type: CombatActionType;
@@ -82,7 +90,7 @@ export interface OverwatchState {
 /** Combat subset, not a replacement for a full Actor profile. */
 export interface CombatActorRuntime {
   readonly actor: ActorReference;
-  readonly characteristics: Pick<Characteristics, 'НС' | 'ЛВ'>;
+  readonly characteristics: Pick<Characteristics, 'НС' | 'ЛВ'> & MeleeCharacteristics;
   readonly movement: number;
   readonly fatigue: number;
   readonly posture: 'standing' | 'prone' | 'kneeling';
@@ -99,6 +107,7 @@ export interface CombatActionState {
   readonly weapons: Readonly<Record<string, WeaponInstance>>;
   readonly containers: Readonly<Record<string, AmmoContainerInstance>>;
   readonly completedActionIds: readonly string[];
+  readonly melee?: MeleeRuntimeState;
 }
 
 export interface ActionExecution {
@@ -114,6 +123,7 @@ export interface ActionExecution {
   readonly mutations: readonly StateMutation[];
   readonly selectedWeaponId?: string;
   readonly selectedFireMode?: FireMode;
+  readonly reactionScope?: 'normal' | 'melee-only';
 }
 
 export interface ActionResolution<T> {

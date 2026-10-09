@@ -10,8 +10,10 @@ import { resolutionLog } from './log.js';
 import { clearTransient, updateActor, validateActionState } from './action-state.js';
 import { integer } from './validation.js';
 import { ruleSource, ruleProvenance } from './action-context.js';
+import { validateMeleeRuntimeAction } from './melee-state.js';
 
-export type ActionWindow = 'own-turn' | 'wait' | 'reaction' | 'overwatch';
+export type ActionWindow =
+  'own-turn' | 'wait' | 'reaction' | 'overwatch' | 'triggered' | 'grapple-followup';
 
 export function definition(
   type: ActionDefinition['type'],
@@ -48,6 +50,7 @@ export function validateResources(
   window: ActionWindow,
 ): void {
   validateActionState(state);
+  validateMeleeRuntimeAction(state, request, action);
   if (!request.id.trim() || state.completedActionIds.includes(request.id))
     throw new Error('Empty or repeated action ID');
   const runtime = state.actors[request.actor.actorId];
