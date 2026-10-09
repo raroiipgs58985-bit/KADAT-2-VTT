@@ -56,3 +56,19 @@ export {
   damageInputFromPrimitiveIntent,
   resolveCombatHitDamage,
 } from './damage-handoff.js';
+export {
+  consequenceCatalog,
+  lookupConsequence,
+  validateConsequenceCatalog,
+} from './consequence-catalog.js';
+export { classifyWounds, createWoundRuntime, validateWoundRuntime } from './wound-state.js';
+export { projectWoundCheck, resolveWoundCheck } from './wound-checks.js';
+export { planWoundCondition, removeWoundCondition } from './wound-conditions.js';
+export { resolveFatigueGain } from './wound-fatigue.js';
+export { bloodThresholds } from './wound-blood.js';
+export { resolveBleedingPulse } from './wound-bleeding.js';
+export { resolveWoundRoundEnd, resolveStabilization } from './wound-life.js';
+export { resolvePostDamage, consequenceZoneFor } from './wound-resolution.js';
+export { resolveWoundAwareAction } from './wound-action-context.js';
+
+export { resolveWoundTurnStart } from './wound-turn.js';

@@ -1,3 +1,12 @@
+import type {
+  PostDamageResolutionResult,
+  BleedingPulseResult,
+  FatigueGainResult,
+  StabilizationRequest,
+  WoundFacts,
+  WoundIntent,
+  WoundCheckProjection,
+} from './wounds.js';
 import type { DamageRoll, DiceRoll } from './dice.js';
 import type { ActorReference } from './identity.js';
 import type { ResolutionOverride, ResolutionTrace } from './resolution.js';
@@ -41,6 +50,21 @@ export interface CombatLogEntry {
   readonly mutations: readonly StateMutation[];
   readonly damage?: DamageRoll;
   readonly damageResolution?: DamageResolutionResult;
+  readonly woundCheck?: WoundCheckProjection;
+  readonly woundTurnStart?: {
+    readonly actor: ActorReference;
+    readonly status: 'RESOLVED' | 'CONTEXT_REQUIRED';
+    readonly pendingIntents: readonly WoundIntent[];
+    readonly facts?: WoundFacts;
+  };
+  readonly postDamage?: PostDamageResolutionResult;
+  readonly bleedingPulse?: BleedingPulseResult;
+  readonly fatigueGain?: FatigueGainResult;
+  readonly stabilization?: {
+    readonly request: StabilizationRequest;
+    readonly check: import('./checks.js').CheckResult;
+    readonly durationHours: number | null;
+  };
   readonly combatSessionId?: string;
   readonly action?: ActionExecution;
   readonly ranged?: RangedAttackResult;

@@ -6,7 +6,7 @@ KADAT 2 — разрабатываемая браузерная платформ
 
 ## Статус
 
-**Early development / protection & damage foundation — Phase 2.2C-1.**
+**Early development / wound consequences foundation — Phase 2.2C-2.**
 
 Создан минимальный TypeScript workspace: техническая стартовая страница
 клиента и сервер с `GET /health`. В общих пакетах реализован deterministic
@@ -15,7 +15,8 @@ rules kernel: характеристики, проверки, броски, ин
 до выдачи неразрешённых HitRecords. Добавлены melee action/reaction,
 стойки, хваты, техники и Grapple. Добавлен protection/damage pipeline до
 `finalDamage`: поля, выбор совместимой защиты, cover, BB и текущий bVN.
-Consequences, состояние ранений и игровой интерфейс ещё не реализованы.
+Добавлены source-linked последствия ранений, Injury, Bleeding/Blood, Fatigue,
+Agony/Death и combat-facing stabilization. Игровой интерфейс ещё не реализован.
 Realtime, renderer, база данных, аутентификация и CI не подключены.
 
 ## Основные принципы
@@ -106,4 +107,5 @@ Typecheck Rules Engine также проверяет тесты и предва�
 - [Действия и дистанционные атаки Phase 2.2B-1](docs/infantry-ranged-actions.md).
 - [Ближний бой и Grapple Phase 2.2B-2](docs/infantry-melee-actions.md).
 - [Защита и урон Phase 2.2C-1](docs/infantry-protection-damage.md).
+- [Последствия ранений Phase 2.2C-2](docs/infantry-wound-consequences.md).
 - [Назначение Architecture Decision Records](docs/adr/README.md).

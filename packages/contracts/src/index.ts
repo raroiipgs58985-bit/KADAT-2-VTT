@@ -11,3 +11,4 @@ export type * from './ranged.js';
 export type * from './overwatch.js';
 export type * from './melee.js';
 export type * from './protection-damage.js';
+export type * from './wounds.js';

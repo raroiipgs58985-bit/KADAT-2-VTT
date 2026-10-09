@@ -92,7 +92,7 @@ export interface CombatActorRuntime {
   readonly actor: ActorReference;
   readonly characteristics: Pick<Characteristics, 'НС' | 'ЛВ'> &
     MeleeCharacteristics &
-    Partial<Pick<Characteristics, 'ВН'>>;
+    Partial<Characteristics>;
   readonly movement: number;
   readonly fatigue: number;
   readonly posture: 'standing' | 'prone' | 'kneeling';
