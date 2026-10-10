@@ -10,6 +10,7 @@ export type EffectTarget =
       readonly characteristic: CharacteristicId;
       readonly field: 'value' | 'super';
     }
+  | { readonly kind: 'characteristic-cap'; readonly characteristic: CharacteristicId }
   | { readonly kind: 'check' }
   | {
       readonly kind: 'permission';

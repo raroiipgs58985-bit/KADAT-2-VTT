@@ -52,7 +52,28 @@ export function scopedContext(
     canonicalReleaseId: state.session.canonicalReleaseId,
     roundNumber: state.session.roundNumber,
     turnNumber: state.session.turn?.turnNumber ?? state.session.turnsStarted,
-    tags: [...new Set([...supplied.tags, ...tags])],
+    tags: [
+      ...new Set([
+        ...supplied.tags,
+        ...tags,
+        ...(state.session.phase === 'turn-active' &&
+        state.session.activeActor?.actorId === actor.actorId
+          ? [
+              'own-turn',
+              ...state.session.conditions.flatMap((condition) =>
+                condition.type === 'Suppressed' &&
+                condition.actor.actorId === actor.actorId &&
+                remainingRounds(condition, state.session.roundNumber) > 0 &&
+                'firstAffectedTurn' in condition &&
+                typeof condition.firstAffectedTurn === 'number' &&
+                condition.firstAffectedTurn <= (state.session.turn?.turnNumber ?? 0)
+                  ? [`suppressed:turn:${condition.id}`]
+                  : [],
+              ),
+            ]
+          : []),
+      ]),
+    ],
     effects: [...effects.values()],
   };
 }

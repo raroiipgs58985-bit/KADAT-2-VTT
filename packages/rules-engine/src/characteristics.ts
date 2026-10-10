@@ -85,6 +85,21 @@ export function resolveCharacteristic(
       else finalSuper = next;
     }
   }
+  // D: explicit equipment caps apply to the resolved value; no base-data mutation.
+  const caps = context.effects.flatMap((effect, index) => {
+    const target = effect.definition.target;
+    const trace = allTraces[index];
+    return target.kind === 'characteristic-cap' &&
+      target.characteristic === characteristic &&
+      effect.targetActor.actorId === context.actor.actorId &&
+      trace?.included
+      ? [trace]
+      : [];
+  });
+  for (const cap of caps) integer(cap.value, 'characteristic cap', 0);
+  if (new Set(caps.map((cap) => cap.value)).size > 1)
+    throw new Error('Unresolved characteristic cap precedence');
+  if (caps[0]) finalValue = Math.min(finalValue, caps[0].value);
   const normalBonus = Math.floor(finalValue / 10);
   const result: CharacteristicResolution = {
     characteristic,
@@ -105,7 +120,7 @@ export function resolveCharacteristic(
         finalValue,
         finalSuper,
       },
-      modifiers: candidates.map((candidate) => candidate.trace),
+      modifiers: [...candidates.map((candidate) => candidate.trace), ...caps],
     }),
   };
 }

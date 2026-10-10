@@ -31,6 +31,21 @@ export interface StateMutation {
 }
 
 export interface CombatLogEntry {
+  readonly equipment?: {
+    readonly traces: readonly import('./suppression-equipment.js').EquipmentTrace[];
+    readonly pending: readonly import('./suppression-equipment.js').EquipmentPending[];
+  };
+  readonly suppression?: {
+    readonly event: import('./suppression-equipment.js').SuppressionEvent;
+    readonly target: import('./suppression-equipment.js').SuppressionTargetResult;
+  };
+  readonly suppressionLifecycle?: {
+    readonly actor: ActorReference;
+    readonly conditionId: string;
+    readonly pending?: import('./suppression-equipment.js').SuppressionImmunityRemovalPending;
+    readonly operation: 'FIRST_TURN' | 'REMOVAL_CHECK' | 'EXPIRED' | 'PENDING';
+    readonly check: import('./checks.js').CheckResult | null;
+  };
   readonly resolver: string;
   readonly actors: readonly ActorReference[];
   readonly canonicalReleaseId?: string;

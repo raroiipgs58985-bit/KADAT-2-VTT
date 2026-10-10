@@ -18,6 +18,7 @@ import {
   type ActionWindow,
 } from './action-resources.js';
 import { integer } from './validation.js';
+import { resolveModifiers } from './context.js';
 
 export function resolveCombatAction(
   state: CombatActionState,
@@ -51,7 +52,23 @@ export function resolveCombatAction(
   const cost = costs[request.type];
   if (cost === undefined) throw new Error('Action requires its dedicated resolver');
   const reactionCost = request.type === 'run' || request.type === 'sprint' ? 1 : 0;
-  const action = definition(request.type, cost, reactionCost);
+  const movementTypes = [
+    'free-move',
+    'half-move',
+    'full-move',
+    'run',
+    'sprint',
+    'prone',
+    'kneel',
+    'stand',
+  ];
+  const equipmentOd = movementTypes.includes(request.type)
+    ? resolveModifiers(context)
+        .filter((m) => m.id.startsWith('equipment:movement-od:') && m.included)
+        .reduce((n, m) => n + m.value, 0)
+    : 0;
+  integer(cost + equipmentOd, 'equipment-adjusted action cost', 0);
+  const action = definition(request.type, cost + equipmentOd, reactionCost);
   const own =
     state.session.phase === 'turn-active' &&
     state.session.activeActor?.actorId === request.actor.actorId;

@@ -72,3 +72,29 @@ export { resolvePostDamage, consequenceZoneFor } from './wound-resolution.js';
 export { resolveWoundAwareAction } from './wound-action-context.js';
 
 export { resolveWoundTurnStart } from './wound-turn.js';
+
+export {
+  equipmentEffectId,
+  characteristicCapPayload,
+  collectEquipmentEffects,
+} from './equipment-effects.js';
+export {
+  equipmentCapabilities,
+  equipmentConditionAllowed,
+  resolveEquipmentSize,
+  resolveEquipmentCheck,
+  validateEquipmentAction,
+  resolveEquipmentCombatAction,
+  resolveEquipmentRangedAttack,
+  finishEquipmentTurn,
+} from './equipment-integration.js';
+export {
+  suppressionEventFromRanged,
+  suppressionTrigger,
+  suppressionTargetAffected,
+} from './suppression-triggers.js';
+export { createSuppressionEquipmentState, resolveSuppression } from './suppression.js';
+export {
+  resolveSuppressionTurnStart,
+  beginSuppressionEquipmentTurn,
+} from './suppression-lifecycle.js';

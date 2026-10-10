@@ -73,4 +73,6 @@ Realtime не реализован. Renderer и база данных не вы�
 [Infantry Melee Actions — Phase 2.2B-2](infantry-melee-actions.md) и
 [Infantry Protection & Damage — Phase 2.2C-1](infantry-protection-damage.md) и
 [Infantry Wound Consequences — Phase 2.2C-2](infantry-wound-consequences.md).
+[Infantry Suppression & Combat Equipment — Phase 2.2D](infantry-suppression-equipment.md)
+описывает новый source-based слой и integration hooks.
 Стек и границы Client / Server / Rules Engine сохранены.

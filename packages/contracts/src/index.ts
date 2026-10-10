@@ -12,3 +12,4 @@ export type * from './overwatch.js';
 export type * from './melee.js';
 export type * from './protection-damage.js';
 export type * from './wounds.js';
+export type * from './suppression-equipment.js';
