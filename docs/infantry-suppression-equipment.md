@@ -117,9 +117,25 @@ source modifiers, GM decisions и committed mutations. Templates не мутир
   выше raw roll может дать неположительные failure degrees; duration не придумывается,
   Check Engine не переписан. Required AC-SE scenarios этого случая не требуют.
 
-## Scope
+## S09 — author-approved final check modifier cap
+
+For normal d100 checks, the effective characteristic/skill is resolved first.
+Existing applicability, cancellation, source interactions, known stacking and
+ResolutionContext/GM numeric INCLUDE, EXCLUDE and MODIFY decisions determine the
+participating modifier values before their signed sum is calculated. The Check
+Engine clamps that sum once to −60…+60, then adds it to the effective value.
+Neither individual modifiers nor the characteristic nor the final target are
+clamped by this rule; targets above 100 retain the accepted check resolution.
+
+CheckResult exposes rawModifierSum and finalModifier. Combat Log preserves the
+individual source traces and overrides, both sums in checkModifiers, and target.
+Rerolls, post-check degree changes, direct outcome overrides and typed pending
+are separate mechanics. Existing pending cases and phase scope remain unchanged.
+
+## Scope boundary
 
 Ranged, melee, Overwatch, C-1 и C-2 resolvers не переписаны. Shared extensions
 ограничены characteristic-cap, affected-turn context tags и source-linked movement
-OD hook. Нет UI, map movement/pathfinding, full Arsenal import, батарей/ремонта,
+OD hook, плюс адресное author-approved ограничение итоговой суммы check modifiers
+для S09. Нет UI, map movement/pathfinding, full Arsenal import, батарей/ремонта,
 Psykana, vehicle/squad/void combat, persistence или deployment.

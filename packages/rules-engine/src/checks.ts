@@ -19,9 +19,14 @@ export function resolveCheck(request: CheckRequest, source: DiceSource): LoggedR
     return contribution ? [contribution] : [];
   });
   const modifiers = [...resolveModifiers(request.context), ...checkEffects];
-  const target =
-    request.baseValue +
-    modifiers.reduce((total, modifier) => total + (modifier.included ? modifier.value : 0), 0);
+  const rawModifierSum = modifiers.reduce(
+    (total, modifier) => total + (modifier.included ? modifier.value : 0),
+    0,
+  );
+  integer(rawModifierSum, 'raw check modifier sum');
+  // Author ruling: cap once, after applicability and source overrides; never cap the target.
+  const finalModifier = Math.max(-60, Math.min(60, rawModifierSum));
+  const target = request.baseValue + finalModifier;
   integer(target, 'check target');
   const roll = rollDie(100, source);
   const criticalBand = roll.value <= 5 ? 'success' : roll.value >= 96 ? 'failure' : 'none';
@@ -35,6 +40,8 @@ export function resolveCheck(request: CheckRequest, source: DiceSource): LoggedR
     baseValue: request.baseValue,
     finalSuper: request.finalSuper,
     modifiers,
+    rawModifierSum,
+    finalModifier,
     target,
     criticalBand,
     outcome: success ? 'success' : 'failure',
@@ -49,6 +56,7 @@ export function resolveCheck(request: CheckRequest, source: DiceSource): LoggedR
       dice: [roll],
       baseValues: { baseValue: request.baseValue, finalSuper: request.finalSuper },
       modifiers,
+      checkModifiers: { rawModifierSum, finalModifier },
       target,
       degrees: {
         base: baseDegrees,

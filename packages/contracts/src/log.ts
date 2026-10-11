@@ -55,6 +55,10 @@ export interface CombatLogEntry {
   readonly baseValues: Readonly<Record<string, number>>;
   readonly modifiers: readonly ResolutionTrace[];
   readonly overrides: readonly ResolutionOverride[];
+  readonly checkModifiers?: {
+    readonly rawModifierSum: number;
+    readonly finalModifier: number;
+  };
   readonly target?: number;
   readonly degrees?: {
     readonly base: number;

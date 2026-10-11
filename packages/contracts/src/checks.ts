@@ -11,6 +11,8 @@ export interface CheckResult {
   readonly baseValue: number;
   readonly finalSuper: number;
   readonly modifiers: readonly ResolutionTrace[];
+  readonly rawModifierSum: number;
+  readonly finalModifier: number;
   readonly target: number;
   readonly criticalBand: 'success' | 'failure' | 'none';
   readonly outcome: 'success' | 'failure';
