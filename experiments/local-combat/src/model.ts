@@ -1,4 +1,7 @@
 import data from '../public/fixture.json';
+import armorCatalog from '../public/canonical-armor.json';
+export const pakArmorProperties = armorCatalog.sheets[0]!.data.find((d) => d.startRow === 32)!
+  .rowData[0]!.values[2]!.formattedValue;
 export type ActorId = 'kelus-drakar' | 'pak';
 export const ids: ActorId[] = ['kelus-drakar', 'pak'];
 export type WeaponId = 'hotshot' | 'kelus-chain' | 'pak-chain' | 'bracer' | 'flamer';

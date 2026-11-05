@@ -1,0 +1,109 @@
+{
+  "spreadsheetId": "1SqGX_g9tObCgl2eJWjxgmLoXlDv6KnGMeiujBlX7drg",
+  "spreadsheetUrl": "https://docs.google.com/spreadsheets/d/1SqGX_g9tObCgl2eJWjxgmLoXlDv6KnGMeiujBlX7drg/edit",
+  "properties": {
+    "title": "Механика к100",
+    "locale": "ru_RU",
+    "timeZone": "Europe/Moscow"
+  },
+  "sheets": [
+    {
+      "properties": {
+        "sheetId": 0,
+        "title": "Раны и лечение ",
+        "index": 11,
+        "sheetType": "GRID",
+        "gridProperties": {
+          "rowCount": 1034,
+          "columnCount": 26
+        }
+      },
+      "data": [
+        {
+          "startRow": 72,
+          "rowData": [
+            {
+              "values": [
+                {
+                  "formattedValue": "Последствия ранений торса"
+                }
+              ]
+            },
+            {
+              "values": [
+                {
+                  "formattedValue": "Значение урона (+к10 для критических попаданий)"
+                },
+                {
+                  "formattedValue": "Описание"
+                },
+                {
+                  "formattedValue": "Воздействие"
+                },
+                {},
+                {},
+                {
+                  "formattedValue": "Лечение"
+                }
+              ]
+            },
+            {
+              "values": [
+                {
+                  "formattedValue": "1"
+                },
+                {
+                  "formattedValue": "Сбитое дыхание"
+                },
+                {
+                  "formattedValue": "Удар вышибает у вас воздух из лёгких. Вы оглушены на 1 раунд."
+                },
+                {},
+                {},
+                {
+                  "formattedValue": "не требуется"
+                }
+              ]
+            },
+            {
+              "values": [
+                {
+                  "formattedValue": "2"
+                },
+                {
+                  "formattedValue": "Прямо под дых"
+                },
+                {
+                  "formattedValue": "Вы получаете удар в чувствительное место. Пройдите среднюю (+0) проверку ВН или будете с биты с ног. "
+                },
+                {},
+                {},
+                {
+                  "formattedValue": "не требуется"
+                }
+              ]
+            },
+            {
+              "values": [
+                {
+                  "formattedValue": "3"
+                },
+                {
+                  "formattedValue": "Рваная рана"
+                },
+                {
+                  "formattedValue": "Удар оставляет рваную рану и вызывает кровотечение (лёгкое)"
+                },
+                {},
+                {},
+                {
+                  "formattedValue": "Первая помощь +20 с использованием ИПП. Рана закровется через час. Окончательно заживет через неделю."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -6,6 +6,21 @@
   color: #dce7ed;
   background: #0a111a;
 }
+.file-label input {
+  max-width: 100%;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.check input {
+  width: 22px;
+  min-height: 22px;
+}
+#result {
+  overflow-wrap: anywhere;
+}
 * {
   box-sizing: border-box;
 }
