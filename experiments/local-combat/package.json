@@ -1,0 +1,11 @@
+{
+  "name": "@kadat/local-combat-experiment",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "../../apps/client/node_modules/.bin/vite --host 0.0.0.0",
+    "build": "../../apps/client/node_modules/.bin/vite build",
+    "test": "../../node_modules/.bin/vitest run",
+    "typecheck": "../../node_modules/.bin/tsc --noEmit -p tsconfig.json"
+  }
+}

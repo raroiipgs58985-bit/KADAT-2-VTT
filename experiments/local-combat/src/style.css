@@ -1,0 +1,188 @@
+:root {
+  color-scheme: dark;
+  font:
+    15px system-ui,
+    sans-serif;
+  color: #dce7ed;
+  background: #0a111a;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 1180px;
+  margin: auto;
+  padding: 28px;
+}
+header {
+  padding: 12px 0 20px;
+}
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #5ed9bd;
+}
+h1 {
+  font-size: clamp(28px, 4vw, 44px);
+  margin: 14px 0;
+}
+h1 span {
+  font-weight: 400;
+  color: #8c9eac;
+}
+h2 {
+  font-size: 20px;
+}
+p {
+  line-height: 1.65;
+}
+small,
+.muted {
+  color: #96aab9;
+}
+small {
+  font-size: 12px;
+}
+.toolbar,
+form {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  flex-wrap: wrap;
+  margin: 20px 0;
+}
+.layout {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 25px;
+}
+section {
+  min-width: 0;
+}
+label {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  border: 1px solid #3c5264;
+  border-radius: 7px;
+  padding: 11px;
+  background: #172635;
+  color: #e3edf3;
+  min-height: 44px;
+}
+button {
+  cursor: pointer;
+}
+button:hover {
+  border-color: #5ed9bd;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #5ed9bd;
+}
+form label {
+  margin: 0;
+}
+form input {
+  width: 90px;
+}
+#map {
+  width: 100%;
+  background: #15212e;
+  border: 1px solid #3c5264;
+  border-radius: 12px;
+  touch-action: none;
+  user-select: none;
+}
+.token {
+  cursor: grab;
+}
+.profiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+article,
+.action {
+  background: #111d29;
+  border: 1px solid #263e51;
+  border-radius: 12px;
+  padding: 20px;
+}
+.health {
+  font-size: 30px;
+  color: #5ed9bd;
+}
+dl {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+dl div {
+  background: #1a2b3b;
+  border-radius: 6px;
+  padding: 9px;
+}
+dt {
+  color: #96aab9;
+  font-size: 12px;
+}
+dd {
+  margin: 6px 0 0;
+  font-size: 14px;
+}
+pre,
+.raw {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #111d29;
+  border-radius: 8px;
+  padding: 14px;
+}
+pre {
+  max-height: 450px;
+  overflow: auto;
+  font-size: 12px;
+}
+.raw {
+  background: #1a2b3b;
+}
+summary {
+  cursor: pointer;
+  line-height: 1.8;
+  min-height: 44px;
+}
+#result {
+  margin-top: 16px;
+  color: #efbc71;
+  line-height: 1.7;
+}
+textarea {
+  width: 100%;
+  min-height: 100px;
+}
+@media (max-width: 700px) {
+  main {
+    padding: 15px;
+  }
+  .layout,
+  .profiles {
+    grid-template-columns: 1fr;
+  }
+  .toolbar label {
+    width: 100%;
+  }
+  form strong {
+    width: 100%;
+  }
+}
