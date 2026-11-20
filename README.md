@@ -6,7 +6,7 @@ KADAT 2 — разрабатываемая браузерная платформ
 
 ## Статус
 
-**Early development / wound consequences foundation — Phase 2.2C-2.**
+**Early development / tactical scene client — Phase 3A-1.**
 
 Создан минимальный TypeScript workspace: техническая стартовая страница
 клиента и сервер с `GET /health`. В общих пакетах реализован deterministic
@@ -16,8 +16,13 @@ rules kernel: характеристики, проверки, броски, ин
 стойки, хваты, техники и Grapple. Добавлен protection/damage pipeline до
 `finalDamage`: поля, выбор совместимой защиты, cover, BB и текущий bVN.
 Добавлены source-linked последствия ранений, Injury, Bleeding/Blood, Fatigue,
-Agony/Death и combat-facing stabilization. Игровой интерфейс ещё не реализован.
-Realtime, renderer, база данных, аутентификация и CI не подключены.
+Agony/Death и combat-facing stabilization.
+
+**Phase 3A-1:** в `apps/client` работает локальная тактическая сцена: карта
+20 × 20 м с сеткой и масштабом, перетаскиваемые токены, карточка персонажа,
+перемещение и атака через принятый Combat Core, журнал и replay — см.
+[тактическую сцену клиента](docs/tactical-scene-client.md). Realtime, сервер
+боя, база данных, аутентификация и CI не подключены.
 
 ## Основные принципы
 
@@ -46,7 +51,7 @@ Node.js LTS + Fastify для сервера и независимый Rules Engi
 
 ```text
 apps/
-  client/          React + TypeScript + Vite bootstrap
+  client/          React + TypeScript + Vite: тактическая сцена (src/game, src/ui)
   server/          Fastify bootstrap и health endpoint
 packages/
   contracts/       независимые domain contracts kernel
@@ -84,7 +89,7 @@ pnpm install --frozen-lockfile
 | `pnpm format:check` | Проверка форматирования                                  |
 | `pnpm test`         | Запуск Vitest во всех workspace пакетах                  |
 | `pnpm build`        | Production сборка клиента, сервера и обоих общих пакетов |
-| `pnpm dev:client`   | Локальный Vite dev server                                |
+| `pnpm dev:client`   | Тактическая сцена на http://127.0.0.1:5173               |
 | `pnpm dev:server`   | Локальный сервер с перезапуском при изменениях           |
 | `pnpm start:server` | Запуск собранного сервера после `pnpm build`             |
 
@@ -94,7 +99,8 @@ pnpm install --frozen-lockfile
 Есть технический тест health endpoint через Fastify injection и deterministic
 unit tests Rules Engine. Отдельный запуск ядра:
 `pnpm --filter @kadat/rules-engine test`. Отсутствие тестов в Rules Engine
-больше не допускается. Клиент и contracts пока используют `--passWithNoTests`.
+больше не допускается. Клиент тестирует слой игры (`apps/client/src/game`); contracts пока
+используют `--passWithNoTests`.
 Typecheck Rules Engine также проверяет тесты и предварительно собирает
 объявления contracts. Playwright отложен до браузерного функционала.
 
@@ -108,4 +114,5 @@ Typecheck Rules Engine также проверяет тесты и предва�
 - [Ближний бой и Grapple Phase 2.2B-2](docs/infantry-melee-actions.md).
 - [Защита и урон Phase 2.2C-1](docs/infantry-protection-damage.md).
 - [Последствия ранений Phase 2.2C-2](docs/infantry-wound-consequences.md).
+- [Тактическая сцена клиента Phase 3A-1](docs/tactical-scene-client.md).
 - [Назначение Architecture Decision Records](docs/adr/README.md).

@@ -6,11 +6,13 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@kadat/contracts": "workspace:*",
+    "@kadat/rules-engine": "workspace:*",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

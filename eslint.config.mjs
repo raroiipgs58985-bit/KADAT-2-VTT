@@ -21,4 +21,9 @@ export default defineConfig([
     files: ['*.mjs', '**/*.config.ts', 'apps/server/**/*.ts'],
     languageOptions: { globals: globals.node },
   },
+  {
+    // Node scripts that drive a browser page (page.evaluate callbacks run in the browser).
+    files: ['apps/client/scripts/**/*.mjs'],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
+  },
 ]);
