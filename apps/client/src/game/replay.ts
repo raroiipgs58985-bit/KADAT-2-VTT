@@ -5,6 +5,8 @@ import {
   getEngine,
   moveActor,
   nextTurn,
+  placeActor,
+  standUp,
   selectManualOrder,
   startCombat,
   type AttackCommand,
@@ -20,7 +22,8 @@ type Step =
   | { type: 'manual-turn'; actor: ActorId }
   | { type: 'cancel-unstarted' }
   | { type: 'start-combat'; rolls: DiceRoll[] }
-  | { type: 'move'; command: MoveCommand };
+  | { type: 'move'; command: MoveCommand }
+  | { type: 'stand'; command: { id: string; actor: ActorId } };
 const FORMAT = 'kadat-client-combat-v0.3';
 export interface Replay {
   format: typeof FORMAT;
@@ -48,6 +51,11 @@ export function exportReplay(b: Battle): Replay {
       steps.push({ type: 'start-combat', rolls: detail.rolls ?? [] });
     else if (entry.type === 'next-turn' || entry.type === 'TURN_CONTEXT_REQUIRED')
       steps.push({ type: 'next-turn', rolls: detail.rolls ?? [] });
+    if (entry.type === 'posture')
+      steps.push({
+        type: 'stand',
+        command: (entry.detail as { command: { id: string; actor: ActorId } }).command,
+      });
     if (entry.type === 'move')
       steps.push({ type: 'move', command: (entry.detail as { command: MoveCommand }).command });
     if (entry.type === 'placement')
@@ -88,10 +96,11 @@ export function importReplay(value: unknown): Battle {
     return fixedDice(rolls.map((d) => `${d.sides}:${d.value}`).join(','));
   };
   for (const step of r.steps) {
-    if (step.type === 'placement') move(b, step.actor, step.x, step.y);
+    if (step.type === 'placement') placeActor(b, step.actor, step.x, step.y);
     else if (step.type === 'manual-turn') selectManualOrder(b, step.actor);
     else if (step.type === 'cancel-unstarted') cancelUnstarted(b);
     else if (step.type === 'move') moveActor(b, step.command);
+    else if (step.type === 'stand') standUp(b, step.command);
     else if (step.type === 'start-combat')
       startCombat(b, dice(step.rolls.slice(getEngine(b).pendingTurn?.prefix.length ?? 0)));
     else if (step.type === 'attack') {

@@ -90,6 +90,15 @@ export function describeEntry(entry: LogEntry): JournalLine {
         tone: 'success',
       };
     }
+    case 'posture':
+      return {
+        ...base,
+        title: `${name((d.command as { actor: string }).actor)}: Встать`,
+        summary: `Поза: ${d.from} → ${d.to} · ОД ${d.odBefore} → ${d.odAfter}`,
+        tone: 'success',
+      };
+    case 'posture-rejected':
+      return { ...base, title: 'Встать не удалось', summary: String(d.reason), tone: 'warning' };
     case 'move-rejected':
       return {
         ...base,

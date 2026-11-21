@@ -10,11 +10,12 @@ import {
   placeActor,
   resumeAttack,
   selectManualOrder,
+  standUp,
   startCombat,
   turnInfo,
   type MoveMode,
 } from './game/engine';
-import { describeEntry, type JournalTone } from './game/journal';
+import type { JournalTone } from './game/journal';
 import { createBattle, ids, weapons, type ActorId } from './game/model';
 import { demoBattle, exportReplay, importReplay, resolvedDemoBattle } from './game/replay';
 import { ActorCard } from './ui/ActorCard';
@@ -28,6 +29,7 @@ import {
   type AttackForm,
   type DiceSettings,
 } from './ui/Panels';
+import { commandFeedback } from './ui/feedback';
 import { combatStore, useCombat } from './ui/store';
 import { TacticalMap, type MoveIntent } from './ui/TacticalMap';
 
@@ -87,23 +89,12 @@ export function App() {
         ? seededDice(dice.seed)
         : randomDice();
   const run = (command: Parameters<typeof combatStore.run>[0]) => {
+    const before = combatStore.getSnapshot().battle.log.length;
     try {
       combatStore.run(command);
-      const last = combatStore.getSnapshot().battle.log.at(-1);
-      if (last) {
-        const line = describeEntry(last);
-        setToast({ text: `${line.title}. ${line.summary}`, tone: line.tone });
-      }
+      setToast(commandFeedback(before, combatStore.getSnapshot().battle.log));
     } catch (error) {
-      const last = combatStore.getSnapshot().battle.log.at(-1);
-      const line = last && describeEntry(last);
-      setToast({
-        text:
-          line && (line.tone === 'warning' || line.tone === 'author' || line.tone === 'error')
-            ? `${line.title}: ${line.summary}`
-            : String(error instanceof Error ? error.message : error),
-        tone: line?.tone === 'author' ? 'author' : 'error',
-      });
+      setToast(commandFeedback(before, combatStore.getSnapshot().battle.log, error));
     }
   };
   const onMove = (id: ActorId, x: number, y: number) => {
@@ -304,6 +295,8 @@ export function App() {
                 onMoveTo={(x, y) => onMove(selected, x, y)}
                 position={battle.positions[selected]}
                 canAct={canAct}
+                posture={actorStatus(battle, selected).posture}
+                onStand={() => run((b) => standUp(b, { id: commandId('stand'), actor: selected }))}
               />
             ) : (
               <AttackPanel

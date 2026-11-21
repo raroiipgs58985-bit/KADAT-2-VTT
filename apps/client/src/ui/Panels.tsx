@@ -119,6 +119,8 @@ export function MovePanel(props: {
   onMoveTo: (x: number, y: number) => void;
   position: { x: number; y: number };
   canAct: boolean;
+  posture: 'standing' | 'kneeling' | 'prone';
+  onStand: () => void;
 }) {
   const [x, setX] = useState('');
   const [y, setY] = useState('');
@@ -153,6 +155,11 @@ export function MovePanel(props: {
           </li>
         ))}
       </ul>
+      {props.posture !== 'standing' && (
+        <button type="button" onClick={props.onStand} disabled={!props.canAct}>
+          Встать (1 ОД) — персонаж {props.posture === 'prone' ? 'лежит' : 'на колене'}
+        </button>
+      )}
       {chosen && (
         <form
           className="coords-form"

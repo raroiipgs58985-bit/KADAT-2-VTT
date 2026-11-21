@@ -944,6 +944,31 @@ export function explainEngineError(error: unknown): string {
   const known = coreMessages.find(([pattern]) => pattern.test(message));
   return known ? `${known[1]} (Core: ${message})` : message;
 }
+/**
+ * Wound consequences that the accepted movement resolver does not read. Core stores them as
+ * runtime Effects (`combat-modifier: movement`, limb `uses-limb:*` restriction, Prone posture)
+ * but `resolveCombatAction` derives distance from the raw СКР. Moving at full distance would
+ * silently drop canonical consequences, so movement stops until the author decides.
+ */
+export function woundMovementBoundary(b: Battle, actorId: ActorId): string | null {
+  const runtime = getEngine(b).wounds.combat.actors[actorId]!;
+  const penalties = runtime.effects.filter(
+    (e) => e.definition.target.kind === 'combat-modifier' && e.definition.target.key === 'movement',
+  );
+  if (penalties.length)
+    return `Ранение даёт штраф к СКР (${penalties.map((e) => e.definition.value).join(', ')}), но принятый Core не применяет его к дистанции движения. Нужно решение: подключить штраф в движок.`;
+  const leg = runtime.effects.some(
+    (e) =>
+      e.definition.target.kind === 'permission' &&
+      e.definition.operation === 'restrict' &&
+      (e.definition.condition?.requiresTags ?? []).some((t) => /^uses-limb:.*Leg$/.test(t)),
+  );
+  if (leg)
+    return 'Нога бесполезна после ранения: правило передвижения в этом состоянии не определено. Нужно решение автора.';
+  if (runtime.posture === 'prone')
+    return 'Персонаж лежит: передвижение лёжа в правилах не описано. Доступно действие «Встать» (1 ОД).';
+  return null;
+}
 function authorBoundary(state: EngineState, actorId: ActorId, mode: MoveMode): string | null {
   if ((mode === 'run' || mode === 'sprint') && rulings.runSprintDistances !== 'mechanics')
     return 'Ждёт решения автора: дистанции Бега/Спринта в Механике (СКР×6 / ×12) и в профилях (×3 / ×6) расходятся.';
@@ -983,7 +1008,7 @@ export function movementOptions(b: Battle, actorId: ActorId): MoveOption[] {
   return moveModes.map((m) => {
     try {
       movementGate(state, actorId);
-      const blocked = authorBoundary(state, actorId, m.mode);
+      const blocked = woundMovementBoundary(b, actorId) ?? authorBoundary(state, actorId, m.mode);
       if (blocked)
         return { ...m, available: false, maxDistance: null, reason: blocked, blockedBy: 'author' };
       const preview = resolveMove(state, `preview:${m.mode}`, actorId, m.mode);
@@ -1012,7 +1037,8 @@ export function moveActor(b: Battle, command: MoveCommand) {
     if (!Number.isFinite(x) || !Number.isFinite(y) || Math.min(x, y) < 0 || Math.max(x, y) > 20)
       throw new Error('Точка назначения вне карты 20 × 20 м');
     movementGate(state, command.actor);
-    const blocked = authorBoundary(state, command.actor, command.mode);
+    const blocked =
+      woundMovementBoundary(b, command.actor) ?? authorBoundary(state, command.actor, command.mode);
     if (blocked) throw new RuleDecisionRequired(blocked);
     const from = b.positions[command.actor];
     const distance = Math.hypot(x - from.x, y - from.y);
@@ -1194,5 +1220,45 @@ export function weaponSupport(id: WeaponId): WeaponSupport {
       return { level: 'blocked', note: KELUS_CHAIN_BOUNDARY };
     default:
       return { level: 'blocked', note: FIRE_BOUNDARY };
+  }
+}
+
+/** «Встать» (1 ОД) through the accepted Core; available only when the actor is not standing. */
+export function standUp(b: Battle, command: { id: string; actor: ActorId }) {
+  const state = getEngine(b);
+  try {
+    if (!ids.includes(command.actor)) throw new Error('Неизвестный персонаж');
+    if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
+    movementGate(state, command.actor);
+    const runtime = state.wounds.combat.actors[command.actor]!;
+    if (runtime.posture === 'standing') throw new Error('Персонаж уже стоит');
+    const combat = state.wounds.combat;
+    const resolved = resolveCombatAction(
+      combat,
+      {
+        id: command.id,
+        type: 'stand',
+        actor: ref(command.actor),
+        context: context(combat, command.actor),
+      },
+      noDice,
+    );
+    const next = structuredClone(state);
+    next.wounds = { ...next.wounds, combat: resolved.state };
+    next.committed.push(command.id);
+    sync(b, next);
+    append(b, 'posture', {
+      command,
+      from: runtime.posture,
+      to: resolved.state.actors[command.actor]!.posture,
+      odBefore: resolved.execution.odBefore,
+      odAfter: resolved.execution.odAfter,
+      coreLogs: resolved.logs,
+      committed: true,
+    });
+    return { status: 'RESOLVED' as const };
+  } catch (error) {
+    append(b, 'posture-rejected', { command, reason: explainEngineError(error), committed: false });
+    throw error;
   }
 }
