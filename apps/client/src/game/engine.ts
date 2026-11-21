@@ -47,6 +47,7 @@ import {
   move,
   movementProfiles,
   placementProblemFor,
+  tokenConflicts,
   weapons,
   type ActorId,
   type Battle,
@@ -54,6 +55,7 @@ import {
 } from './model';
 import { rulings } from './rulings';
 import { cellsOf, validateFootprint, type Footprint } from './grid';
+import { mapProblems, type MapDocument } from './map';
 
 const source = {
   kind: 'canonical-profile',
@@ -1288,4 +1290,59 @@ export function setFootprint(b: Battle, id: ActorId, footprint: Footprint) {
     center: next,
     cells: cellsOf(next, footprint),
   });
+}
+
+/** A map draft was refused; the scene is unchanged. Lists every map and token problem. */
+export class MapApplyRejected extends Error {
+  override readonly name = 'MapApplyRejected';
+  constructor(
+    readonly mapProblems: string[],
+    readonly tokenProblems: { actor: ActorId; problem: string }[],
+  ) {
+    super(
+      [...mapProblems, ...tokenProblems.map((t) => `${actor(t.actor).name}: ${t.problem}`)].join(
+        ' ',
+      ),
+    );
+  }
+}
+/**
+ * Applies a map draft as one command, before combat only. The map and any token
+ * re-placements from the draft are validated together; nothing is applied on failure, and
+ * no token is moved or clipped implicitly.
+ */
+export function applyMap(
+  b: Battle,
+  draft: { map: MapDocument; positions: Record<ActorId, { x: number; y: number }> },
+) {
+  if (combatStarted(b))
+    throw new Error('Карту можно менять только на этапе расстановки, до начала боя.');
+  const map = structuredClone(draft.map);
+  const positions = structuredClone(draft.positions);
+  const problems = mapProblems(map);
+  const conflicts = problems.some((p) => /Ширина|Высота/.test(p))
+    ? []
+    : tokenConflicts(map, positions, b.footprints);
+  if (problems.length || conflicts.length) throw new MapApplyRejected(problems, conflicts);
+  const repositioned = ids
+    .filter((id) => positions[id].x !== b.positions[id].x || positions[id].y !== b.positions[id].y)
+    .map((id) => ({
+      actor: id,
+      from: b.positions[id],
+      to: positions[id],
+      cells: cellsOf(positions[id], b.footprints[id]),
+    }));
+  b.map = map;
+  b.mapRevision += 1;
+  for (const r of repositioned) b.positions[r.actor] = r.to;
+  append(b, 'map-applied', {
+    id: map.id,
+    name: map.name,
+    cols: map.cols,
+    rows: map.rows,
+    floorCells: Object.keys(map.floor).length,
+    revision: b.mapRevision,
+    repositioned,
+  });
+  return { status: 'RESOLVED' as const, revision: b.mapRevision };
 }

@@ -17,6 +17,7 @@ import { fixedDice } from './dice';
 import { createBattle, move, type ActorId, type Battle } from './model';
 import { rulings } from './rulings';
 import type { Footprint } from './grid';
+import { isStandardGeometry } from './map';
 type Step =
   | { type: 'attack'; command: AttackCommand; rolls: DiceRoll[] }
   | { type: 'next-turn'; rolls: DiceRoll[] }
@@ -30,12 +31,34 @@ type Step =
 const FORMAT = 'kadat-client-combat-v0.3';
 export interface Replay {
   format: typeof FORMAT;
+  /** Present when applied maps had floor paint: visual only, not replayed. */
+  visualLayersOmitted?: true;
   baseline: string;
   rulings: typeof rulings;
   steps: Step[];
   log: Battle['log'];
 }
+/**
+ * v0.3 replays start from the standard 20 × 20 scene and know no map commands. They can only
+ * be exported while the whole history kept that geometry; otherwise this explains why not.
+ */
+export function replayExportProblem(b: Battle): string | null {
+  const nonStandard = (m: { cols: number; rows: number }) => !isStandardGeometry(m);
+  if (nonStandard(b.map))
+    return `Replay v0.3 поддерживает только сцену 20 × 20, а текущая карта ${b.map.cols} × ${b.map.rows}. Карту можно сохранить отдельно, когда появится файл карты; боевой replay для неё требует нового формата.`;
+  for (const entry of b.log) {
+    if (entry.type !== 'map-applied') continue;
+    const d = entry.detail as { cols: number; rows: number; repositioned: unknown[] };
+    if (nonStandard(d))
+      return `В истории боя есть карта ${d.cols} × ${d.rows}: replay v0.3 не может её воспроизвести.`;
+    if (d.repositioned.length)
+      return 'В истории есть перестановка токенов вместе с применением карты: replay v0.3 не может её воспроизвести.';
+  }
+  return null;
+}
 export function exportReplay(b: Battle): Replay {
+  const problem = replayExportProblem(b);
+  if (problem) throw new Error(problem);
   const steps: Step[] = [];
   for (const entry of b.log) {
     const detail = entry.detail as {
@@ -75,8 +98,12 @@ export function exportReplay(b: Battle): Replay {
     if (entry.type === 'manual-turn') steps.push({ type: 'manual-turn', actor: detail.actor });
     if (entry.type === 'cancel-unstarted') steps.push({ type: 'cancel-unstarted' });
   }
+  const painted = b.log.some(
+    (e) => e.type === 'map-applied' && (e.detail as { floorCells: number }).floorCells > 0,
+  );
   return structuredClone({
     format: FORMAT,
+    ...(painted ? { visualLayersOmitted: true as const } : {}),
     baseline: 'e98837b92abc74ac501b52c5f2ea2e79b86f96b3',
     rulings,
     steps,

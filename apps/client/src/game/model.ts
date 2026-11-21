@@ -8,7 +8,9 @@ import {
   placementProblem,
   type Footprint,
   type Point,
+  type GridSize,
 } from './grid';
+import { STANDARD_MAP, type MapDocument } from './map';
 import armorCatalog from './data/canonical-armor.json';
 export const pakArmorProperties = armorCatalog.sheets[0]!.data.find((d) => d.startRow === 32)!
   .rowData[0]!.values[2]!.formattedValue;
@@ -66,6 +68,10 @@ export interface Battle {
   positions: Record<ActorId, { x: number; y: number }>;
   /** Cells each token occupies (GM-set token area, not the canonical «Размер»). */
   footprints: Record<ActorId, Footprint>;
+  /** Applied map. Changes only through `applyMap`, before combat. */
+  map: MapDocument;
+  /** Increments on every applied map change; derived indexes are keyed by it. */
+  mapRevision: number;
   hp: Record<ActorId, number>;
   ammo: Record<WeaponId, number | null>;
   log: LogEntry[];
@@ -79,6 +85,8 @@ export function createBattle(): Battle {
     // Test placement on cell centres; the 10 m separation of the experiment is preserved.
     positions: { 'kelus-drakar': { x: 5.5, y: 10.5 }, pak: { x: 15.5, y: 10.5 } },
     footprints: { 'kelus-drakar': SINGLE_CELL, pak: SINGLE_CELL },
+    map: structuredClone(STANDARD_MAP),
+    mapRevision: 0,
     hp: { 'kelus-drakar': 26, pak: 33 },
     ammo: Object.fromEntries(weapons.map((w) => [w.id, w.capacity])) as Battle['ammo'],
     log: [
@@ -108,18 +116,18 @@ export function placementProblemFor(
   center: Point,
   footprint: Footprint = b.footprints[id],
 ): string | null {
-  return placementProblem(center, footprint, occupiedCells(b, id));
+  return placementProblem(center, footprint, occupiedCells(b, id), b.map);
 }
 /** Grid-aligned centres the token can stand on within `maxDistance` metres of its centre. */
 export function destinationsWithin(b: Battle, id: ActorId, maxDistance: number): Point[] {
   const from = b.positions[id];
   const blocked = occupiedCells(b, id);
   const f = b.footprints[id];
-  return allCenters(f).filter(
+  return allCenters(f, b.map).filter(
     (c) =>
       distance(from, c) > 0 &&
       distance(from, c) <= maxDistance + 1e-9 &&
-      placementProblem(c, f, blocked) === null,
+      placementProblem(c, f, blocked, b.map) === null,
   );
 }
 /** Low-level placement: validates grid alignment, map bounds and overlap, then logs. */
@@ -165,3 +173,24 @@ export const movementProfiles: Record<
     profileText: '4/8/12/24',
   },
 };
+
+/**
+ * Placement problems of every token for a map size and a set of positions (a draft or the
+ * current scene). Tokens are checked against the map bounds and against each other.
+ */
+export function tokenConflicts(
+  size: GridSize,
+  positions: Record<ActorId, Point>,
+  footprints: Record<ActorId, Footprint>,
+): { actor: ActorId; problem: string }[] {
+  const out: { actor: ActorId; problem: string }[] = [];
+  for (const id of ids) {
+    const blocked = new Set<string>();
+    for (const other of ids)
+      if (other !== id)
+        for (const c of cellsOf(positions[other], footprints[other])) blocked.add(cellKey(c));
+    const problem = placementProblem(positions[id], footprints[id], blocked, size);
+    if (problem) out.push({ actor: id, problem });
+  }
+  return out;
+}

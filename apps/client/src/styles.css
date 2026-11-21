@@ -653,13 +653,19 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 .map-hint {
-  flex: 1;
+  flex: 1 1 0;
   color: var(--muted);
-  min-width: 180px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .coords {
   font-variant-numeric: tabular-nums;
   color: var(--muted);
+  white-space: nowrap;
+  min-width: 17ch;
+  text-align: right;
 }
 .map {
   display: block;
@@ -850,4 +856,103 @@ textarea {
   .map {
     max-height: none;
   }
+}
+
+/* Scene modes and map editor */
+.mode-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.mode-switch button.chosen {
+  border-color: var(--accent);
+  background: #2a2213;
+}
+.mode-switch .map-name {
+  margin-left: auto;
+}
+.editor {
+  display: grid;
+  gap: 10px;
+}
+.editor h3 {
+  margin: 4px 0 0;
+}
+.size-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+.tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.tools button.chosen {
+  border-color: var(--accent);
+  background: #2a2213;
+}
+kbd {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.72rem;
+  color: var(--muted);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-left: 4px;
+}
+.palette {
+  display: flex;
+  gap: 8px;
+}
+.swatch {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 8px;
+  border: 2px solid transparent;
+}
+.swatch.chosen {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px #0b0f14 inset;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.problems {
+  border-left: 3px solid var(--danger);
+  background: #2a1517;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  display: grid;
+  gap: 6px;
+}
+.problems ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.occupied.conflict {
+  fill: rgba(239, 107, 107, 0.18);
+  stroke: var(--danger);
+  stroke-dasharray: none;
+  stroke-width: 0.06;
+}
+.token.conflict .token-body {
+  stroke: var(--danger);
+  stroke-width: 0.1;
+}
+.paint-preview rect {
+  fill-opacity: 0.85;
+  pointer-events: none;
+}
+.paint-preview.erase rect {
+  fill: rgba(239, 107, 107, 0.35);
 }

@@ -61,6 +61,82 @@ const od = () => page.locator('.od .pip.on').count();
 const occupiedCells = (id) =>
   page.locator(`[data-occupied="${id}"]`).getAttribute('data-cells').then(Number);
 
+const mapSize = () =>
+  page.evaluate(() => {
+    const svg = document.querySelector('svg.map');
+    return `${svg.dataset.cols}x${svg.dataset.rows}`;
+  });
+const floorCells = () =>
+  page.locator('[data-testid="floor"]').getAttribute('data-cells').then(Number);
+
+// 0. Stage 1 map editor (TZ checklist). Standard scene first.
+check((await mapSize()) === '20x20', 'standard map is 20 × 20');
+const k0 = await tokenPosition('kelus-drakar');
+const p0 = await tokenPosition('pak');
+check(
+  k0.x === 5.5 && k0.y === 10.5 && p0.x === 15.5 && p0.y === 10.5,
+  'Kelus (5.5; 10.5) and Pak (15.5; 10.5) on the standard scene',
+);
+await page.getByRole('button', { name: 'Приблизить' }).click();
+await page.getByRole('button', { name: 'Приблизить' }).click();
+const kz = await tokenPosition('kelus-drakar');
+check(kz.x === 5.5 && kz.y === 10.5, 'zoom does not change world coordinates');
+await page.getByRole('button', { name: 'Вся карта' }).click();
+
+await page.getByRole('tab', { name: /Редактор карты/ }).click();
+await page.getByLabel('Ширина карты').fill('24');
+await page.getByLabel('Высота карты').fill('12');
+await page.getByRole('button', { name: 'Новая пустая карта' }).click();
+check((await mapSize()) === '24x12', 'draft shows a 24 × 12 grid');
+await page.getByRole('button', { name: /Прямоугольник/ }).click();
+await drag({ x: 1.5, y: 1.5 }, { x: 4.5, y: 2.5 });
+check((await floorCells()) === 8, 'rectangle fill paints 8 cells as one step');
+// Escape cancels an unfinished gesture.
+{
+  const a = await screen(10.5, 5.5);
+  const c = await screen(12.5, 7.5);
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  await page.mouse.move(c.x, c.y, { steps: 4 });
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+}
+check((await floorCells()) === 8, 'Escape cancels the unfinished rectangle');
+await page.getByRole('button', { name: /Отменить шаг/ }).click();
+check((await floorCells()) === 0, 'undo removes the fill');
+await page.keyboard.press('Control+y');
+check((await floorCells()) === 8, 'Ctrl+Y redoes the fill');
+await page.screenshot({ path: `${out}/00-editor-24x12.png` });
+await page.getByRole('button', { name: 'Применить карту' }).click();
+check((await toast()).includes('Карта применена'), 'apply reports the new map');
+check((await page.textContent('.map-name')).includes('24 × 12'), 'scene now uses 24 × 12');
+
+// Shrinking to 8 × 8 with current tokens is refused and keeps the scene.
+await page.getByLabel('Ширина карты').fill('8');
+await page.getByLabel('Высота карты').fill('8');
+await page.getByRole('button', { name: 'Изменить размер' }).click();
+const problemsText = await page.textContent('.problems');
+check(
+  problemsText.includes('Келус Дракар') && problemsText.includes('Пак'),
+  'conflicting tokens are listed for 8 × 8',
+);
+check(
+  await page.getByRole('button', { name: 'Применить карту' }).isDisabled(),
+  'apply is disabled while conflicts remain',
+);
+await page.screenshot({ path: `${out}/00b-editor-conflict.png` });
+await page.getByRole('button', { name: 'Отменить изменения' }).click();
+check((await mapSize()) === '24x12', 'discard returns to the applied 24 × 12 map');
+
+// Replay v0.3 cannot be exported for another map size: the reason is shown.
+await page.getByRole('tab', { name: 'Расстановка' }).click();
+await page.getByRole('button', { name: 'Скачать replay' }).click();
+check((await toast()).includes('только сцену 20 × 20'), 'replay export explains the size limit');
+
+// Back to the standard scene for the control combat.
+await page.getByRole('button', { name: 'Новый бой' }).click();
+check((await mapSize()) === '20x20', 'new battle restores the standard 20 × 20 scene');
+
 // 1. Setup placement before combat: drops snap to cell centres.
 await page.screenshot({ path: `${out}/01-setup.png` });
 check((await occupiedCells('kelus-drakar')) === 1, 'size-1 token occupies one cell');
@@ -108,7 +184,10 @@ await page.mouse.move(hover.x, hover.y);
 await page.screenshot({ path: `${out}/02-move-preview.png` });
 await page.mouse.click(hover.x, hover.y);
 const kelus = await tokenPosition('kelus-drakar');
-check(kelus.x === 7.5 && kelus.y === 10.5, 'click snaps and moves Kelus 2 m to cell 7,10');
+check(
+  kelus.x === 7.5 && kelus.y === 10.5,
+  `click snaps and moves Kelus 2 m to cell 7,10 (got ${kelus.x}; ${kelus.y})`,
+);
 check((await od()) === 1, 'half move spends 1 OD');
 
 // 5. Out-of-range destination is rejected without spending OD.

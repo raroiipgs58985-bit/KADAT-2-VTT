@@ -1,5 +1,5 @@
 /**
- * Tactical grid geometry: 1 × 1 m cells on a 20 × 20 m map.
+ * Tactical grid geometry: 1 × 1 m cells on a rectangular map (20 × 20 by default).
  *
  * A token occupies a rectangular footprint of whole cells. Its position is stored as the
  * centre of that footprint in metres, so every distance the Core receives stays a plain
@@ -13,6 +13,11 @@
  */
 
 export const GRID = { cols: 20, rows: 20, cellMeters: 1 } as const;
+/** Map size in whole cells. X grows to the right, Y downwards, origin at the top-left. */
+export interface GridSize {
+  readonly cols: number;
+  readonly rows: number;
+}
 
 export interface Footprint {
   readonly width: number;
@@ -70,11 +75,11 @@ export function cellsOf(center: Point, f: Footprint): Cell[] {
   return cells;
 }
 /** Nearest grid-aligned centre for a free point, kept inside the map. */
-export function snapCenter(point: Point, f: Footprint): Point {
+export function snapCenter(point: Point, f: Footprint, size: GridSize = GRID): Point {
   const a = anchorOf(point, f);
   const clamp = (v: number, max: number) => Math.min(max, Math.max(0, Math.round(v)));
   return centerOf(
-    { col: clamp(a.col, GRID.cols - f.width), row: clamp(a.row, GRID.rows - f.height) },
+    { col: clamp(a.col, size.cols - f.width), row: clamp(a.row, size.rows - f.height) },
     f,
   );
 }
@@ -86,21 +91,22 @@ export function placementProblem(
   center: Point,
   f: Footprint,
   blocked: ReadonlySet<string>,
+  size: GridSize = GRID,
 ): string | null {
   if (!Number.isFinite(center.x) || !Number.isFinite(center.y))
     return 'Координаты должны быть числами';
   if (!isAligned(center, f)) return 'Позиция не привязана к клеткам сетки';
   const cells = cellsOf(center, f);
-  if (cells.some((c) => c.col < 0 || c.row < 0 || c.col >= GRID.cols || c.row >= GRID.rows))
-    return `Токен выходит за границы карты ${GRID.cols} × ${GRID.rows} м`;
+  if (cells.some((c) => c.col < 0 || c.row < 0 || c.col >= size.cols || c.row >= size.rows))
+    return `Токен выходит за границы карты ${size.cols} × ${size.rows} м`;
   if (cells.some((c) => blocked.has(cellKey(c)))) return 'Клетки заняты другим персонажем';
   return null;
 }
 /** Every grid-aligned centre for a footprint (candidates for movement highlighting). */
-export function allCenters(f: Footprint): Point[] {
+export function allCenters(f: Footprint, size: GridSize = GRID): Point[] {
   const out: Point[] = [];
-  for (let row = 0; row <= GRID.rows - f.height; row++)
-    for (let col = 0; col <= GRID.cols - f.width; col++) out.push(centerOf({ col, row }, f));
+  for (let row = 0; row <= size.rows - f.height; row++)
+    for (let col = 0; col <= size.cols - f.width; col++) out.push(centerOf({ col, row }, f));
   return out;
 }
 export const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);

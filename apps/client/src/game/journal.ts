@@ -59,6 +59,15 @@ export function describeEntry(entry: LogEntry): JournalLine {
         tone: 'info',
       };
     }
+    case 'map-applied': {
+      const moved = (d.repositioned as { actor: string }[]).map((r) => name(r.actor));
+      return {
+        ...base,
+        title: `Карта применена: ${String(d.name)}`,
+        summary: `${d.cols} × ${d.rows} клеток, разметка пола: ${d.floorCells} кл., ревизия ${d.revision}.${moved.length ? ` Переставлены: ${moved.join(', ')}.` : ''}`,
+        tone: 'success',
+      };
+    }
     case 'footprint': {
       const f = d.footprint as { width: number; height: number };
       return {

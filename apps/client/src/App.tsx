@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { fixedDice, randomDice, seededDice } from './game/dice';
 import {
   actorStatus,
+  applyMap,
   attack,
   cancelUnstarted,
   moveActor,
@@ -18,7 +19,31 @@ import {
 } from './game/engine';
 import type { JournalTone } from './game/journal';
 import { createBattle, ids, weapons, type ActorId } from './game/model';
-import { demoBattle, exportReplay, importReplay, resolvedDemoBattle } from './game/replay';
+import type { FloorColorId } from './game/map';
+import {
+  commit,
+  draftDiffers,
+  draftProblems,
+  eraseOutside,
+  newEmpty,
+  paint,
+  placeToken,
+  redo,
+  rename,
+  resize,
+  startEditing,
+  undo,
+  type EditorDraft,
+  type EditorHistory,
+} from './game/map-editor';
+import {
+  demoBattle,
+  exportReplay,
+  importReplay,
+  replayExportProblem,
+  resolvedDemoBattle,
+} from './game/replay';
+import { EditorPanel, toolList } from './ui/EditorPanel';
 import { ActorCard } from './ui/ActorCard';
 import {
   AttackPanel,
@@ -32,7 +57,7 @@ import {
 } from './ui/Panels';
 import { commandFeedback } from './ui/feedback';
 import { combatStore, useCombat } from './ui/store';
-import { TacticalMap, type MoveIntent } from './ui/TacticalMap';
+import { TacticalMap, type EditorTool, type MoveIntent, type SceneMode } from './ui/TacticalMap';
 
 const commandId = (kind: string) => `${kind}-${crypto.randomUUID().slice(0, 8)}`;
 const defaultAttack = (attacker: ActorId): AttackForm => ({
@@ -56,6 +81,57 @@ export function App() {
     seed: 12345,
   });
   const [toast, setToast] = useState<{ text: string; tone: JournalTone } | null>(null);
+  const [setupMode, setSetupMode] = useState<'editor' | 'placement'>('placement');
+  const [history, setHistory] = useState<EditorHistory | null>(null);
+  const [tool, setTool] = useState<EditorTool>('brush');
+  const [colour, setColour] = useState<FloorColorId>('grey');
+  const mode: SceneMode = info.started ? 'combat' : setupMode;
+  const editing = mode === 'editor' && history !== null;
+  const draft: EditorDraft | null = editing ? history.present : null;
+  const problems = useMemo(
+    () => (draft ? draftProblems(draft, battle) : { map: [], tokens: [] }),
+    [draft, battle, version],
+  );
+  const dirty = draft ? draftDiffers(draft, battle) : false;
+  const edit = (change: (d: EditorDraft) => EditorDraft) =>
+    setHistory((h) => (h ? commit(h, change(h.present)) : h));
+  const enterEditor = () => {
+    setSetupMode('editor');
+    setHistory((h) => h ?? startEditing(battle));
+    setMoveMode(null);
+  };
+
+  // Combat start closes the editor: the map cannot change during combat.
+  useEffect(() => {
+    if (info.started) setHistory(null);
+  }, [info.started]);
+
+  // Editor shortcuts; never captured while typing in a field.
+  useEffect(() => {
+    if (mode !== 'editor') return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return;
+      const key = e.key.toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && (key === 'z' || key === 'я')) {
+        e.preventDefault();
+        setHistory((h) => (h ? (e.shiftKey ? redo(h) : undo(h)) : h));
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (key === 'y' || key === 'н')) {
+        e.preventDefault();
+        setHistory((h) => (h ? redo(h) : h));
+        return;
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const found = toolList.find(
+        (x) => x.key.toLowerCase() === e.code.replace('Key', '').toLowerCase(),
+      );
+      if (found) setTool(found.id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mode]);
 
   // Combat start and every new turn select the active participant and reset per-turn choices.
   useEffect(() => {
@@ -108,7 +184,16 @@ export function App() {
   };
   const replaceBattle = (next: ReturnType<typeof createBattle>, text: string) => {
     combatStore.replace(next);
+    setHistory(null);
+    setSetupMode('placement');
     setToast({ text, tone: 'info' });
+  };
+  const applyDraft = () => {
+    if (!draft) return;
+    const before = battle.mapRevision;
+    run((b) => applyMap(b, draft));
+    if (combatStore.getSnapshot().battle.mapRevision !== before)
+      setHistory(startEditing(combatStore.getSnapshot().battle));
   };
 
   return (
@@ -156,7 +241,13 @@ export function App() {
           </button>
           <button
             type="button"
+            title={replayExportProblem(battle) ?? 'Скачать боевой replay (формат v0.3)'}
             onClick={() => {
+              const problem = replayExportProblem(battle);
+              if (problem) {
+                setToast({ text: problem, tone: 'warning' });
+                return;
+              }
               const url = URL.createObjectURL(
                 new Blob([JSON.stringify(exportReplay(battle), null, 2)], {
                   type: 'application/json',
@@ -209,6 +300,9 @@ export function App() {
           <TurnBar
             battle={battle}
             info={info}
+            startBlocked={
+              mode === 'editor' ? 'Перейдите в режим «Расстановка», чтобы начать бой.' : null
+            }
             onStart={() => run((b) => startCombat(b, source()))}
             onNextTurn={() => run((b) => nextTurn(b, source()))}
             onOrder={(id) => run((b) => selectManualOrder(b, id))}
@@ -238,102 +332,179 @@ export function App() {
             <ActorCard
               battle={battle}
               id={selected}
-              setup={!info.started}
+              setup={mode === 'placement'}
               onFootprint={(f) => run((b) => setFootprint(b, selected, f))}
             />
           </div>
         </aside>
 
         <section className="column center">
+          <div className="mode-switch" role="tablist" aria-label="Режим сцены">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'editor'}
+              className={mode === 'editor' ? 'chosen' : ''}
+              disabled={info.started}
+              title={info.started ? 'Во время боя карту менять нельзя' : undefined}
+              onClick={enterEditor}
+            >
+              Редактор карты{dirty ? ' •' : ''}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'placement'}
+              className={mode === 'placement' ? 'chosen' : ''}
+              disabled={info.started}
+              onClick={() => setSetupMode('placement')}
+            >
+              Расстановка
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'combat'}
+              className={mode === 'combat' ? 'chosen' : ''}
+              disabled={!info.started}
+              title={info.started ? undefined : 'Бой начинается кнопкой «Начать бой» в расстановке'}
+            >
+              Бой
+            </button>
+            <span className="muted small map-name">
+              {battle.map.name} · {battle.map.cols} × {battle.map.rows} · ревизия{' '}
+              {battle.mapRevision}
+            </span>
+          </div>
           <TacticalMap
             battle={battle}
+            version={version}
+            mode={mode}
+            map={draft ? draft.map : battle.map}
+            positions={draft ? (draft.positions as typeof battle.positions) : battle.positions}
+            conflicts={new Set(problems.tokens.map((t) => t.actor))}
             selected={selected}
             activeActor={info.active}
             turnActive={info.turnActive && !busy}
-            setupMode={!info.started}
-            moveIntent={moveIntent}
-            attackLine={canAct && tab === 'attack' ? { from: info.active, to: form.target } : null}
+            moveIntent={mode === 'combat' ? moveIntent : null}
+            attackLine={
+              mode === 'combat' && canAct && tab === 'attack'
+                ? { from: info.active, to: form.target }
+                : null
+            }
             wounds={wounds}
+            tool={tool}
+            floorColour={colour}
             onSelect={setSelected}
             onMove={onMove}
             onPlace={(id, x, y) => run((b) => placeActor(b, id, x, y))}
+            onDraftPlace={(id, x, y) => edit((d) => placeToken(d, id, { x, y }))}
+            onPaint={(cells, c) => edit((d) => paint(d, cells, c))}
           />
         </section>
 
         <aside className="column right">
-          <section className="panel actions">
-            <div className="tabs" role="tablist" aria-label="Действия">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === 'move'}
-                className={tab === 'move' ? 'chosen' : ''}
-                onClick={() => setTab('move')}
-              >
-                Движение
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === 'attack'}
-                className={tab === 'attack' ? 'chosen' : ''}
-                onClick={() => {
-                  setTab('attack');
-                  setMoveMode(null);
-                }}
-              >
-                Атака
-              </button>
-            </div>
-            {!info.started && (
-              <p className="muted small">Бой не начат: расставьте токены и нажмите «Начать бой».</p>
-            )}
-            {info.started && selected !== info.active && (
-              <p className="muted small">
-                Выбран персонаж не в свой ход — действия доступны только активному участнику.
-              </p>
-            )}
-            {tab === 'move' ? (
-              <MovePanel
-                options={options}
-                selectedMode={moveMode}
-                onSelectMode={setMoveMode}
-                onMoveTo={(x, y) => onMove(selected, x, y)}
-                position={battle.positions[selected]}
-                canAct={canAct}
-                posture={actorStatus(battle, selected).posture}
-                footprint={battle.footprints[selected]}
-                onStand={() => run((b) => standUp(b, { id: commandId('stand'), actor: selected }))}
-              />
-            ) : (
-              <AttackPanel
-                attacker={info.active}
-                form={form}
-                onChange={setForm}
-                canAct={canAct}
-                attackedThisTurn={info.attacked}
-                battle={battle}
-                onAttack={() =>
-                  run((b) =>
-                    attack(
-                      b,
-                      {
-                        id: commandId('attack'),
-                        actor: info.active,
-                        target: form.target,
-                        weapon: form.weapon,
-                        targetActivity: form.activity,
-                        modifier: form.modifier,
-                        defense: 'DECLINE',
-                      },
-                      source(),
-                    ),
-                  )
-                }
-              />
-            )}
-          </section>
-          <DicePanel dice={dice} onChange={setDice} />
+          {editing && history ? (
+            <EditorPanel
+              history={history}
+              appliedName={battle.map.name}
+              problems={problems}
+              dirty={dirty}
+              tool={tool}
+              colour={colour}
+              onTool={setTool}
+              onColour={setColour}
+              onRename={(name) => edit((d) => rename(d, name))}
+              onResize={(cols, rows) => edit((d) => resize(d, cols, rows))}
+              onNewEmpty={(name, cols, rows) =>
+                edit((d) => newEmpty(d, commandId('map'), name, cols, rows))
+              }
+              onEraseOutside={() => edit(eraseOutside)}
+              onUndo={() => setHistory((h) => (h ? undo(h) : h))}
+              onRedo={() => setHistory((h) => (h ? redo(h) : h))}
+              onApply={applyDraft}
+              onDiscard={() => setHistory(startEditing(battle))}
+            />
+          ) : (
+            <section className="panel actions">
+              <div className="tabs" role="tablist" aria-label="Действия">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === 'move'}
+                  className={tab === 'move' ? 'chosen' : ''}
+                  onClick={() => setTab('move')}
+                >
+                  Движение
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === 'attack'}
+                  className={tab === 'attack' ? 'chosen' : ''}
+                  onClick={() => {
+                    setTab('attack');
+                    setMoveMode(null);
+                  }}
+                >
+                  Атака
+                </button>
+              </div>
+              {!info.started && (
+                <p className="muted small">
+                  Бой не начат: расставьте токены и нажмите «Начать бой».
+                </p>
+              )}
+              {info.started && selected !== info.active && (
+                <p className="muted small">
+                  Выбран персонаж не в свой ход — действия доступны только активному участнику.
+                </p>
+              )}
+              {tab === 'move' ? (
+                <MovePanel
+                  options={options}
+                  selectedMode={moveMode}
+                  onSelectMode={setMoveMode}
+                  onMoveTo={(x, y) => onMove(selected, x, y)}
+                  position={battle.positions[selected]}
+                  canAct={canAct}
+                  posture={actorStatus(battle, selected).posture}
+                  footprint={battle.footprints[selected]}
+                  mapSize={battle.map}
+                  onStand={() =>
+                    run((b) => standUp(b, { id: commandId('stand'), actor: selected }))
+                  }
+                />
+              ) : (
+                <AttackPanel
+                  attacker={info.active}
+                  form={form}
+                  onChange={setForm}
+                  canAct={canAct}
+                  attackedThisTurn={info.attacked}
+                  battle={battle}
+                  onAttack={() =>
+                    run((b) =>
+                      attack(
+                        b,
+                        {
+                          id: commandId('attack'),
+                          actor: info.active,
+                          target: form.target,
+                          weapon: form.weapon,
+                          targetActivity: form.activity,
+                          modifier: form.modifier,
+                          defense: 'DECLINE',
+                        },
+                        source(),
+                      ),
+                    )
+                  }
+                />
+              )}
+            </section>
+          )}
+          {!editing && <DicePanel dice={dice} onChange={setDice} />}
           <CombatLog battle={battle} />
         </aside>
       </main>

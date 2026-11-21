@@ -24,6 +24,7 @@ export function TurnBar(props: {
   onStart: () => void;
   onNextTurn: () => void;
   onOrder: (id: ActorId) => void;
+  startBlocked?: string | null;
 }) {
   const { info } = props;
   const odMax = 2;
@@ -65,9 +66,15 @@ export function TurnBar(props: {
               ))}
             </select>
           </label>
-          <button type="button" className="primary" onClick={props.onStart}>
+          <button
+            type="button"
+            className="primary"
+            onClick={props.onStart}
+            disabled={!!props.startBlocked}
+          >
             Начать бой
           </button>
+          {props.startBlocked && <p className="muted small">{props.startBlocked}</p>}
         </div>
       ) : (
         <button
@@ -122,6 +129,7 @@ export function MovePanel(props: {
   posture: 'standing' | 'kneeling' | 'prone';
   onStand: () => void;
   footprint: { width: number; height: number };
+  mapSize: { cols: number; rows: number };
 }) {
   const [x, setX] = useState('');
   const [y, setY] = useState('');
@@ -184,7 +192,7 @@ export function MovePanel(props: {
               type="number"
               step={1}
               min={0}
-              max={20 - props.footprint.width}
+              max={props.mapSize.cols - props.footprint.width}
               required
               value={x}
               onChange={(e) => setX(e.target.value)}
@@ -196,7 +204,7 @@ export function MovePanel(props: {
               type="number"
               step={1}
               min={0}
-              max={20 - props.footprint.height}
+              max={props.mapSize.rows - props.footprint.height}
               required
               value={y}
               onChange={(e) => setY(e.target.value)}
