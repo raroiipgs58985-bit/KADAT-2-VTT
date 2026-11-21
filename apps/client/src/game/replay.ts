@@ -98,9 +98,11 @@ export function exportReplay(b: Battle): Replay {
     if (entry.type === 'manual-turn') steps.push({ type: 'manual-turn', actor: detail.actor });
     if (entry.type === 'cancel-unstarted') steps.push({ type: 'cancel-unstarted' });
   }
-  const painted = b.log.some(
-    (e) => e.type === 'map-applied' && (e.detail as { floorCells: number }).floorCells > 0,
-  );
+  const painted = b.log.some((e) => {
+    if (e.type !== 'map-applied') return false;
+    const d = e.detail as { floorCells: number; decorations?: number; background?: unknown };
+    return d.floorCells > 0 || (d.decorations ?? 0) > 0 || !!d.background;
+  });
   return structuredClone({
     format: FORMAT,
     ...(painted ? { visualLayersOmitted: true as const } : {}),

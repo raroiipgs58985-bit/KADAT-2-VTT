@@ -64,7 +64,7 @@ export function describeEntry(entry: LogEntry): JournalLine {
       return {
         ...base,
         title: `Карта применена: ${String(d.name)}`,
-        summary: `${d.cols} × ${d.rows} клеток, разметка пола: ${d.floorCells} кл., ревизия ${d.revision}.${moved.length ? ` Переставлены: ${moved.join(', ')}.` : ''}`,
+        summary: `${d.cols} × ${d.rows} клеток, разметка пола: ${d.floorCells} кл., декораций: ${d.decorations ?? 0}${d.background ? ', с подложкой' : ''}, ревизия ${d.revision}.${moved.length ? ` Переставлены: ${moved.join(', ')}.` : ''}`,
         tone: 'success',
       };
     }

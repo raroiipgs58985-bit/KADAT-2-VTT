@@ -19,9 +19,25 @@ import {
 import type { JournalTone } from './game/journal';
 import { createBattle, ids, weapons, type ActorId } from './game/model';
 import type { FloorColorId } from './game/map';
+import type { Point } from './game/grid';
 import {
+  MAP_FILE_EXTENSION,
+  MAP_FILE_MAX_BYTES,
+  parseMapFile,
+  serializeMapFile,
+} from './game/map-file';
+import { readRasterFile, useBackgroundUrl, verifyEmbeddedRaster } from './ui/raster-io';
+import {
+  addDecoration,
   applyDraft,
+  calibrateBackground,
   commit,
+  fitBackground,
+  loadDocument,
+  removeDecoration,
+  setBackground,
+  updateBackground,
+  updateDecoration,
   draftDiffers,
   draftProblems,
   eraseOutside,
@@ -88,6 +104,9 @@ export function App() {
   const [history, setHistory] = useState<EditorHistory | null>(null);
   const [tool, setTool] = useState<EditorTool>('brush');
   const [colour, setColour] = useState<FloorColorId>('grey');
+  const [selectedDecorationId, setSelectedDecorationId] = useState<string | null>(null);
+  const [newDecorationLabel, setNewDecorationLabel] = useState('');
+  const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
   const mode: SceneMode = info.started ? 'combat' : setupMode;
   const editing = mode === 'editor' && history !== null;
   const draft: EditorDraft | null = editing ? history.present : null;
@@ -96,6 +115,74 @@ export function App() {
     [draft, battle, version],
   );
   const dirty = draft ? draftDiffers(draft, battle) : false;
+  const shownMap = draft ? draft.map : battle.map;
+  const backgroundUrl = useBackgroundUrl(shownMap.background);
+  const selectedDecoration =
+    draft?.map.decorations.find((x) => x.id === selectedDecorationId) ?? null;
+  const fail = (error: unknown) =>
+    setToast({ text: error instanceof Error ? error.message : String(error), tone: 'error' });
+  const loadBackground = async (file: File) => {
+    try {
+      const raster = await readRasterFile(file);
+      edit((d) => setBackground(d, fitBackground(d.map, raster)));
+      setToast({
+        text: `Подложка загружена: ${raster.mime}, ${raster.widthPx} × ${raster.heightPx} пикс. Ширина подогнана под карту; уточните масштаб калибровкой.`,
+        tone: 'success',
+      });
+    } catch (error) {
+      fail(error);
+    }
+  };
+  const calibrate = (meters: number) => {
+    const bg = draft?.map.background;
+    if (!bg || calibrationPoints.length < 2) return;
+    try {
+      const next = calibrateBackground(bg, calibrationPoints[0]!, calibrationPoints[1]!, meters);
+      edit((d) => setBackground(d, next));
+      setCalibrationPoints([]);
+      setToast({
+        text: `Калибровка применена: ${Number(next.metersPerPixel.toPrecision(6))} м на пиксель.`,
+        tone: 'success',
+      });
+    } catch (error) {
+      fail(error);
+    }
+  };
+  const saveMapFile = () => {
+    if (!draft) return;
+    try {
+      const text = serializeMapFile(draft.map);
+      const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${draft.map.name.trim().replace(/[\\/:*?"<>|]+/g, '_') || 'map'}${MAP_FILE_EXTENSION}`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setToast({ text: `Карта сохранена в файл ${link.download}.`, tone: 'success' });
+    } catch (error) {
+      fail(error);
+    }
+  };
+  const openMapFile = async (file: File) => {
+    try {
+      if (file.size > MAP_FILE_MAX_BYTES)
+        throw new Error(`Файл карты больше ${MAP_FILE_MAX_BYTES / 1024 / 1024} МиБ`);
+      const map = parseMapFile(await file.text());
+      if (map.background) await verifyEmbeddedRaster(map.background);
+      edit((d) => loadDocument(d, map));
+      setSelectedDecorationId(null);
+      setCalibrationPoints([]);
+      setToast({
+        text: `Файл карты «${map.name}» открыт как черновик (${map.cols} × ${map.rows}). Проверьте расстановку и нажмите «Применить карту».`,
+        tone: 'success',
+      });
+    } catch (error) {
+      setToast({
+        text: `Файл карты не открыт: ${error instanceof Error ? error.message : String(error)}. Текущая карта не изменена.`,
+        tone: 'error',
+      });
+    }
+  };
   const edit = (change: (d: EditorDraft) => EditorDraft) =>
     setHistory((h) => (h ? commit(h, change(h.present)) : h));
   const enterEditor = () => {
@@ -383,7 +470,7 @@ export function App() {
             battle={battle}
             version={version}
             mode={mode}
-            map={draft ? draft.map : battle.map}
+            map={shownMap}
             positions={draft ? resolveDraftPositions(draft, battle).positions : battle.positions}
             conflicts={
               new Set([
@@ -410,6 +497,33 @@ export function App() {
               edit((d) => placeToken(d, id, { x, y }, battle.positions[id]))
             }
             onPaint={(cells, c) => edit((d) => paint(d, cells, c))}
+            backgroundUrl={backgroundUrl}
+            selectedDecoration={selectedDecorationId}
+            onSelectDecoration={setSelectedDecorationId}
+            onAddDecoration={(a, c) =>
+              edit((d) =>
+                addDecoration(d, {
+                  id: commandId('dec'),
+                  col: Math.min(a.col, c.col),
+                  row: Math.min(a.row, c.row),
+                  width: Math.abs(a.col - c.col) + 1,
+                  height: Math.abs(a.row - c.row) + 1,
+                  color: colour,
+                  label: newDecorationLabel.trim(),
+                }),
+              )
+            }
+            onMoveBackground={(dx, dy) =>
+              edit((d) =>
+                d.map.background
+                  ? updateBackground(d, { x: d.map.background.x + dx, y: d.map.background.y + dy })
+                  : d,
+              )
+            }
+            calibrationPoints={calibrationPoints}
+            onCalibrationPoint={(pt) =>
+              setCalibrationPoints((pts) => (pts.length >= 2 ? [pt] : [...pts, pt]))
+            }
           />
         </section>
 
@@ -432,6 +546,27 @@ export function App() {
               onEraseOutside={() => edit(eraseOutside)}
               onKeepDraft={(id) => edit((d) => keepDraftPosition(d, id, battle.positions[id]))}
               onTakeScene={(id) => edit((d) => takeScenePosition(d, id, battle.positions[id]))}
+              background={history.present.map.background}
+              onLoadBackground={loadBackground}
+              onUpdateBackground={(patch) => edit((d) => updateBackground(d, patch))}
+              onRemoveBackground={() => edit((d) => setBackground(d, null))}
+              calibrationPoints={calibrationPoints.length}
+              onCalibrate={calibrate}
+              onResetCalibration={() => setCalibrationPoints([])}
+              selectedDecoration={selectedDecoration}
+              newDecorationLabel={newDecorationLabel}
+              onNewDecorationLabel={setNewDecorationLabel}
+              onUpdateDecoration={(patch) =>
+                selectedDecorationId &&
+                edit((d) => updateDecoration(d, selectedDecorationId, patch))
+              }
+              onRemoveDecoration={() => {
+                if (!selectedDecorationId) return;
+                edit((d) => removeDecoration(d, selectedDecorationId));
+                setSelectedDecorationId(null);
+              }}
+              onSaveFile={saveMapFile}
+              onOpenFile={openMapFile}
               onUndo={() => setHistory((h) => (h ? undo(h) : h))}
               onRedo={() => setHistory((h) => (h ? redo(h) : h))}
               onApply={applyEditorDraft}

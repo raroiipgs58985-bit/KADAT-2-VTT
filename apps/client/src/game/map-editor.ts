@@ -1,5 +1,14 @@
 import { cellKey, type Cell, type Point } from './grid';
-import { insideMap, mapProblems, type FloorColorId, type MapDocument } from './map';
+import {
+  insideMap,
+  mapProblems,
+  sameMap,
+  type Decoration,
+  type FloorColorId,
+  type MapBackground,
+  type MapDocument,
+  type RasterMime,
+} from './map';
 import { actor, ids, tokenConflicts, type ActorId, type Battle } from './model';
 import { applyMap } from './engine';
 
@@ -36,7 +45,9 @@ export function startEditing(b: Battle): EditorHistory {
     future: [],
   };
 }
-const sameDraft = (a: EditorDraft, b: EditorDraft) => JSON.stringify(a) === JSON.stringify(b);
+const sameDraft = (a: EditorDraft, b: EditorDraft) =>
+  sameMap(a.map, b.map) &&
+  JSON.stringify([a.positions, a.basePositions]) === JSON.stringify([b.positions, b.basePositions]);
 
 /** Records one editor operation (a whole gesture counts as one). No-ops are not recorded. */
 export function commit(h: EditorHistory, next: EditorDraft): EditorHistory {
@@ -82,7 +93,10 @@ export function paint(d: EditorDraft, cells: readonly Cell[], colour: FloorColor
   }
   return { ...d, map: { ...d.map, floor } };
 }
-/** Explicit GM action: erase floor paint left outside the current bounds. */
+/**
+ * Explicit GM action: erase floor paint outside the current bounds and delete decorations
+ * that do not fit entirely inside them. Nothing is clipped silently.
+ */
 export function eraseOutside(d: EditorDraft): EditorDraft {
   const floor = Object.fromEntries(
     Object.entries(d.map.floor).filter(([key]) => {
@@ -90,8 +104,90 @@ export function eraseOutside(d: EditorDraft): EditorDraft {
       return insideMap(d.map, col!, row!);
     }),
   );
-  return { ...d, map: { ...d.map, floor } };
+  const decorations = d.map.decorations.filter(
+    (x) => x.col + x.width <= d.map.cols && x.row + x.height <= d.map.rows,
+  );
+  return { ...d, map: { ...d.map, floor, decorations } };
 }
+
+/** Replaces the draft map with an opened document; token positions stay as they are. */
+export const loadDocument = (d: EditorDraft, map: MapDocument): EditorDraft => ({ ...d, map });
+
+// --- Background -------------------------------------------------------------------------
+
+/** Initial transform for a new raster: fitted to the map width, top-left at the origin. */
+export function fitBackground(
+  map: MapDocument,
+  raster: { mime: RasterMime; data: string; widthPx: number; heightPx: number },
+): MapBackground {
+  return {
+    ...raster,
+    x: 0,
+    y: 0,
+    metersPerPixel: map.cols / raster.widthPx,
+    opacity: 0.8,
+    locked: false,
+  };
+}
+export const setBackground = (d: EditorDraft, background: MapBackground | null): EditorDraft => ({
+  ...d,
+  map: { ...d.map, background },
+});
+export function updateBackground(
+  d: EditorDraft,
+  patch: Partial<Pick<MapBackground, 'x' | 'y' | 'metersPerPixel' | 'opacity' | 'locked'>>,
+): EditorDraft {
+  if (!d.map.background) return d;
+  return { ...d, map: { ...d.map, background: { ...d.map.background, ...patch } } };
+}
+/**
+ * Two-point calibration: the GM marks two points on the map and states the real distance
+ * between them. The scale changes so that the image distance between the points equals that
+ * distance; the first point stays where it is. Tokens and geometry are unaffected.
+ */
+export function calibrateBackground(
+  bg: MapBackground,
+  first: Point,
+  second: Point,
+  meters: number,
+): MapBackground {
+  if (bg.locked) throw new Error('Подложка заблокирована: снимите блокировку для калибровки');
+  if (!Number.isFinite(meters) || meters <= 0)
+    throw new Error('Укажите известную дистанцию в метрах больше нуля');
+  const pixels = Math.hypot(second.x - first.x, second.y - first.y) / bg.metersPerPixel;
+  if (!Number.isFinite(pixels) || pixels === 0)
+    throw new Error('Точки калибровки совпадают: нулевая длина');
+  const metersPerPixel = meters / pixels;
+  const k = metersPerPixel / bg.metersPerPixel;
+  return {
+    ...bg,
+    metersPerPixel,
+    x: first.x - (first.x - bg.x) * k,
+    y: first.y - (first.y - bg.y) * k,
+  };
+}
+
+// --- Decorations ------------------------------------------------------------------------
+
+export const addDecoration = (d: EditorDraft, decoration: Decoration): EditorDraft => ({
+  ...d,
+  map: { ...d.map, decorations: [...d.map.decorations, decoration] },
+});
+export const updateDecoration = (
+  d: EditorDraft,
+  id: string,
+  patch: Partial<Pick<Decoration, 'label' | 'color'>>,
+): EditorDraft => ({
+  ...d,
+  map: {
+    ...d.map,
+    decorations: d.map.decorations.map((x) => (x.id === id ? { ...x, ...patch } : x)),
+  },
+});
+export const removeDecoration = (d: EditorDraft, id: string): EditorDraft => ({
+  ...d,
+  map: { ...d.map, decorations: d.map.decorations.filter((x) => x.id !== id) },
+});
 const samePoint = (a: Point, b: Point) => a.x === b.x && a.y === b.y;
 const editedInDraft = (d: EditorDraft, id: ActorId) =>
   !samePoint(d.positions[id], d.basePositions[id]);
@@ -159,7 +255,7 @@ export function draftDiffers(d: EditorDraft, b: Battle) {
   const { positions, stale } = resolveDraftPositions(d, b);
   return (
     stale.length > 0 ||
-    JSON.stringify(d.map) !== JSON.stringify(b.map) ||
+    !sameMap(d.map, b.map) ||
     ids.some((id) => !samePoint(positions[id], b.positions[id]))
   );
 }

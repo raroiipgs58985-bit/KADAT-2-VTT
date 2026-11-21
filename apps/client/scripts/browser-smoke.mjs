@@ -56,6 +56,16 @@ const drag = async (from, to) => {
   await page.mouse.up();
 };
 const toast = () => page.textContent('.toast');
+/** Waits for an asynchronous toast (file reads) that contains `text`. */
+const toastWith = (text) =>
+  page
+    .waitForFunction((t) => document.querySelector('.toast')?.textContent.includes(t), text, {
+      timeout: 5000,
+    })
+    .then(
+      () => true,
+      () => false,
+    );
 const od = () => page.locator('.od .pip.on').count();
 
 const occupiedCells = (id) =>
@@ -189,6 +199,112 @@ check(
 await page.getByRole('tab', { name: 'Расстановка' }).click();
 await page.getByRole('button', { name: 'Скачать replay' }).click();
 check((await toast()).includes('только сцену 20 × 20'), 'replay export explains the size limit');
+
+// Stage 2: background raster, calibration, decorations and the portable map file.
+{
+  const { writeFileSync, readFileSync, rmSync, mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const work = mkdtempSync(join(tmpdir(), 'kadat-stage2-'));
+  // A 480 × 240 PNG drawn in the page: a grid every 40 px.
+  const pngBase64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 480;
+    c.height = 240;
+    const g = c.getContext('2d');
+    g.fillStyle = '#20303a';
+    g.fillRect(0, 0, 480, 240);
+    g.strokeStyle = '#9fb3c8';
+    for (let x = 0; x <= 480; x += 40) g.strokeRect(x, 0, 0, 240);
+    for (let y = 0; y <= 240; y += 40) g.strokeRect(0, y, 480, 0);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  const imagePath = join(work, 'plan.png');
+  writeFileSync(imagePath, Buffer.from(pngBase64, 'base64'));
+
+  await page.getByRole('tab', { name: /Редактор карты/ }).click();
+  await page.getByLabel('Ширина карты').fill('24');
+  await page.getByLabel('Высота карты').fill('12');
+  await page.getByRole('button', { name: 'Новая пустая карта' }).click();
+  await page.getByLabel('Файл подложки').setInputFiles(imagePath);
+  await page.waitForSelector('[data-testid="background"]');
+  const bgWidth = () =>
+    page.locator('[data-testid="background"]').getAttribute('width').then(Number);
+  check(Math.abs((await bgWidth()) - 24) < 1e-9, 'raster is fitted to the 24 m map width');
+
+  // Calibrate: two points 4 m apart on the current scale are really 8 m apart.
+  await page.getByRole('button', { name: /Калибровка/ }).click();
+  for (const [x, y] of [
+    [2, 2],
+    [6, 2],
+  ]) {
+    const pt = await screen(x, y);
+    await page.mouse.click(pt.x, pt.y);
+  }
+  await page.getByLabel('Известная дистанция, м').fill('8');
+  await page.getByRole('button', { name: 'Применить калибровку' }).click();
+  check(
+    Math.abs((await bgWidth()) - 48) < 0.05,
+    `calibration doubles the scale (width ${await bgWidth()} m)`,
+  );
+
+  // A labelled decoration and some floor paint.
+  await page.getByPlaceholder('например, Ящики').fill('Ящики');
+  await page.getByRole('button', { name: /Декорация/ }).click();
+  await drag({ x: 3.5, y: 5.5 }, { x: 5.5, y: 6.5 });
+  check(
+    (await page.locator('[data-decoration] text').textContent()) === 'Ящики',
+    'decoration with its label is drawn',
+  );
+  await page.getByRole('button', { name: /Прямоугольник/ }).click();
+  await drag({ x: 10.5, y: 8.5 }, { x: 12.5, y: 9.5 });
+  const floorBefore = await floorCells();
+  await page.screenshot({ path: `${out}/00d-background.png` });
+
+  // Save the map file.
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Сохранить карту в файл' }).click();
+  const mapPath = join(work, 'saved.kadat-map.json');
+  await (await download).saveAs(mapPath);
+  const saved = JSON.parse(readFileSync(mapPath, 'utf8'));
+  check(
+    saved.documentType === 'kadat-map' && saved.map.background.widthPx === 480,
+    'saved file embeds the raster (480 px wide)',
+  );
+
+  // The source image is removed and the client restarted.
+  rmSync(imagePath);
+  await page.reload();
+  await page.waitForSelector('svg.map');
+  check((await mapSize()) === '20x20', 'after restart the standard scene is open');
+
+  // A broken file does not change the current map.
+  const brokenPath = join(work, 'broken.kadat-map.json');
+  writeFileSync(brokenPath, '{ "documentType": "kadat-map", ');
+  await page.getByRole('tab', { name: /Редактор карты/ }).click();
+  await page.getByLabel('Файл карты').setInputFiles(brokenPath);
+  check(await toastWith('Файл карты не открыт'), 'a broken map file is refused');
+  check((await mapSize()) === '20x20', 'the current map is unchanged after the failed load');
+  const gifPath = join(work, 'image.gif');
+  writeFileSync(gifPath, Buffer.from('GIF89a\u0001\u0000\u0001\u0000', 'latin1'));
+  await page.getByLabel('Файл подложки').setInputFiles(gifPath);
+  check(await toastWith('PNG, JPEG и WebP'), 'a non-supported raster is refused');
+  check((await page.locator('[data-testid="background"]').count()) === 0, 'no background added');
+
+  // Open the saved file: grid, scale and markup match.
+  await page.getByLabel('Файл карты').setInputFiles(mapPath);
+  await page.waitForSelector('[data-testid="background"]');
+  check((await mapSize()) === '24x12', 'opened map is 24 × 12');
+  check(Math.abs((await bgWidth()) - 48) < 0.05, 'background scale survives the round trip');
+  check((await floorCells()) === floorBefore, 'floor markup survives the round trip');
+  check(
+    (await page.locator('[data-decoration] text').textContent()) === 'Ящики',
+    'decoration survives the round trip',
+  );
+  await page.getByRole('button', { name: 'Применить карту' }).click();
+  check((await page.textContent('.map-name')).includes('24 × 12'), 'opened map is applied');
+  rmSync(work, { recursive: true, force: true });
+}
 
 // Back to the standard scene for the control combat.
 await page.getByRole('button', { name: 'Новый бой' }).click();

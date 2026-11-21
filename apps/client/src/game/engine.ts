@@ -1341,6 +1341,14 @@ export function applyMap(
     cols: map.cols,
     rows: map.rows,
     floorCells: Object.keys(map.floor).length,
+    decorations: map.decorations.length,
+    background: map.background
+      ? {
+          mime: map.background.mime,
+          widthPx: map.background.widthPx,
+          heightPx: map.background.heightPx,
+        }
+      : null,
     revision: b.mapRevision,
     repositioned,
   });

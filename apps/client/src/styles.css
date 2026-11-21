@@ -956,3 +956,63 @@ kbd {
 .paint-preview.erase rect {
   fill: rgba(239, 107, 107, 0.35);
 }
+
+/* Stage 2: background, decorations, calibration */
+.map-background {
+  pointer-events: none;
+}
+.decoration rect {
+  fill-opacity: 0.85;
+  stroke: rgba(0, 0, 0, 0.35);
+  stroke-width: 0.04;
+}
+.decoration text {
+  font-size: 0.42px;
+  fill: #f4f7fa;
+  paint-order: stroke;
+  stroke: #0b1117;
+  stroke-width: 0.07;
+  pointer-events: none;
+}
+.mode-editor .decoration {
+  cursor: pointer;
+}
+.decoration.selected rect {
+  stroke: var(--accent);
+  stroke-width: 0.1;
+}
+.decoration-preview {
+  fill-opacity: 0.6;
+  stroke: var(--accent);
+  stroke-width: 0.06;
+  stroke-dasharray: 0.2 0.1;
+  pointer-events: none;
+}
+.calibration line {
+  stroke: #ff5bd2;
+  stroke-width: 0.06;
+}
+.calibration circle {
+  fill: #ff5bd2;
+  stroke: #0b1117;
+  stroke-width: 0.05;
+}
+.calibration text {
+  fill: #ffb3ef;
+  font-size: 0.42px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: #0b1117;
+  stroke-width: 0.07;
+}
+.calibration-box {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+}
+.file-button {
+  display: inline-block;
+  text-align: center;
+}

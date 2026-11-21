@@ -1,16 +1,66 @@
 import { useEffect, useState } from 'react';
-import { floorPalette, MAP_LIMITS, type FloorColorId } from '../game/map';
+import {
+  floorPalette,
+  MAP_LIMITS,
+  RASTER_LIMITS,
+  type Decoration,
+  type FloorColorId,
+  type MapBackground,
+} from '../game/map';
+import { MAP_FILE_EXTENSION } from '../game/map-file';
 import type { EditorHistory } from '../game/map-editor';
 import { actor, type ActorId } from '../game/model';
 import type { Point } from '../game/grid';
 import type { EditorTool } from './TacticalMap';
 
 export const toolList: { id: EditorTool; label: string; key: string }[] = [
+  { id: 'select', label: 'Выбор', key: 'V' },
+  { id: 'hand', label: 'Рука', key: 'H' },
+  { id: 'background', label: 'Фон', key: 'G' },
+  { id: 'calibrate', label: 'Калибровка', key: 'K' },
   { id: 'brush', label: 'Кисть', key: 'B' },
   { id: 'rect', label: 'Прямоугольник', key: 'R' },
   { id: 'eraser', label: 'Ластик', key: 'E' },
-  { id: 'hand', label: 'Рука', key: 'H' },
+  { id: 'decoration', label: 'Декорация', key: 'D' },
 ];
+
+/** A number input that commits one undo step on blur or Enter, not on every keystroke. */
+function NumberField(props: {
+  label: string;
+  value: number;
+  step?: number;
+  min?: number;
+  max?: number;
+  disabled?: boolean;
+  onCommit: (value: number) => void;
+}) {
+  const [text, setText] = useState(String(props.value));
+  useEffect(() => setText(String(props.value)), [props.value]);
+  const commit = () => {
+    const n = Number(text);
+    if (text.trim() !== '' && Number.isFinite(n) && n !== props.value) props.onCommit(n);
+    else setText(String(props.value));
+  };
+  return (
+    <label>
+      {props.label}
+      <input
+        type="number"
+        step={props.step ?? 'any'}
+        min={props.min}
+        max={props.max}
+        value={text}
+        disabled={props.disabled}
+        aria-label={props.label}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+        }}
+      />
+    </label>
+  );
+}
 
 export function EditorPanel(props: {
   history: EditorHistory;
@@ -36,7 +86,29 @@ export function EditorPanel(props: {
   onRedo: () => void;
   onApply: () => void;
   onDiscard: () => void;
+  background: MapBackground | null;
+  onLoadBackground: (file: File) => void;
+  onUpdateBackground: (
+    patch: Partial<Pick<MapBackground, 'x' | 'y' | 'metersPerPixel' | 'opacity' | 'locked'>>,
+  ) => void;
+  onRemoveBackground: () => void;
+  calibrationPoints: number;
+  onCalibrate: (meters: number) => void;
+  onResetCalibration: () => void;
+  selectedDecoration: Decoration | null;
+  newDecorationLabel: string;
+  onNewDecorationLabel: (label: string) => void;
+  onUpdateDecoration: (patch: Partial<Pick<Decoration, 'label' | 'color'>>) => void;
+  onRemoveDecoration: () => void;
+  onSaveFile: () => void;
+  onOpenFile: (file: File) => void;
 }) {
+  const [calibrationMeters, setCalibrationMeters] = useState('');
+  const [decorationText, setDecorationText] = useState('');
+  useEffect(
+    () => setDecorationText(props.selectedDecoration?.label ?? ''),
+    [props.selectedDecoration?.id, props.selectedDecoration?.label],
+  );
   const map = props.history.present.map;
   const [name, setName] = useState(map.name);
   const [cols, setCols] = useState(String(map.cols));
@@ -54,7 +126,10 @@ export function EditorPanel(props: {
   const blocking =
     props.problems.map.length + props.problems.tokens.length + props.problems.stale.length;
   const cell = (p: Point) => `${p.x - 0.5}, ${p.y - 0.5}`;
-  const floorOutside = props.problems.map.some((p) => p.startsWith('Разметка пола выходит'));
+  const floorOutside = props.problems.map.some(
+    (p) => p.startsWith('Разметка пола выходит') || p.startsWith('Декорации выходят'),
+  );
+  const bg = props.background;
 
   return (
     <section className="panel editor" aria-label="Редактор карты">
@@ -119,7 +194,7 @@ export function EditorPanel(props: {
         Размер меняется без обрезания разметки и без переноса токенов.
       </p>
 
-      <h3>Разметка пола (только визуальная)</h3>
+      <h3>Инструменты</h3>
       <div className="tools" role="toolbar" aria-label="Инструменты редактора">
         {toolList.map((t) => (
           <button
@@ -134,6 +209,7 @@ export function EditorPanel(props: {
           </button>
         ))}
       </div>
+      <p className="muted small">Пол, декорации и подложка — только визуальные слои.</p>
       <div className="palette" role="radiogroup" aria-label="Цвет разметки">
         {floorPalette.map((c) => (
           <button
@@ -158,6 +234,178 @@ export function EditorPanel(props: {
           Повторить <kbd>Ctrl+Y</kbd>
         </button>
       </div>
+
+      <h3>Декорация</h3>
+      {props.selectedDecoration ? (
+        <div className="stack" data-testid="decoration-props">
+          <label>
+            Подпись выбранной декорации
+            <input
+              value={decorationText}
+              maxLength={MAP_LIMITS.maxLabelLength}
+              onChange={(e) => setDecorationText(e.target.value)}
+              onBlur={() => {
+                if (decorationText !== props.selectedDecoration!.label)
+                  props.onUpdateDecoration({ label: decorationText });
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') props.onUpdateDecoration({ label: decorationText });
+              }}
+            />
+          </label>
+          <div className="row">
+            <button type="button" onClick={() => props.onUpdateDecoration({ color: props.colour })}>
+              Применить выбранный цвет
+            </button>
+            <button type="button" onClick={props.onRemoveDecoration}>
+              Удалить декорацию
+            </button>
+          </div>
+        </div>
+      ) : (
+        <label>
+          Подпись новой декорации
+          <input
+            value={props.newDecorationLabel}
+            maxLength={MAP_LIMITS.maxLabelLength}
+            placeholder="например, Ящики"
+            onChange={(e) => props.onNewDecorationLabel(e.target.value)}
+          />
+        </label>
+      )}
+
+      <h3>Подложка</h3>
+      <label className="file-button">
+        {bg ? 'Заменить изображение…' : 'Загрузить изображение…'}
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          aria-label="Файл подложки"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) props.onLoadBackground(file);
+          }}
+        />
+      </label>
+      <p className="muted small">
+        PNG, JPEG или WebP: до {RASTER_LIMITS.maxBytes / 1024 / 1024} МиБ, до{' '}
+        {RASTER_LIMITS.maxSide} пикс. по стороне, до {RASTER_LIMITS.maxPixels.toLocaleString('ru')}{' '}
+        пикс. всего. Формат проверяется по содержимому.
+      </p>
+      {bg && (
+        <div className="stack" data-testid="background-props">
+          <p className="muted small">
+            {bg.mime}, {bg.widthPx} × {bg.heightPx} пикс. · на карте{' '}
+            {Number((bg.widthPx * bg.metersPerPixel).toFixed(2))} ×{' '}
+            {Number((bg.heightPx * bg.metersPerPixel).toFixed(2))} м
+          </p>
+          <div className="size-row">
+            <NumberField
+              label="Фон X, м"
+              value={bg.x}
+              step={0.1}
+              disabled={bg.locked}
+              onCommit={(x) => props.onUpdateBackground({ x })}
+            />
+            <NumberField
+              label="Фон Y, м"
+              value={bg.y}
+              step={0.1}
+              disabled={bg.locked}
+              onCommit={(y) => props.onUpdateBackground({ y })}
+            />
+          </div>
+          <NumberField
+            label="Масштаб, м на пиксель"
+            value={bg.metersPerPixel}
+            step={0.001}
+            min={0}
+            disabled={bg.locked}
+            onCommit={(metersPerPixel) => props.onUpdateBackground({ metersPerPixel })}
+          />
+          <NumberField
+            label="Непрозрачность (0–1)"
+            value={bg.opacity}
+            step={0.1}
+            min={0}
+            max={1}
+            onCommit={(opacity) => props.onUpdateBackground({ opacity })}
+          />
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={bg.locked}
+              onChange={(e) => props.onUpdateBackground({ locked: e.target.checked })}
+            />
+            Заблокировать подложку
+          </label>
+          <div className="calibration-box">
+            <strong>Калибровка по двум точкам</strong>
+            <p className="muted small">
+              Инструмент «Калибровка» (K): щёлкните концы отрезка известной длины на изображении.
+              Отмечено точек: {props.calibrationPoints}/2.
+            </p>
+            <div className="row">
+              <label>
+                Известная дистанция, м
+                <input
+                  type="number"
+                  step="any"
+                  min={0}
+                  value={calibrationMeters}
+                  aria-label="Известная дистанция, м"
+                  onChange={(e) => setCalibrationMeters(e.target.value)}
+                />
+              </label>
+            </div>
+            <div className="row">
+              <button
+                type="button"
+                disabled={props.calibrationPoints < 2 || bg.locked}
+                onClick={() => props.onCalibrate(Number(calibrationMeters))}
+              >
+                Применить калибровку
+              </button>
+              <button
+                type="button"
+                disabled={props.calibrationPoints === 0}
+                onClick={props.onResetCalibration}
+              >
+                Сбросить точки
+              </button>
+            </div>
+          </div>
+          <button type="button" onClick={props.onRemoveBackground}>
+            Убрать подложку
+          </button>
+        </div>
+      )}
+
+      <h3>Файл карты</h3>
+      <div className="row">
+        <button type="button" onClick={props.onSaveFile}>
+          Сохранить карту в файл
+        </button>
+        <label className="file-button">
+          Открыть файл карты…
+          <input
+            type="file"
+            accept={`${MAP_FILE_EXTENSION},application/json,.json`}
+            aria-label="Файл карты"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (file) props.onOpenFile(file);
+            }}
+          />
+        </label>
+      </div>
+      <p className="muted small">
+        Сохраняется черновик, как он виден в редакторе, вместе с изображением подложки (
+        {MAP_FILE_EXTENSION}). Открытый файл становится черновиком; при ошибке текущая карта не
+        меняется.
+      </p>
 
       {blocking > 0 && (
         <div className="problems" role="alert">
@@ -191,7 +439,7 @@ export function EditorPanel(props: {
           ))}
           {floorOutside && (
             <button type="button" onClick={props.onEraseOutside}>
-              Стереть разметку за границами
+              Стереть разметку и декорации за границами
             </button>
           )}
         </div>

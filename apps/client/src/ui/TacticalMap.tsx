@@ -23,7 +23,8 @@ const MIN_ZOOM = 1;
 const MAX_ZOOM = 12;
 
 export type SceneMode = 'editor' | 'placement' | 'combat';
-export type EditorTool = 'brush' | 'rect' | 'eraser' | 'hand';
+export type EditorTool =
+  'select' | 'hand' | 'background' | 'brush' | 'rect' | 'eraser' | 'decoration' | 'calibrate';
 export interface MoveIntent {
   actor: ActorId;
   modeLabel: string;
@@ -51,12 +52,21 @@ interface Props {
   onPlace: (id: ActorId, x: number, y: number) => void;
   onDraftPlace: (id: ActorId, x: number, y: number) => void;
   onPaint: (cells: Cell[], colour: FloorColorId | null) => void;
+  /** Object URL of the background raster (created and revoked by the owner). */
+  backgroundUrl: string | null;
+  selectedDecoration: string | null;
+  onSelectDecoration: (id: string | null) => void;
+  onAddDecoration: (start: Cell, end: Cell) => void;
+  onMoveBackground: (dx: number, dy: number) => void;
+  calibrationPoints: readonly Point[];
+  onCalibrationPoint: (p: Point) => void;
 }
 type Drag =
   | { kind: 'token'; id: ActorId; pointer: number; offset: Point; at: Point }
   | { kind: 'pan'; pointer: number; start: Point; center: Point }
   | { kind: 'brush'; pointer: number; erase: boolean; cells: Map<string, Cell> }
-  | { kind: 'rect'; pointer: number; start: Cell; end: Cell };
+  | { kind: 'rect'; pointer: number; start: Cell; end: Cell; decoration: boolean }
+  | { kind: 'background'; pointer: number; start: Point; offset: Point };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const fmt = (n: number) => `${Number(n.toFixed(2))}`;
@@ -215,12 +225,33 @@ export function TacticalMap(props: Props) {
   };
   const onBackgroundDown = (e: ReactPointerEvent) => {
     const p = toMap(e.clientX, e.clientY);
+    if (mode === 'editor' && props.tool === 'select') {
+      const hit = (e.target as Element).closest('[data-decoration]');
+      props.onSelectDecoration(hit ? hit.getAttribute('data-decoration') : null);
+      return;
+    }
+    if (mode === 'editor' && props.tool === 'calibrate') {
+      props.onCalibrationPoint(p);
+      return;
+    }
+    if (mode === 'editor' && props.tool === 'background') {
+      if (!map.background || map.background.locked) return;
+      svg.current!.setPointerCapture(e.pointerId);
+      setDrag({ kind: 'background', pointer: e.pointerId, start: p, offset: { x: 0, y: 0 } });
+      return;
+    }
     if (mode === 'editor' && props.tool !== 'hand') {
       if (!inMap(p)) return;
       svg.current!.setPointerCapture(e.pointerId);
       const cell = cellAt(p);
-      if (props.tool === 'rect')
-        setDrag({ kind: 'rect', pointer: e.pointerId, start: cell, end: cell });
+      if (props.tool === 'rect' || props.tool === 'decoration')
+        setDrag({
+          kind: 'rect',
+          pointer: e.pointerId,
+          start: cell,
+          end: cell,
+          decoration: props.tool === 'decoration',
+        });
       else
         setDrag({
           kind: 'brush',
@@ -249,6 +280,8 @@ export function TacticalMap(props: Props) {
       const cell = cellAt(p);
       if (!drag.cells.has(cellKey(cell)))
         setDrag({ ...drag, cells: new Map(drag.cells).set(cellKey(cell), cell) });
+    } else if (drag.kind === 'background') {
+      setDrag({ ...drag, offset: { x: p.x - drag.start.x, y: p.y - drag.start.y } });
     } else if (drag.kind === 'rect') {
       const cell = cellAt(p);
       setDrag({
@@ -281,7 +314,11 @@ export function TacticalMap(props: Props) {
       } else if (drag.kind === 'brush') {
         props.onPaint([...drag.cells.values()], drag.erase ? null : props.floorColour);
       } else if (drag.kind === 'rect') {
-        props.onPaint(rectangleCells(drag.start, drag.end), props.floorColour);
+        if (drag.decoration) props.onAddDecoration(drag.start, drag.end);
+        else props.onPaint(rectangleCells(drag.start, drag.end), props.floorColour);
+      } else if (drag.kind === 'background') {
+        const { x, y } = drag.offset;
+        if (x !== 0 || y !== 0) props.onMoveBackground(x, y);
       }
       setDrag(null);
       return;
@@ -320,9 +357,20 @@ export function TacticalMap(props: Props) {
   const preview: { cells: Cell[]; erase: boolean } | null =
     drag?.kind === 'brush'
       ? { cells: [...drag.cells.values()], erase: drag.erase }
-      : drag?.kind === 'rect'
+      : drag?.kind === 'rect' && !drag.decoration
         ? { cells: rectangleCells(drag.start, drag.end), erase: false }
         : null;
+  const decorationPreview =
+    drag?.kind === 'rect' && drag.decoration
+      ? {
+          col: Math.min(drag.start.col, drag.end.col),
+          row: Math.min(drag.start.row, drag.end.row),
+          width: Math.abs(drag.start.col - drag.end.col) + 1,
+          height: Math.abs(drag.start.row - drag.end.row) + 1,
+        }
+      : null;
+  const bg = map.background;
+  const bgOffset = drag?.kind === 'background' ? drag.offset : { x: 0, y: 0 };
 
   const lines = [];
   for (let i = 0; i <= map.cols; i++) {
@@ -352,11 +400,23 @@ export function TacticalMap(props: Props) {
     mode === 'editor'
       ? props.tool === 'hand'
         ? 'Рука: перетаскивайте карту; токены — в пределах черновика'
-        : props.tool === 'rect'
-          ? 'Прямоугольник: зажмите и протяните; Escape — отмена'
-          : props.tool === 'eraser'
-            ? 'Ластик: проведите по клеткам; Escape — отмена'
-            : 'Кисть: проведите по клеткам; Escape — отмена'
+        : props.tool === 'select'
+          ? 'Выбор: щёлкните декорацию, чтобы изменить её в панели'
+          : props.tool === 'background'
+            ? bg
+              ? bg.locked
+                ? 'Фон заблокирован: снимите блокировку в панели'
+                : 'Фон: перетащите подложку; токены и сетка не двигаются'
+              : 'Фон: сначала загрузите изображение в панели'
+            : props.tool === 'decoration'
+              ? 'Декорация: протяните прямоугольник; подпись и цвет — в панели'
+              : props.tool === 'calibrate'
+                ? `Калибровка: щёлкните две точки известного отрезка (${props.calibrationPoints.length}/2)`
+                : props.tool === 'rect'
+                  ? 'Прямоугольник: зажмите и протяните; Escape — отмена'
+                  : props.tool === 'eraser'
+                    ? 'Ластик: проведите по клеткам; Escape — отмена'
+                    : 'Кисть: проведите по клеткам; Escape — отмена'
       : mode === 'placement'
         ? 'Расстановка: перетаскивайте токены по клеткам (до начала боя)'
         : moveIntent
@@ -405,7 +465,26 @@ export function TacticalMap(props: Props) {
         onPointerLeave={() => setHover(null)}
         onPointerCancel={() => setDrag(null)}
       >
+        <defs>
+          <clipPath id="map-area">
+            <rect x={0} y={0} width={map.cols} height={map.rows} />
+          </clipPath>
+        </defs>
         <rect className="map-floor" x={0} y={0} width={map.cols} height={map.rows} />
+        {bg && props.backgroundUrl && (
+          <image
+            className="map-background"
+            data-testid="background"
+            href={props.backgroundUrl}
+            x={bg.x + bgOffset.x}
+            y={bg.y + bgOffset.y}
+            width={bg.widthPx * bg.metersPerPixel}
+            height={bg.heightPx * bg.metersPerPixel}
+            opacity={bg.opacity}
+            clipPath="url(#map-area)"
+            preserveAspectRatio="none"
+          />
+        )}
         <g data-testid="floor" data-cells={Object.keys(map.floor).length}>
           {Object.entries(map.floor).map(([key, colour]) => {
             const [col, row] = key.split(':').map(Number);
@@ -438,6 +517,45 @@ export function TacticalMap(props: Props) {
             ))}
           </g>
         )}
+        <g data-testid="decorations" data-count={map.decorations.length}>
+          {map.decorations.map((d) => (
+            <g
+              key={d.id}
+              className={`decoration ${props.selectedDecoration === d.id ? 'selected' : ''}`}
+              data-decoration={d.id}
+            >
+              <rect
+                x={d.col + 0.04}
+                y={d.row + 0.04}
+                width={d.width - 0.08}
+                height={d.height - 0.08}
+                rx={0.12}
+                style={{ fill: floorColor(d.color) }}
+              />
+              {d.label && (
+                <text
+                  x={d.col + d.width / 2}
+                  y={d.row + d.height / 2}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                >
+                  {d.label}
+                </text>
+              )}
+            </g>
+          ))}
+          {decorationPreview && (
+            <rect
+              className="decoration-preview"
+              data-testid="decoration-preview"
+              x={decorationPreview.col}
+              y={decorationPreview.row}
+              width={decorationPreview.width}
+              height={decorationPreview.height}
+              style={{ fill: floorColor(props.floorColour) }}
+            />
+          )}
+        </g>
         <g data-testid="reach" data-cells={reachCells.length}>
           {reachCells.map((c) => (
             <rect
@@ -480,6 +598,31 @@ export function TacticalMap(props: Props) {
           );
         })}
 
+        {mode === 'editor' && props.calibrationPoints.length > 0 && (
+          <g className="calibration" data-testid="calibration">
+            {props.calibrationPoints.length === 2 && (
+              <>
+                <line
+                  x1={props.calibrationPoints[0]!.x}
+                  y1={props.calibrationPoints[0]!.y}
+                  x2={props.calibrationPoints[1]!.x}
+                  y2={props.calibrationPoints[1]!.y}
+                />
+                <text
+                  x={(props.calibrationPoints[0]!.x + props.calibrationPoints[1]!.x) / 2}
+                  y={(props.calibrationPoints[0]!.y + props.calibrationPoints[1]!.y) / 2 - 0.3}
+                  textAnchor="middle"
+                >
+                  {fmt(distance(props.calibrationPoints[0]!, props.calibrationPoints[1]!))} м по
+                  текущему масштабу
+                </text>
+              </>
+            )}
+            {props.calibrationPoints.map((pt, i) => (
+              <circle key={i} cx={pt.x} cy={pt.y} r={0.18} />
+            ))}
+          </g>
+        )}
         {attack && (
           <g className="attack-line">
             <line x1={attack.a.x} y1={attack.a.y} x2={attack.b.x} y2={attack.b.y} />
