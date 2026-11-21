@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { fixedDice, randomDice, seededDice } from './game/dice';
 import {
   actorStatus,
-  applyMap,
   attack,
   cancelUnstarted,
   moveActor,
@@ -21,17 +20,21 @@ import type { JournalTone } from './game/journal';
 import { createBattle, ids, weapons, type ActorId } from './game/model';
 import type { FloorColorId } from './game/map';
 import {
+  applyDraft,
   commit,
   draftDiffers,
   draftProblems,
   eraseOutside,
+  keepDraftPosition,
   newEmpty,
   paint,
   placeToken,
   redo,
   rename,
   resize,
+  resolveDraftPositions,
   startEditing,
+  takeScenePosition,
   undo,
   type EditorDraft,
   type EditorHistory,
@@ -89,7 +92,7 @@ export function App() {
   const editing = mode === 'editor' && history !== null;
   const draft: EditorDraft | null = editing ? history.present : null;
   const problems = useMemo(
-    () => (draft ? draftProblems(draft, battle) : { map: [], tokens: [] }),
+    () => (draft ? draftProblems(draft, battle) : { map: [], tokens: [], stale: [] }),
     [draft, battle, version],
   );
   const dirty = draft ? draftDiffers(draft, battle) : false;
@@ -188,10 +191,10 @@ export function App() {
     setSetupMode('placement');
     setToast({ text, tone: 'info' });
   };
-  const applyDraft = () => {
+  const applyEditorDraft = () => {
     if (!draft) return;
     const before = battle.mapRevision;
-    run((b) => applyMap(b, draft));
+    run((b) => applyDraft(b, draft));
     if (combatStore.getSnapshot().battle.mapRevision !== before)
       setHistory(startEditing(combatStore.getSnapshot().battle));
   };
@@ -381,8 +384,13 @@ export function App() {
             version={version}
             mode={mode}
             map={draft ? draft.map : battle.map}
-            positions={draft ? (draft.positions as typeof battle.positions) : battle.positions}
-            conflicts={new Set(problems.tokens.map((t) => t.actor))}
+            positions={draft ? resolveDraftPositions(draft, battle).positions : battle.positions}
+            conflicts={
+              new Set([
+                ...problems.tokens.map((t) => t.actor),
+                ...problems.stale.map((t) => t.actor),
+              ])
+            }
             selected={selected}
             activeActor={info.active}
             turnActive={info.turnActive && !busy}
@@ -398,7 +406,9 @@ export function App() {
             onSelect={setSelected}
             onMove={onMove}
             onPlace={(id, x, y) => run((b) => placeActor(b, id, x, y))}
-            onDraftPlace={(id, x, y) => edit((d) => placeToken(d, id, { x, y }))}
+            onDraftPlace={(id, x, y) =>
+              edit((d) => placeToken(d, id, { x, y }, battle.positions[id]))
+            }
             onPaint={(cells, c) => edit((d) => paint(d, cells, c))}
           />
         </section>
@@ -420,9 +430,11 @@ export function App() {
                 edit((d) => newEmpty(d, commandId('map'), name, cols, rows))
               }
               onEraseOutside={() => edit(eraseOutside)}
+              onKeepDraft={(id) => edit((d) => keepDraftPosition(d, id, battle.positions[id]))}
+              onTakeScene={(id) => edit((d) => takeScenePosition(d, id, battle.positions[id]))}
               onUndo={() => setHistory((h) => (h ? undo(h) : h))}
               onRedo={() => setHistory((h) => (h ? redo(h) : h))}
-              onApply={applyDraft}
+              onApply={applyEditorDraft}
               onDiscard={() => setHistory(startEditing(battle))}
             />
           ) : (

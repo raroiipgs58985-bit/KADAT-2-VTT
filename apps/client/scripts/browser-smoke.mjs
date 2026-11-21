@@ -128,6 +128,63 @@ await page.screenshot({ path: `${out}/00b-editor-conflict.png` });
 await page.getByRole('button', { name: 'Отменить изменения' }).click();
 check((await mapSize()) === '24x12', 'discard returns to the applied 24 × 12 map');
 
+// Editor → placement → editor → apply keeps a token moved only in placement.
+await page.getByRole('button', { name: /Кисть/ }).click();
+await drag({ x: 20.5, y: 1.5 }, { x: 21.5, y: 1.5 }); // a draft edit, not applied yet
+await page.getByRole('tab', { name: 'Расстановка' }).click();
+await drag({ x: 15.5, y: 10.5 }, { x: 13.5, y: 8.5 });
+await page.getByRole('tab', { name: /Редактор карты/ }).click();
+const pakInDraft = await tokenPosition('pak');
+check(
+  pakInDraft.x === 13.5 && pakInDraft.y === 8.5,
+  `editor shows Pak at his placement position (got ${pakInDraft.x}; ${pakInDraft.y})`,
+);
+await page.getByRole('button', { name: 'Применить карту' }).click();
+await page.getByRole('tab', { name: 'Расстановка' }).click();
+const pakApplied = await tokenPosition('pak');
+check(
+  pakApplied.x === 13.5 && pakApplied.y === 8.5,
+  `apply keeps the placement move (got ${pakApplied.x}; ${pakApplied.y})`,
+);
+
+// Moving the same token in the draft and in placement is a conflict before apply.
+await page.getByRole('tab', { name: /Редактор карты/ }).click();
+await page.getByRole('button', { name: /Рука/ }).click();
+await drag({ x: 13.5, y: 8.5 }, { x: 3.5, y: 3.5 }); // draft move
+await page.getByRole('tab', { name: 'Расстановка' }).click();
+await drag({ x: 13.5, y: 8.5 }, { x: 11.5, y: 8.5 }); // placement move
+await page.getByRole('tab', { name: /Редактор карты/ }).click();
+check(
+  (await page.locator('[data-stale="pak"]').count()) === 1,
+  'double move is shown as a conflict',
+);
+check(
+  (await page.getByRole('tab', { name: /Редактор карты/ }).getAttribute('aria-selected')) ===
+    'true' &&
+    (await page.getByRole('tab', { name: 'Расстановка' }).getAttribute('aria-selected')) ===
+      'false',
+  'the editor tab is the selected mode after returning',
+);
+check(
+  await page.getByRole('button', { name: 'Применить карту' }).isDisabled(),
+  'apply is blocked until the GM chooses',
+);
+await page.screenshot({ path: `${out}/00c-editor-stale.png` });
+await page.getByRole('button', { name: /Кисть/ }).click();
+await drag({ x: 22.5, y: 2.5 }, { x: 22.5, y: 3.5 }); // another draft edit to apply
+await page.getByRole('button', { name: 'Из расстановки' }).click();
+check(
+  (await page.locator('[data-stale="pak"]').count()) === 0,
+  'the conflict disappears after the GM choice',
+);
+await page.getByRole('button', { name: 'Применить карту' }).click();
+await page.getByRole('tab', { name: 'Расстановка' }).click();
+const pakChosen = await tokenPosition('pak');
+check(
+  pakChosen.x === 11.5 && pakChosen.y === 8.5,
+  `GM choice «из расстановки» is applied (got ${pakChosen.x}; ${pakChosen.y})`,
+);
+
 // Replay v0.3 cannot be exported for another map size: the reason is shown.
 await page.getByRole('tab', { name: 'Расстановка' }).click();
 await page.getByRole('button', { name: 'Скачать replay' }).click();

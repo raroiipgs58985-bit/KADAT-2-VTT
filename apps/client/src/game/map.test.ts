@@ -2,16 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { allCenters, cellsOf, placementProblem, snapCenter, type Footprint } from './grid';
 import { STANDARD_MAP, emptyMap, mapProblems } from './map';
 import {
+  applyDraft,
   commit,
+  draftDiffers,
+  DraftPositionConflict,
   draftProblems,
   eraseOutside,
+  keepDraftPosition,
   newEmpty,
   paint,
   placeToken,
   rectangleCells,
   redo,
   resize,
+  resolveDraftPositions,
   startEditing,
+  takeScenePosition,
   undo,
 } from './map-editor';
 import { createBattle, destinationsWithin, occupiedCells } from './model';
@@ -20,6 +26,7 @@ import {
   MapApplyRejected,
   moveActor,
   movementOptions,
+  placeActor,
   setFootprint,
   startCombat,
   turnInfo,
@@ -166,8 +173,8 @@ describe('Applying a map to the scene', () => {
   it('the GM can re-place conflicting tokens inside the draft and apply both together', () => {
     const b = createBattle();
     let d = resize(startEditing(b).present, 8, 8);
-    d = placeToken(d, 'kelus-drakar', { x: 1.5, y: 1.5 });
-    d = placeToken(d, 'pak', { x: 6.5, y: 6.5 });
+    d = placeToken(d, 'kelus-drakar', { x: 1.5, y: 1.5 }, b.positions['kelus-drakar']);
+    d = placeToken(d, 'pak', { x: 6.5, y: 6.5 }, b.positions['pak']);
     applyMap(b, d);
     expect(b.positions).toEqual({ 'kelus-drakar': { x: 1.5, y: 1.5 }, pak: { x: 6.5, y: 6.5 } });
     expect(b.log.at(-1)).toMatchObject({ detail: { repositioned: [{}, {}] } });
@@ -175,7 +182,7 @@ describe('Applying a map to the scene', () => {
 
   it('a draft that puts tokens on top of each other is refused', () => {
     const b = createBattle();
-    const d = placeToken(startEditing(b).present, 'pak', { x: 5.5, y: 10.5 });
+    const d = placeToken(startEditing(b).present, 'pak', { x: 5.5, y: 10.5 }, b.positions['pak']);
     expect(() => applyMap(b, d)).toThrow(/заняты другим персонажем/);
     expect(b.positions.pak).toEqual({ x: 15.5, y: 10.5 });
   });
@@ -183,10 +190,20 @@ describe('Applying a map to the scene', () => {
   it('a 2-cell token keeps its area and anchor checks on the new map', () => {
     const b = createBattle();
     setFootprint(b, 'pak', { width: 2, height: 1 });
-    const d = placeToken(resize(startEditing(b).present, 24, 12), 'pak', { x: 23, y: 11.5 });
+    const d = placeToken(
+      resize(startEditing(b).present, 24, 12),
+      'pak',
+      { x: 23, y: 11.5 },
+      b.positions.pak,
+    );
     applyMap(b, d);
     expect(occupiedCells(b, 'kelus-drakar')).toEqual(new Set(['22:11', '23:11']));
-    const outside = placeToken(startEditing(b).present, 'pak', { x: 24, y: 11.5 });
+    const outside = placeToken(
+      startEditing(b).present,
+      'pak',
+      { x: 24, y: 11.5 },
+      b.positions['pak'],
+    );
     expect(() => applyMap(b, outside)).toThrow(/границы карты 24 × 12/);
   });
 
@@ -226,5 +243,69 @@ describe('Replay v0.3 and the map', () => {
     const replay = exportReplay(b);
     expect(replay.visualLayersOmitted).toBe(true);
     expect(importReplay(JSON.parse(JSON.stringify(replay))).map.floor).toEqual({});
+  });
+});
+
+describe('Draft positions vs. setup placement', () => {
+  it('a token not moved in the draft keeps its current scene position on apply', () => {
+    const b = createBattle();
+    let h = startEditing(b);
+    h = commit(h, paint(h.present, [{ col: 0, row: 0 }], 'grey'));
+    // Leave the editor, move Pak in setup placement, come back and apply.
+    placeActor(b, 'pak', 13.5, 8.5);
+    expect(resolveDraftPositions(h.present, b).positions.pak).toEqual({ x: 13.5, y: 8.5 });
+    applyDraft(b, h.present);
+    expect(b.positions.pak).toEqual({ x: 13.5, y: 8.5 });
+    expect(b.log.at(-1)).toMatchObject({ type: 'map-applied', detail: { repositioned: [] } });
+  });
+
+  it('a token moved both in the draft and in placement is a conflict before apply', () => {
+    const b = createBattle();
+    let h = startEditing(b);
+    h = commit(h, placeToken(h.present, 'pak', { x: 3.5, y: 3.5 }, b.positions.pak));
+    placeActor(b, 'pak', 13.5, 8.5);
+    const problems = draftProblems(h.present, b);
+    expect(problems.stale).toEqual([
+      { actor: 'pak', draft: { x: 3.5, y: 3.5 }, scene: { x: 13.5, y: 8.5 } },
+    ]);
+    const before = JSON.stringify(b);
+    expect(() => applyDraft(b, h.present)).toThrow(DraftPositionConflict);
+    expect(JSON.stringify(b)).toBe(before);
+  });
+
+  it('the GM resolves the conflict either way, and the choice is undoable', () => {
+    const b = createBattle();
+    let h = startEditing(b);
+    h = commit(h, placeToken(h.present, 'pak', { x: 3.5, y: 3.5 }, b.positions.pak));
+    placeActor(b, 'pak', 13.5, 8.5);
+
+    const keep = commit(h, keepDraftPosition(h.present, 'pak', b.positions.pak));
+    expect(draftProblems(keep.present, b).stale).toEqual([]);
+    expect(resolveDraftPositions(keep.present, b).positions.pak).toEqual({ x: 3.5, y: 3.5 });
+
+    const take = commit(h, takeScenePosition(h.present, 'pak', b.positions.pak));
+    expect(draftProblems(take.present, b).stale).toEqual([]);
+    expect(resolveDraftPositions(take.present, b).positions.pak).toEqual({ x: 13.5, y: 8.5 });
+    expect(draftProblems(undo(take).present, b).stale).toHaveLength(1);
+
+    applyDraft(b, keep.present);
+    expect(b.positions.pak).toEqual({ x: 3.5, y: 3.5 });
+  });
+
+  it('moving a token in the editor after a placement change is not a conflict', () => {
+    const b = createBattle();
+    const h = startEditing(b);
+    placeActor(b, 'pak', 13.5, 8.5);
+    const d = placeToken(h.present, 'pak', { x: 12.5, y: 8.5 }, b.positions.pak);
+    expect(draftProblems(d, b).stale).toEqual([]);
+    applyDraft(b, d);
+    expect(b.positions.pak).toEqual({ x: 12.5, y: 8.5 });
+  });
+
+  it('an unchanged draft does not count as a change after a placement move', () => {
+    const b = createBattle();
+    const h = startEditing(b);
+    placeActor(b, 'kelus-drakar', 6.5, 10.5);
+    expect(draftDiffers(h.present, b)).toBe(false);
   });
 });

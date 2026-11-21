@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { floorPalette, MAP_LIMITS, type FloorColorId } from '../game/map';
 import type { EditorHistory } from '../game/map-editor';
 import { actor, type ActorId } from '../game/model';
+import type { Point } from '../game/grid';
 import type { EditorTool } from './TacticalMap';
 
 export const toolList: { id: EditorTool; label: string; key: string }[] = [
@@ -15,7 +16,11 @@ export function EditorPanel(props: {
   history: EditorHistory;
   /** Name of the map applied to the scene; a new map does not silently reuse it. */
   appliedName: string;
-  problems: { map: string[]; tokens: { actor: ActorId; problem: string }[] };
+  problems: {
+    map: string[];
+    tokens: { actor: ActorId; problem: string }[];
+    stale: { actor: ActorId; draft: Point; scene: Point }[];
+  };
   dirty: boolean;
   tool: EditorTool;
   colour: FloorColorId;
@@ -25,6 +30,8 @@ export function EditorPanel(props: {
   onResize: (cols: number, rows: number) => void;
   onNewEmpty: (name: string, cols: number, rows: number) => void;
   onEraseOutside: () => void;
+  onKeepDraft: (id: ActorId) => void;
+  onTakeScene: (id: ActorId) => void;
   onUndo: () => void;
   onRedo: () => void;
   onApply: () => void;
@@ -44,7 +51,9 @@ export function EditorPanel(props: {
   const commitName = () => {
     if (name !== map.name) props.onRename(name);
   };
-  const blocking = props.problems.map.length + props.problems.tokens.length;
+  const blocking =
+    props.problems.map.length + props.problems.tokens.length + props.problems.stale.length;
+  const cell = (p: Point) => `${p.x - 0.5}, ${p.y - 0.5}`;
   const floorOutside = props.problems.map.some((p) => p.startsWith('Разметка пола выходит'));
 
   return (
@@ -164,6 +173,22 @@ export function EditorPanel(props: {
               </li>
             ))}
           </ul>
+          {props.problems.stale.map((s) => (
+            <div key={s.actor} className="stale" data-stale={s.actor}>
+              <p>
+                {actor(s.actor).name} перемещён и в черновике (около клетки {cell(s.draft)}), и в
+                расстановке (около клетки {cell(s.scene)}). Какую позицию оставить?
+              </p>
+              <div className="row">
+                <button type="button" onClick={() => props.onKeepDraft(s.actor)}>
+                  Из черновика
+                </button>
+                <button type="button" onClick={() => props.onTakeScene(s.actor)}>
+                  Из расстановки
+                </button>
+              </div>
+            </div>
+          ))}
           {floorOutside && (
             <button type="button" onClick={props.onEraseOutside}>
               Стереть разметку за границами
