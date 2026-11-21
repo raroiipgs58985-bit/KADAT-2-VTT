@@ -95,7 +95,8 @@ function ObjectProperties(props: {
     return (
       <div className="stack" data-testid="object-props">
         <p className="muted small">
-          Стена: {wall.points.length - 1} отр., {length} м. Блокирует движение и видимость.
+          Стена: {wall.points.length - 1} отр., {length} м. Блокирует движение и видимость. Концы
+          стены можно перетащить за круглые маркеры; двери на ней должны остаться на прямом участке.
           {doors.length ? ` Двери на ней: ${doors.length}.` : ''}
         </p>
         <button type="button" onClick={() => props.onDelete(object)}>

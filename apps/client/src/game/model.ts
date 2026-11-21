@@ -1,7 +1,6 @@
 import data from './data/fixture.json';
 import {
   SINGLE_CELL,
-  allCenters,
   cellKey,
   cellsOf,
   distance,
@@ -134,8 +133,19 @@ export function placementProblemFor(
     footprintGeometryProblem(center, footprint, sceneGeometry(b))
   );
 }
-/** Geometry of the applied map with the current door states. */
-export const sceneGeometry = (b: Battle): GeometryIndex => buildGeometry(b.map, b.doors);
+/**
+ * Geometry of the applied map with the current door states. Cached per map and door-state
+ * object: both are replaced (never mutated) when they change, so the index is rebuilt only
+ * after a map apply or a door toggle.
+ */
+const geometryCache = new WeakMap<MapDocument, { doors: object; index: GeometryIndex }>();
+export function sceneGeometry(b: Battle): GeometryIndex {
+  const cached = geometryCache.get(b.map);
+  if (cached && cached.doors === b.doors) return cached.index;
+  const index = buildGeometry(b.map, b.doors);
+  geometryCache.set(b.map, { doors: b.doors, index });
+  return index;
+}
 
 export type MovementProblem = { kind: 'position'; reason: string } | PathProblem;
 /**
@@ -155,16 +165,27 @@ export function movementProblem(
   if (position) return { kind: 'position', reason: position };
   return straightPathProblem(b.positions[id], to, f, g);
 }
-/** Grid-aligned centres reachable in a straight line within `maxDistance` metres. */
+/**
+ * Grid-aligned centres reachable in a straight line within `maxDistance` metres. Only anchors
+ * inside the square around the token are visited, so the cost does not grow with map size.
+ */
 export function destinationsWithin(b: Battle, id: ActorId, maxDistance: number): Point[] {
   const from = b.positions[id];
+  const f = b.footprints[id];
   const g = sceneGeometry(b);
-  return allCenters(b.footprints[id], b.map).filter(
-    (c) =>
-      distance(from, c) > 0 &&
-      distance(from, c) <= maxDistance + 1e-9 &&
-      movementProblem(b, id, c, g) === null,
-  );
+  const reach = Math.ceil(maxDistance) + 1;
+  const col0 = Math.max(0, Math.floor(from.x - f.width / 2) - reach);
+  const row0 = Math.max(0, Math.floor(from.y - f.height / 2) - reach);
+  const col1 = Math.min(b.map.cols - f.width, Math.ceil(from.x - f.width / 2) + reach);
+  const row1 = Math.min(b.map.rows - f.height, Math.ceil(from.y - f.height / 2) + reach);
+  const out: Point[] = [];
+  for (let row = row0; row <= row1; row++)
+    for (let col = col0; col <= col1; col++) {
+      const c = { x: col + f.width / 2, y: row + f.height / 2 };
+      const d = distance(from, c);
+      if (d > 0 && d <= maxDistance + 1e-9 && movementProblem(b, id, c, g) === null) out.push(c);
+    }
+  return out;
 }
 /** Low-level placement: validates grid alignment, map bounds and overlap, then logs. */
 export function move(b: Battle, id: ActorId, x: number, y: number) {

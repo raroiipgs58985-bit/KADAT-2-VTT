@@ -192,6 +192,7 @@ describe('Replay v0.4 on a saved geometry snapshot', () => {
       'door',
       'start-combat',
       'move',
+      'journal', // the refused move: kept in the journal, no game effect
     ]);
     const replayed = importReplay(replay);
     expect(replayed.map.walls).toEqual(b.map.walls);

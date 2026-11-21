@@ -47,6 +47,8 @@ export interface MoveIntent {
   actor: ActorId;
   modeLabel: string;
   maxDistance: number;
+  /** Scene revision the highlight and hint were computed on. */
+  sceneRevision: number;
 }
 interface Props {
   battle: Battle;
@@ -66,7 +68,7 @@ interface Props {
   tool: EditorTool;
   floorColour: FloorColorId;
   onSelect: (id: ActorId) => void;
-  onMove: (id: ActorId, x: number, y: number) => void;
+  onMove: (id: ActorId, x: number, y: number, previewRevision?: number) => void;
   onPlace: (id: ActorId, x: number, y: number) => void;
   onDraftPlace: (id: ActorId, x: number, y: number) => void;
   onPaint: (cells: Cell[], colour: FloorColorId | null) => void;
@@ -78,6 +80,7 @@ interface Props {
   onAddWall: (points: Vertex[]) => void;
   onAddDoor: (from: Vertex, to: Vertex) => void;
   onToggleDoor: (id: string) => void;
+  onMoveWallEnd: (wallId: string, end: 'start' | 'end', to: Vertex) => void;
   /** Current door states: the session's in placement/combat, the map's initial ones in the editor. */
   doorStates: Readonly<Record<string, boolean>>;
   onMoveBackground: (dx: number, dy: number) => void;
@@ -96,6 +99,7 @@ type Drag =
       purpose: 'floor' | 'decoration' | 'obstacle' | 'zone';
     }
   | { kind: 'door'; pointer: number; start: Vertex; end: Vertex }
+  | { kind: 'wall-end'; pointer: number; wallId: string; end: 'start' | 'end'; at: Vertex }
   | { kind: 'background'; pointer: number; start: Point; offset: Point };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -290,6 +294,18 @@ export function TacticalMap(props: Props) {
       }
     }
     if (mode === 'editor' && props.tool === 'select') {
+      const handle = (e.target as Element).closest('[data-wall-end]');
+      if (handle) {
+        svg.current!.setPointerCapture(e.pointerId);
+        setDrag({
+          kind: 'wall-end',
+          pointer: e.pointerId,
+          wallId: handle.getAttribute('data-wall-id')!,
+          end: handle.getAttribute('data-wall-end') as 'start' | 'end',
+          at: vertexAt(p),
+        });
+        return;
+      }
       const hit = (e.target as Element).closest('[data-object-kind]');
       props.onSelectObject(
         hit
@@ -371,6 +387,8 @@ export function TacticalMap(props: Props) {
         setDrag({ ...drag, cells: new Map(drag.cells).set(cellKey(cell), cell) });
     } else if (drag.kind === 'background') {
       setDrag({ ...drag, offset: { x: p.x - drag.start.x, y: p.y - drag.start.y } });
+    } else if (drag.kind === 'wall-end') {
+      setDrag({ ...drag, at: vertexAt(p) });
     } else if (drag.kind === 'door') {
       // Snap along the dominant axis so the opening stays straight.
       const v = vertexAt(p);
@@ -406,7 +424,7 @@ export function TacticalMap(props: Props) {
         if (drag.at.x !== pos.x || drag.at.y !== pos.y) {
           if (mode === 'editor') props.onDraftPlace(drag.id, drag.at.x, drag.at.y);
           else if (mode === 'placement') props.onPlace(drag.id, drag.at.x, drag.at.y);
-          else props.onMove(drag.id, drag.at.x, drag.at.y);
+          else props.onMove(drag.id, drag.at.x, drag.at.y, moveIntent?.sceneRevision);
         }
       } else if (drag.kind === 'brush') {
         props.onPaint([...drag.cells.values()], drag.erase ? null : props.floorColour);
@@ -417,6 +435,11 @@ export function TacticalMap(props: Props) {
       } else if (drag.kind === 'door') {
         if (drag.start.x !== drag.end.x || drag.start.y !== drag.end.y)
           props.onAddDoor(drag.start, drag.end);
+      } else if (drag.kind === 'wall-end') {
+        const wall = map.walls.find((w) => w.id === drag.wallId);
+        const current = wall && (drag.end === 'start' ? wall.points[0] : wall.points.at(-1));
+        if (current && (current.x !== drag.at.x || current.y !== drag.at.y))
+          props.onMoveWallEnd(drag.wallId, drag.end, drag.at);
       } else if (drag.kind === 'background') {
         const { x, y } = drag.offset;
         if (x !== 0 || y !== 0) props.onMoveBackground(x, y);
@@ -428,7 +451,7 @@ export function TacticalMap(props: Props) {
       const p = toMap(e.clientX, e.clientY);
       if (!inMap(p)) return;
       const target = snapFor(moveIntent.actor, p);
-      props.onMove(moveIntent.actor, target.x, target.y);
+      props.onMove(moveIntent.actor, target.x, target.y, moveIntent.sceneRevision);
     }
   };
 
@@ -739,6 +762,47 @@ export function TacticalMap(props: Props) {
               <polyline className="line" points={w.points.map((p) => `${p.x},${p.y}`).join(' ')} />
             </g>
           ))}
+          {mode === 'editor' &&
+            props.tool === 'select' &&
+            props.selectedObject?.kind === 'wall' &&
+            (() => {
+              const wall = map.walls.find((w) => w.id === props.selectedObject!.id);
+              if (!wall) return null;
+              const moving = drag?.kind === 'wall-end' && drag.wallId === wall.id ? drag : null;
+              const points = wall.points.map((p, i) =>
+                moving &&
+                ((moving.end === 'start' && i === 0) ||
+                  (moving.end === 'end' && i === wall.points.length - 1))
+                  ? moving.at
+                  : p,
+              );
+              return (
+                <g className="wall-ends" data-testid="wall-ends">
+                  {moving && (
+                    <polyline
+                      className="wall-end-preview"
+                      points={points.map((p) => `${p.x},${p.y}`).join(' ')}
+                    />
+                  )}
+                  {(['start', 'end'] as const).map((end) => {
+                    const p = end === 'start' ? points[0]! : points.at(-1)!;
+                    return (
+                      <circle
+                        key={end}
+                        className="wall-end"
+                        data-wall-end={end}
+                        data-wall-id={wall.id}
+                        cx={p.x}
+                        cy={p.y}
+                        r={0.28}
+                      >
+                        <title>Перетащите, чтобы перенести конец стены</title>
+                      </circle>
+                    );
+                  })}
+                </g>
+              );
+            })()}
           {map.doors.map((d) => {
             const open = props.doorStates[d.id] ?? d.open;
             return (

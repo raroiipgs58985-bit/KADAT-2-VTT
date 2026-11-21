@@ -13,10 +13,11 @@ import {
   selectManualOrder,
   startCombat,
   type AttackCommand,
+  type BackgroundSummary,
   type MoveCommand,
 } from './engine';
 import { fixedDice } from './dice';
-import { createBattle, move, type ActorId, type Battle } from './model';
+import { append, createBattle, move, type ActorId, type Battle } from './model';
 import { rulings } from './rulings';
 import type { Footprint, Point } from './grid';
 import type { MapDocument } from './map';
@@ -31,8 +32,36 @@ type Step =
   | { type: 'stand'; command: { id: string; actor: ActorId } }
   | { type: 'footprint'; actor: ActorId; footprint: Footprint }
   // v0.4: geometry-sensitive commands.
-  | { type: 'map'; map: MapDocument; positions: Record<ActorId, Point> }
-  | { type: 'door'; doorId: string; open: boolean };
+  | {
+      type: 'map';
+      map: MapDocument;
+      positions: Record<ActorId, Point>;
+      omittedBackground: BackgroundSummary | null;
+    }
+  | { type: 'door'; doorId: string; open: boolean }
+  // A refused command: it changed nothing, but the journal keeps it.
+  | { type: 'journal'; entry: { type: JournalOnly; detail: unknown } };
+
+/** Journal entries of refused commands: no game effect, replayed into the journal only. */
+const JOURNAL_ONLY = ['move-rejected', 'posture-rejected', 'rejected'] as const;
+type JournalOnly = (typeof JOURNAL_ONLY)[number];
+const isJournalOnly = (type: string): type is JournalOnly =>
+  (JOURNAL_ONLY as readonly string[]).includes(type);
+
+/** Final state recorded at export; an import must arrive at exactly the same state. */
+function outcomeOf(b: Battle) {
+  return structuredClone({
+    positions: b.positions,
+    footprints: b.footprints,
+    hp: b.hp,
+    ammo: b.ammo,
+    doors: b.doors,
+    mapRevision: b.mapRevision,
+    sceneRevision: b.sceneRevision,
+    active: b.active,
+    logLength: b.log.length,
+  });
+}
 
 /**
  * v0.4 stores every applied map as a geometry snapshot (background bytes left out: they take
@@ -50,6 +79,8 @@ export interface Replay {
   geometryVersion?: number;
   /** Present when applied maps had a background raster, which a replay does not carry. */
   visualLayersOmitted?: true;
+  /** v0.4: state after the last step, checked on import. */
+  outcome?: ReturnType<typeof outcomeOf>;
   baseline: string;
   rulings: typeof rulings;
   steps: Step[];
@@ -101,10 +132,18 @@ export function exportReplay(b: Battle): Replay {
         snapshot: MapDocument;
         positions: Record<ActorId, Point>;
         backgroundOmitted: boolean;
+        background: BackgroundSummary | null;
       };
-      steps.push({ type: 'map', map: m.snapshot, positions: m.positions });
+      steps.push({
+        type: 'map',
+        map: m.snapshot,
+        positions: m.positions,
+        omittedBackground: m.backgroundOmitted ? m.background : null,
+      });
       backgroundOmitted ||= m.backgroundOmitted;
     }
+    if (isJournalOnly(entry.type))
+      steps.push({ type: 'journal', entry: { type: entry.type, detail } });
     if (entry.type === 'door') {
       const d = entry.detail as { doorId: string; open: boolean };
       steps.push({ type: 'door', doorId: d.doorId, open: d.open });
@@ -114,6 +153,7 @@ export function exportReplay(b: Battle): Replay {
     format: REPLAY_FORMAT,
     geometryVersion: GEOMETRY_VERSION,
     ...(backgroundOmitted ? { visualLayersOmitted: true as const } : {}),
+    outcome: outcomeOf(b),
     baseline: BASELINE,
     rulings,
     steps,
@@ -152,8 +192,18 @@ export function importReplay(value: unknown): Battle {
     else if (step.type === 'move') moveActor(b, step.command);
     else if (step.type === 'stand') standUp(b, step.command);
     else if (step.type === 'footprint') setFootprint(b, step.actor, step.footprint);
-    else if (step.type === 'map') applyMap(b, { map: step.map, positions: step.positions });
-    else if (step.type === 'door') setDoorOpen(b, step.doorId, step.open);
+    else if (step.type === 'map')
+      applyMap(
+        b,
+        { map: step.map, positions: step.positions },
+        { omittedBackground: step.omittedBackground ?? null },
+      );
+    else if (step.type === 'journal') {
+      const detail = step.entry?.detail as { committed?: unknown } | undefined;
+      if (!isJournalOnly(step.entry?.type) || detail?.committed !== false)
+        throw new Error('Шаг журнала replay повреждён');
+      append(b, step.entry.type, step.entry.detail);
+    } else if (step.type === 'door') setDoorOpen(b, step.doorId, step.open);
     else if (step.type === 'start-combat')
       startCombat(b, dice(step.rolls.slice(getEngine(b).pendingTurn?.prefix.length ?? 0)));
     else if (step.type === 'attack') {
@@ -171,6 +221,10 @@ export function importReplay(value: unknown): Battle {
       nextTurn(b, dice(step.rolls.slice(getEngine(b).pendingTurn?.prefix.length ?? 0)));
     else throw new Error('Неизвестная команда replay');
   }
+  if (r.outcome && JSON.stringify(outcomeOf(b)) !== JSON.stringify(r.outcome))
+    throw new Error(
+      'Replay не согласован: повтор команд привёл к другому состоянию, чем при экспорте. История не заменена.',
+    );
   return b;
 }
 /** A fully specified local scenario; no claim of canonical battlefield placement. */

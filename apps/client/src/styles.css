@@ -1119,3 +1119,16 @@ kbd {
 .decoration-preview.purpose-zone {
   fill: rgba(140, 110, 40, 0.3) !important;
 }
+.wall-end {
+  fill: var(--accent);
+  stroke: #0b1117;
+  stroke-width: 0.06;
+  cursor: grab;
+}
+.wall-end-preview {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.1;
+  stroke-dasharray: 0.2 0.12;
+  pointer-events: none;
+}

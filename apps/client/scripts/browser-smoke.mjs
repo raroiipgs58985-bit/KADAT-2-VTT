@@ -521,6 +521,200 @@ await page.getByRole('tab', { name: 'Расстановка' }).click();
   rmSync(work, { recursive: true, force: true });
 }
 
+// Stage 3 load check: 200 × 200 m map with a 2048 px raster, 500 wall edges and 50
+// obstacles; several edits including a wall end; zoom and highlight timings.
+{
+  const { writeFileSync, rmSync, mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const work = mkdtempSync(join(tmpdir(), 'kadat-big-'));
+  const click = async (x, y) => {
+    const pt = await screen(x, y);
+    await page.mouse.click(pt.x, pt.y);
+  };
+  const count = (selector) => page.locator(selector).count();
+  const p95 = (xs) => [...xs].sort((a, b) => a - b)[Math.ceil(xs.length * 0.95) - 1];
+  await page.reload();
+  await page.waitForSelector('svg.map');
+  const raster = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 2048;
+    c.height = 2048;
+    const g = c.getContext('2d');
+    g.fillStyle = '#1d2a33';
+    g.fillRect(0, 0, 2048, 2048);
+    g.strokeStyle = '#61788c';
+    for (let i = 0; i <= 2048; i += 64) {
+      g.strokeRect(i, 0, 0, 2048);
+      g.strokeRect(0, i, 2048, 0);
+    }
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  const walls = [];
+  for (let i = 0; i < 25; i++) {
+    const y = 40 + i * 6;
+    const x = 10 + (i % 5) * 36;
+    walls.push({
+      id: `w${i}`,
+      points: [
+        { x, y },
+        { x: x + 20, y },
+      ],
+    });
+  }
+  const obstacles = [];
+  for (let i = 0; i < 50; i++)
+    obstacles.push({
+      id: `o${i}`,
+      col: 30 + (i % 10) * 15,
+      row: 2 + Math.floor(i / 10) * 7,
+      width: 2,
+      height: 2,
+      label: `Ящики ${i + 1}`,
+      blocksMovement: true,
+      blocksVision: i % 2 === 0,
+      notes: '',
+    });
+  const bigPath = join(work, 'big.kadat-map.json');
+  writeFileSync(
+    bigPath,
+    JSON.stringify({
+      documentType: 'kadat-map',
+      schemaVersion: 2,
+      map: {
+        schemaVersion: 2,
+        id: 'big',
+        name: 'Большая карта',
+        cols: 200,
+        rows: 200,
+        cellMeters: 1,
+        background: {
+          mime: 'image/png',
+          data: raster,
+          widthPx: 2048,
+          heightPx: 2048,
+          x: 0,
+          y: 0,
+          metersPerPixel: 200 / 2048,
+          opacity: 0.8,
+          locked: true,
+        },
+        floor: {},
+        decorations: [],
+        walls,
+        doors: [],
+        obstacles,
+        zones: [],
+      },
+    }),
+  );
+  await page.getByRole('tab', { name: /Редактор карты/ }).click();
+  await page.getByLabel('Файл карты').setInputFiles(bigPath);
+  check(await toastWith('открыт как черновик'), 'the 200 × 200 map file opens');
+  check(
+    (await mapSize()) === '200x200' && (await count('[data-wall]')) === 25,
+    'big map: 200 × 200 with 25 walls (500 edges)',
+  );
+  check((await count('[data-obstacle]')) === 50, 'big map: 50 obstacles');
+
+  // Edits near the tokens, zoomed in: a wall, a door, an obstacle, then the wall end.
+  // Zoom with the wheel around (10, 10) so that this area stays under the cursor.
+  for (let i = 0; i < 12; i++) {
+    const focus = await screen(10, 10);
+    await page.mouse.move(focus.x, focus.y);
+    await page.mouse.wheel(0, -120);
+  }
+  await page.getByRole('button', { name: /Стена/ }).click();
+  // The zoomed view covers roughly x 9…31, y 9…31: edits go there, clear of the
+  // generated walls (y ≥ 40), obstacles (x ≥ 30) and the tokens.
+  for (const [x, y] of [
+    [16, 12],
+    [16, 24],
+    [16, 24],
+  ])
+    await click(x, y);
+  await page.getByRole('button', { name: /Дверь/ }).click();
+  await drag({ x: 16, y: 17 }, { x: 16, y: 18 });
+  await page.getByLabel('Подпись нового препятствия').fill('Баррикада');
+  await page.getByRole('button', { name: /Препятствие/ }).click();
+  await drag({ x: 19.5, y: 20.5 }, { x: 20.5, y: 20.5 });
+  check(
+    (await count('[data-wall]')) === 26 &&
+      (await count('[data-door]')) === 1 &&
+      (await count('[data-obstacle]')) === 51,
+    'several edits on the big map: wall, door, obstacle',
+  );
+
+  // Wall end editing: cutting past the door is refused, lengthening works.
+  await page.getByRole('button', { name: /Выбор/ }).click();
+  await click(16, 14.5);
+  check((await count('[data-wall-end]')) === 2, 'the selected wall shows its two end handles');
+  await drag({ x: 16, y: 24 }, { x: 16, y: 16 });
+  check(
+    await toastWith('Конец стены не перенесён'),
+    'shortening the wall past its door is refused',
+  );
+  check((await toast()).includes('не лежит на одном прямом участке'), 'the refusal names the door');
+  await drag({ x: 16, y: 24 }, { x: 16, y: 27 });
+  check(await toastWith('Конец стены перенесён в (16; 27)'), 'lengthening the wall end works');
+  await page.getByRole('button', { name: /Отменить шаг/ }).click();
+  await page.getByRole('button', { name: /Повторить/ }).click();
+
+  await page.getByRole('button', { name: 'Применить карту' }).click();
+  check(await toastWith('Карта применена'), 'the edited big map is applied');
+  await page.screenshot({ path: `${out}/00f-big-map.png` });
+
+  // Zoom timing (render of a 200 × 200 grid with raster and 500 edges).
+  const zoomMs = [];
+  for (let i = 0; i < 10; i++)
+    zoomMs.push(
+      await page.evaluate(
+        async (zoomIn) => {
+          const svg = document.querySelector('svg.map');
+          const before = svg.getAttribute('viewBox');
+          const button = document.querySelector(
+            zoomIn ? '[aria-label="Приблизить"]' : '[aria-label="Отдалить"]',
+          );
+          const start = performance.now();
+          button.click();
+          while (svg.getAttribute('viewBox') === before)
+            await new Promise((r) => requestAnimationFrame(r));
+          await new Promise((r) => requestAnimationFrame(r));
+          return performance.now() - start;
+        },
+        i % 2 === 0,
+      ),
+    );
+
+  // Highlight timing in combat: select a movement mode until the reach layer is drawn.
+  await page.getByRole('tab', { name: 'Расстановка' }).click();
+  await page.getByRole('button', { name: 'Начать бой' }).click();
+  const highlightMs = [];
+  for (let i = 0; i < 10; i++)
+    highlightMs.push(
+      await page.evaluate(async () => {
+        const button = document.querySelectorAll('.mode')[2];
+        const reach = () => Number(document.querySelector('[data-testid="reach"]').dataset.cells);
+        const start = performance.now();
+        button.click();
+        while (reach() === 0) await new Promise((r) => requestAnimationFrame(r));
+        await new Promise((r) => requestAnimationFrame(r));
+        const ms = performance.now() - start;
+        button.click();
+        while (reach() !== 0) await new Promise((r) => requestAnimationFrame(r));
+        return ms;
+      }),
+    );
+  console.log(
+    `INFO big map in browser: zoom p95 ${p95(zoomMs).toFixed(0)} ms, highlight p95 ${p95(highlightMs).toFixed(0)} ms (TZ target ≤ 100 ms on the author's machine)`,
+  );
+  check(
+    p95(highlightMs) < 1000,
+    `big map highlight responds (p95 ${p95(highlightMs).toFixed(0)} ms)`,
+  );
+  rmSync(work, { recursive: true, force: true });
+}
+
 // Back to the standard scene for the control combat.
 await page.getByRole('button', { name: 'Новый бой' }).click();
 check((await mapSize()) === '20x20', 'new battle restores the standard 20 × 20 scene');

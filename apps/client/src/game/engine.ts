@@ -1320,9 +1320,12 @@ export class MapApplyRejected extends Error {
  * re-placements from the draft are validated together; nothing is applied on failure, and
  * no token is moved or clipped implicitly.
  */
+export type BackgroundSummary = { mime: string; widthPx: number; heightPx: number };
 export function applyMap(
   b: Battle,
   draft: { map: MapDocument; positions: Record<ActorId, { x: number; y: number }> },
+  /** Replay only: the snapshot had a background whose bytes the replay does not carry. */
+  options: { omittedBackground?: BackgroundSummary | null } = {},
 ) {
   if (combatStarted(b))
     throw new Error('Карту можно менять только на этапе расстановки, до начала боя.');
@@ -1349,7 +1352,7 @@ export function applyMap(
   append(b, 'map-applied', {
     // Geometry snapshot for replays; background bytes are visual and left out.
     snapshot: { ...map, background: null },
-    backgroundOmitted: map.background !== null,
+    backgroundOmitted: map.background !== null || !!options.omittedBackground,
     positions,
     id: map.id,
     name: map.name,
@@ -1363,7 +1366,7 @@ export function applyMap(
           widthPx: map.background.widthPx,
           heightPx: map.background.heightPx,
         }
-      : null,
+      : (options.omittedBackground ?? null),
     revision: b.mapRevision,
     repositioned,
   });

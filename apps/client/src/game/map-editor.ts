@@ -327,6 +327,27 @@ export const removeWall = (m: MapDocument, id: string): MapDocument => ({
   walls: m.walls.filter((w) => w.id !== id),
   doors: m.doors.filter((x) => x.wallId !== id),
 });
+/**
+ * Moves the first or last vertex of a wall. The changed end segment must stay horizontal or
+ * vertical and non-zero, and every door on the wall must still lie on one straight segment;
+ * otherwise `tryChange` refuses the edit with the reason (doors are never moved or dropped).
+ */
+export function moveWallEnd(
+  m: MapDocument,
+  id: string,
+  end: 'start' | 'end',
+  to: Vertex,
+): MapDocument {
+  return {
+    ...m,
+    walls: m.walls.map((w) => {
+      if (w.id !== id) return w;
+      const points = [...w.points];
+      points[end === 'start' ? 0 : points.length - 1] = { x: to.x, y: to.y };
+      return { ...w, points };
+    }),
+  };
+}
 /** The wall with a straight segment that contains the interval, if any. */
 export function hostWall(m: MapDocument, from: Vertex, to: Vertex): Wall | null {
   const line = segmentLine(from, to);

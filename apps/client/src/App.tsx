@@ -35,6 +35,7 @@ import {
   addWall,
   addZone,
   hostWall,
+  moveWallEnd,
   removeDoor,
   removeObstacle,
   removeWall,
@@ -142,11 +143,15 @@ export function App() {
   const selectedDecoration =
     draft?.map.decorations.find((x) => x.id === selectedDecorationId) ?? null;
   /** Environment edit that is refused with reasons when it would break the map. */
-  const editMap = (change: Parameters<typeof tryChange>[1], done?: string) => {
+  const editMap = (
+    change: Parameters<typeof tryChange>[1],
+    done?: string,
+    refused = 'Не добавлено',
+  ) => {
     if (!history) return;
     const result = tryChange(history.present, change);
     if (!result.draft) {
-      setToast({ text: `Не добавлено: ${result.problems.join(' ')}`, tone: 'warning' });
+      setToast({ text: `${refused}: ${result.problems.join(' ')}`, tone: 'warning' });
       return;
     }
     setHistory(commit(history, result.draft));
@@ -285,9 +290,16 @@ export function App() {
   const busy = !!info.pending || !!info.pendingTurn;
   const canAct = info.turnActive && !busy && selected === info.active;
   const chosen = options.find((o) => o.mode === moveMode && o.available);
+  // The scene revision this render previews; a move sends it so a stale preview is refused.
+  const previewRevision = battle.sceneRevision;
   const moveIntent: MoveIntent | null =
     canAct && tab === 'move' && chosen && chosen.maxDistance !== null
-      ? { actor: selected, modeLabel: chosen.label, maxDistance: chosen.maxDistance }
+      ? {
+          actor: selected,
+          modeLabel: chosen.label,
+          maxDistance: chosen.maxDistance,
+          sceneRevision: previewRevision,
+        }
       : null;
 
   const source = () =>
@@ -305,7 +317,7 @@ export function App() {
       setToast(commandFeedback(before, combatStore.getSnapshot().battle.log, error));
     }
   };
-  const onMove = (id: ActorId, x: number, y: number) => {
+  const onMove = (id: ActorId, x: number, y: number, revision: number = previewRevision) => {
     if (!moveMode) {
       setToast({ text: 'Сначала выберите режим движения.', tone: 'warning' });
       return;
@@ -316,7 +328,7 @@ export function App() {
         actor: id,
         mode: moveMode,
         to: { x, y },
-        sceneRevision: b.sceneRevision,
+        sceneRevision: revision,
       }),
     );
     setMoveMode(null);
@@ -605,6 +617,13 @@ export function App() {
               )
             }
             doorStates={draft ? {} : battle.doors}
+            onMoveWallEnd={(id, end, to) =>
+              editMap(
+                (m) => moveWallEnd(m, id, end, to),
+                `Конец стены перенесён в (${to.x}; ${to.y}).`,
+                'Конец стены не перенесён',
+              )
+            }
             onMoveBackground={(dx, dy) =>
               edit((d) =>
                 d.map.background
