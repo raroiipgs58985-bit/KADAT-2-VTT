@@ -1,5 +1,6 @@
 import { cellKey, type Cell, type Point } from './grid';
 import {
+  emptyMap,
   insideMap,
   mapProblems,
   sameMap,
@@ -74,14 +75,17 @@ export const resize = (d: EditorDraft, cols: number, rows: number): EditorDraft 
   ...d,
   map: { ...d.map, cols, rows },
 });
-/** A fresh empty map of the given size; tokens keep their positions and are re-validated. */
+/**
+ * A fresh empty map of the given size: no background, floor paint or decorations. Tokens keep
+ * their positions and are re-validated against the new size by the usual placement checks.
+ */
 export const newEmpty = (
   d: EditorDraft,
   id: string,
   name: string,
   cols: number,
   rows: number,
-): EditorDraft => ({ ...d, map: { ...d.map, id, name, cols, rows, floor: {} } });
+): EditorDraft => ({ ...d, map: emptyMap(id, name, cols, rows) });
 
 /** Paints (or erases with `null`) the given cells; cells outside the map are ignored. */
 export function paint(d: EditorDraft, cells: readonly Cell[], colour: FloorColorId | null) {

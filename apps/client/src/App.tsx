@@ -125,6 +125,8 @@ export function App() {
     try {
       const raster = await readRasterFile(file);
       edit((d) => setBackground(d, fitBackground(d.map, raster)));
+      // Points marked on the previous image no longer describe the new one.
+      setCalibrationPoints([]);
       setToast({
         text: `Подложка загружена: ${raster.mime}, ${raster.widthPx} × ${raster.heightPx} пикс. Ширина подогнана под карту; уточните масштаб калибровкой.`,
         tone: 'success',
@@ -540,16 +542,21 @@ export function App() {
               onColour={setColour}
               onRename={(name) => edit((d) => rename(d, name))}
               onResize={(cols, rows) => edit((d) => resize(d, cols, rows))}
-              onNewEmpty={(name, cols, rows) =>
-                edit((d) => newEmpty(d, commandId('map'), name, cols, rows))
-              }
+              onNewEmpty={(name, cols, rows) => {
+                edit((d) => newEmpty(d, commandId('map'), name, cols, rows));
+                setCalibrationPoints([]);
+                setSelectedDecorationId(null);
+              }}
               onEraseOutside={() => edit(eraseOutside)}
               onKeepDraft={(id) => edit((d) => keepDraftPosition(d, id, battle.positions[id]))}
               onTakeScene={(id) => edit((d) => takeScenePosition(d, id, battle.positions[id]))}
               background={history.present.map.background}
               onLoadBackground={loadBackground}
               onUpdateBackground={(patch) => edit((d) => updateBackground(d, patch))}
-              onRemoveBackground={() => edit((d) => setBackground(d, null))}
+              onRemoveBackground={() => {
+                edit((d) => setBackground(d, null));
+                setCalibrationPoints([]);
+              }}
               calibrationPoints={calibrationPoints.length}
               onCalibrate={calibrate}
               onResetCalibration={() => setCalibrationPoints([])}

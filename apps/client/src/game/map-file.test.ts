@@ -6,7 +6,9 @@ import {
   calibrateBackground,
   eraseOutside,
   fitBackground,
+  draftProblems,
   loadDocument,
+  newEmpty,
   removeDecoration,
   resize,
   startEditing,
@@ -240,5 +242,24 @@ describe('Replay v0.3 and visual layers', () => {
     const b = createBattle();
     applyMap(b, loadDocument(startEditing(b).present, sample20()));
     expect(exportReplay(b).visualLayersOmitted).toBe(true);
+  });
+});
+
+describe('New empty map from a filled draft', () => {
+  it('drops background, floor paint and decorations, keeps token positions', () => {
+    const b = createBattle();
+    const filled = loadDocument(startEditing(b).present, sample20());
+    const empty = newEmpty(filled, 'map-new', 'Новая карта 24 × 12', 24, 12);
+    expect(empty.map).toEqual(emptyMap('map-new', 'Новая карта 24 × 12', 24, 12));
+    expect(empty.positions).toEqual(filled.positions);
+    expect(draftProblems(empty, b)).toEqual({ map: [], tokens: [], stale: [] });
+  });
+
+  it('still checks token positions against the new size', () => {
+    const b = createBattle();
+    const filled = loadDocument(startEditing(b).present, sample20());
+    const small = newEmpty(filled, 'map-small', 'Малая', 8, 8);
+    expect(small.map.background).toBeNull();
+    expect(draftProblems(small, b).tokens.map((t) => t.actor)).toEqual(['kelus-drakar', 'pak']);
   });
 });

@@ -303,6 +303,81 @@ check((await toast()).includes('только сцену 20 × 20'), 'replay expo
   );
   await page.getByRole('button', { name: 'Применить карту' }).click();
   check((await page.textContent('.map-name')).includes('24 × 12'), 'opened map is applied');
+  // Replacing the background after marking two calibration points resets the points.
+  await page.getByRole('tab', { name: /Редактор карты/ }).click();
+  const markers = () => page.locator('[data-testid="calibration"] circle').count();
+  await page.getByRole('button', { name: /Калибровка/ }).click();
+  for (const [x, y] of [
+    [3, 3],
+    [9, 3],
+  ]) {
+    const pt = await screen(x, y);
+    await page.mouse.click(pt.x, pt.y);
+  }
+  check((await markers()) === 2, 'two calibration points are marked');
+  const secondPath = join(work, 'second.png');
+  const secondBase64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 240;
+    c.height = 240;
+    const g = c.getContext('2d');
+    g.fillStyle = '#3a2a20';
+    g.fillRect(0, 0, 240, 240);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  writeFileSync(secondPath, Buffer.from(secondBase64, 'base64'));
+  await page.getByLabel('Файл подложки').setInputFiles(secondPath);
+  check(await toastWith('Подложка загружена'), 'the background is replaced');
+  check((await markers()) === 0, 'replacing the background resets the calibration points');
+  check(
+    (await page.textContent('.calibration-box')).includes('0/2'),
+    'the panel shows 0/2 points after the replacement',
+  );
+  check(Math.abs((await bgWidth()) - 24) < 1e-9, 'the new raster is fitted to the map width');
+  // Removing the background also resets marked points.
+  for (const [x, y] of [
+    [3, 3],
+    [9, 3],
+  ]) {
+    const pt = await screen(x, y);
+    await page.mouse.click(pt.x, pt.y);
+  }
+  await page.getByRole('button', { name: 'Убрать подложку' }).click();
+  check(
+    (await markers()) === 0 && (await page.locator('[data-testid="background"]').count()) === 0,
+    'removing the background resets the calibration points',
+  );
+
+  // «Новая пустая карта» from a filled map has no background, decorations or floor paint.
+  await page.getByLabel('Файл подложки').setInputFiles(secondPath);
+  check(await toastWith('Подложка загружена'), 'background restored for the next check');
+  check(
+    (await page.locator('[data-decoration]').count()) > 0 && (await floorCells()) > 0,
+    'the draft is filled before creating an empty map',
+  );
+  await page.getByLabel('Ширина карты').fill('22');
+  await page.getByLabel('Высота карты').fill('12');
+  await page.getByRole('button', { name: 'Новая пустая карта' }).click();
+  check((await mapSize()) === '22x12', 'empty map uses the requested size');
+  check(
+    (await page.locator('[data-testid="background"]').count()) === 0,
+    'empty map: no background',
+  );
+  check((await page.locator('[data-decoration]').count()) === 0, 'empty map: no decorations');
+  check((await floorCells()) === 0, 'empty map: no floor paint');
+  check(
+    (await page.locator('.problems').count()) === 0,
+    'token positions are still valid on the empty 22 × 12 map',
+  );
+  await page.getByLabel('Ширина карты').fill('8');
+  await page.getByLabel('Высота карты').fill('8');
+  await page.getByRole('button', { name: 'Новая пустая карта' }).click();
+  const emptyProblems = await page.textContent('.problems');
+  check(
+    emptyProblems.includes('Келус Дракар') && emptyProblems.includes('Пак'),
+    'an empty 8 × 8 map still lists the conflicting tokens',
+  );
+  await page.getByRole('button', { name: 'Отменить изменения' }).click();
   rmSync(work, { recursive: true, force: true });
 }
 
