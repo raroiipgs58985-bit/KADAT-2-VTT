@@ -230,7 +230,7 @@ describe('Replay and the map', () => {
     expect(replayed.positions).toEqual(b.positions);
   });
 
-  it('v0.4 replays a history on another map size with re-placed tokens', () => {
+  it('replays a history on another map size with re-placed tokens', () => {
     const b = createBattle();
     let d = resize(startEditing(b).present, 24, 12);
     d = placeToken(d, 'pak', { x: 21.5, y: 6.5 }, b.positions.pak);
@@ -238,7 +238,7 @@ describe('Replay and the map', () => {
     startCombat(b, fixedDice(''));
     moveActor(b, { id: 'm1', actor: 'kelus-drakar', mode: 'full-move', to: { x: 13.5, y: 10.5 } });
     const replay = exportReplay(b);
-    expect(replay.format).toBe('kadat-client-combat-v0.4');
+    expect(replay.format).toBe('kadat-client-combat-v0.5');
     const replayed = importReplay(JSON.parse(JSON.stringify(replay)));
     expect(replayed.map).toMatchObject({ cols: 24, rows: 12 });
     expect(replayed.positions).toEqual(b.positions);

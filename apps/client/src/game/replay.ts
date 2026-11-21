@@ -21,6 +21,7 @@ import { append, createBattle, move, type ActorId, type Battle } from './model';
 import { rulings } from './rulings';
 import type { Footprint, Point } from './grid';
 import type { MapDocument } from './map';
+import { loadSnapshot, type SnapshotStore } from './snapshots';
 type Step =
   | { type: 'attack'; command: AttackCommand; rolls: DiceRoll[] }
   | { type: 'next-turn'; rolls: DiceRoll[] }
@@ -32,11 +33,20 @@ type Step =
   | { type: 'stand'; command: { id: string; actor: ActorId } }
   | { type: 'footprint'; actor: ActorId; footprint: Footprint }
   // v0.4: geometry-sensitive commands.
+  // v0.5: the map geometry is a reference into the replay's shared snapshot store.
+  | {
+      type: 'map';
+      snapshot: string;
+      positions: Record<ActorId, Point>;
+      omittedBackground: BackgroundSummary | null;
+    }
+  // v0.4: the full snapshot inline in every map step (still readable).
   | {
       type: 'map';
       map: MapDocument;
+      snapshot?: undefined;
       positions: Record<ActorId, Point>;
-      omittedBackground: BackgroundSummary | null;
+      omittedBackground?: BackgroundSummary | null;
     }
   | { type: 'door'; doorId: string; open: boolean }
   // A refused command: it changed nothing, but the journal keeps it.
@@ -68,14 +78,20 @@ function outcomeOf(b: Battle) {
  * no part in any calculation) plus door changes, so a replay never depends on current map
  * files. v0.3 replays (standard 20 × 20 scene, no map commands) still import.
  */
-export const REPLAY_FORMAT = 'kadat-client-combat-v0.4';
+export const REPLAY_FORMAT = 'kadat-client-combat-v0.5';
+const INLINE_SNAPSHOT_FORMAT = 'kadat-client-combat-v0.4';
 const LEGACY_FORMAT = 'kadat-client-combat-v0.3';
+/** One size limit for replays, used both when saving and when opening (UTF-8 bytes). */
+export const REPLAY_MAX_BYTES = 16 * 1024 * 1024;
+const utf8Bytes = (text: string) => new TextEncoder().encode(text).length;
 /** Geometry rules version: straight swept path, exact touching rules. */
 export const GEOMETRY_VERSION = 1;
 const BASELINE = 'e98837b92abc74ac501b52c5f2ea2e79b86f96b3';
 
 export interface Replay {
-  format: typeof REPLAY_FORMAT | typeof LEGACY_FORMAT;
+  format: typeof REPLAY_FORMAT | typeof INLINE_SNAPSHOT_FORMAT | typeof LEGACY_FORMAT;
+  /** v0.5: every applied map's geometry, each layer stored once. */
+  snapshots?: SnapshotStore;
   geometryVersion?: number;
   /** Present when applied maps had a background raster, which a replay does not carry. */
   visualLayersOmitted?: true;
@@ -129,14 +145,14 @@ export function exportReplay(b: Battle): Replay {
     if (entry.type === 'cancel-unstarted') steps.push({ type: 'cancel-unstarted' });
     if (entry.type === 'map-applied') {
       const m = entry.detail as {
-        snapshot: MapDocument;
+        snapshot: string;
         positions: Record<ActorId, Point>;
         backgroundOmitted: boolean;
         background: BackgroundSummary | null;
       };
       steps.push({
         type: 'map',
-        map: m.snapshot,
+        snapshot: m.snapshot,
         positions: m.positions,
         omittedBackground: m.backgroundOmitted ? m.background : null,
       });
@@ -154,6 +170,7 @@ export function exportReplay(b: Battle): Replay {
     geometryVersion: GEOMETRY_VERSION,
     ...(backgroundOmitted ? { visualLayersOmitted: true as const } : {}),
     outcome: outcomeOf(b),
+    snapshots: b.snapshots,
     baseline: BASELINE,
     rulings,
     steps,
@@ -164,13 +181,15 @@ export function importReplay(value: unknown): Battle {
   const r = value as Replay;
   if (
     !r ||
-    (r.format !== REPLAY_FORMAT && r.format !== LEGACY_FORMAT) ||
+    (r.format !== REPLAY_FORMAT &&
+      r.format !== INLINE_SNAPSHOT_FORMAT &&
+      r.format !== LEGACY_FORMAT) ||
     r.baseline !== BASELINE ||
     !Array.isArray(r.steps) ||
     r.steps.length > 1000
   )
     throw new Error('Неподдерживаемый формат replay');
-  if (r.format === REPLAY_FORMAT && r.geometryVersion !== GEOMETRY_VERSION)
+  if (r.format !== LEGACY_FORMAT && r.geometryVersion !== GEOMETRY_VERSION)
     throw new Error(
       `Версия правил геометрии в replay (${String(r.geometryVersion)}) не поддерживается; история не заменяется`,
     );
@@ -192,13 +211,24 @@ export function importReplay(value: unknown): Battle {
     else if (step.type === 'move') moveActor(b, step.command);
     else if (step.type === 'stand') standUp(b, step.command);
     else if (step.type === 'footprint') setFootprint(b, step.actor, step.footprint);
-    else if (step.type === 'map')
+    else if (step.type === 'map') {
+      if (r.format === REPLAY_FORMAT && typeof step.snapshot !== 'string')
+        throw new Error('Шаг карты replay без ссылки на снимок');
+      const map =
+        r.format === REPLAY_FORMAT
+          ? loadSnapshot(r.snapshots!, step.snapshot!)
+          : 'map' in step
+            ? step.map
+            : loadSnapshot(r.snapshots!, step.snapshot);
       applyMap(
         b,
-        { map: step.map, positions: step.positions },
+        { map, positions: step.positions },
         { omittedBackground: step.omittedBackground ?? null },
       );
-    else if (step.type === 'journal') {
+      const stored = (b.log.at(-1)!.detail as { snapshot: string }).snapshot;
+      if (r.format === REPLAY_FORMAT && stored !== step.snapshot)
+        throw new Error('Replay не согласован: снимки карты расходятся с порядком применения');
+    } else if (step.type === 'journal') {
       const detail = step.entry?.detail as { committed?: unknown } | undefined;
       if (!isJournalOnly(step.entry?.type) || detail?.committed !== false)
         throw new Error('Шаг журнала replay повреждён');
@@ -262,4 +292,27 @@ export function demoBattle(pakHits = true): Battle {
 }
 export function resolvedDemoBattle(): Battle {
   return demoBattle(false);
+}
+
+/** Saves a replay as JSON text, refusing one larger than the shared limit. */
+export function serializeReplay(b: Battle): string {
+  const text = JSON.stringify(exportReplay(b), null, 2);
+  const bytes = utf8Bytes(text);
+  if (bytes > REPLAY_MAX_BYTES)
+    throw new Error(
+      `Replay занимает ${(bytes / 1024 / 1024).toFixed(1)} МиБ — больше предела ${REPLAY_MAX_BYTES / 1024 / 1024} МиБ; сохранение отклонено`,
+    );
+  return text;
+}
+/** Opens replay JSON text with the same size limit as saving. */
+export function parseReplayText(text: string): Battle {
+  if (utf8Bytes(text) > REPLAY_MAX_BYTES)
+    throw new Error(`Replay больше предела ${REPLAY_MAX_BYTES / 1024 / 1024} МиБ`);
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error('Файл replay не является JSON — возможно, он повреждён');
+  }
+  return importReplay(value);
 }

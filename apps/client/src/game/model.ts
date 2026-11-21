@@ -9,6 +9,7 @@ import {
   type Point,
 } from './grid';
 import { STANDARD_MAP, type MapDocument } from './map';
+import { emptySnapshotStore, type SnapshotStore } from './snapshots';
 import {
   buildGeometry,
   footprintGeometryProblem,
@@ -82,6 +83,8 @@ export interface Battle {
   doors: Record<string, boolean>;
   /** Increments whenever the geometry relevant to movement changes (map apply, doors). */
   sceneRevision: number;
+  /** Geometry of every applied map, layers shared (see snapshots.ts); replays reference it. */
+  snapshots: SnapshotStore;
   hp: Record<ActorId, number>;
   ammo: Record<WeaponId, number | null>;
   log: LogEntry[];
@@ -99,6 +102,7 @@ export function createBattle(): Battle {
     mapRevision: 0,
     doors: {},
     sceneRevision: 0,
+    snapshots: emptySnapshotStore(),
     hp: { 'kelus-drakar': 26, pak: 33 },
     ammo: Object.fromEntries(weapons.map((w) => [w.id, w.capacity])) as Battle['ammo'],
     log: [

@@ -88,7 +88,15 @@ interface Props {
   onCalibrationPoint: (p: Point) => void;
 }
 type Drag =
-  | { kind: 'token'; id: ActorId; pointer: number; offset: Point; at: Point }
+  | {
+      kind: 'token';
+      id: ActorId;
+      pointer: number;
+      offset: Point;
+      at: Point;
+      /** Scene revision when the gesture started; the move is checked against it. */
+      revision: number;
+    }
   | { kind: 'pan'; pointer: number; start: Point; center: Point }
   | { kind: 'brush'; pointer: number; erase: boolean; cells: Map<string, Cell> }
   | {
@@ -282,6 +290,7 @@ export function TacticalMap(props: Props) {
       pointer: e.pointerId,
       offset: { x: p.x - pos.x, y: p.y - pos.y },
       at: pos,
+      revision: battle.sceneRevision,
     });
   };
   const onBackgroundDown = (e: ReactPointerEvent) => {
@@ -424,7 +433,7 @@ export function TacticalMap(props: Props) {
         if (drag.at.x !== pos.x || drag.at.y !== pos.y) {
           if (mode === 'editor') props.onDraftPlace(drag.id, drag.at.x, drag.at.y);
           else if (mode === 'placement') props.onPlace(drag.id, drag.at.x, drag.at.y);
-          else props.onMove(drag.id, drag.at.x, drag.at.y, moveIntent?.sceneRevision);
+          else props.onMove(drag.id, drag.at.x, drag.at.y, drag.revision);
         }
       } else if (drag.kind === 'brush') {
         props.onPaint([...drag.cells.values()], drag.erase ? null : props.floorColour);

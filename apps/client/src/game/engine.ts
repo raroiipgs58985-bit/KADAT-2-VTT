@@ -58,6 +58,7 @@ import { rulings } from './rulings';
 import { cellsOf, validateFootprint, type Footprint } from './grid';
 import { mapProblems, segmentLine, type MapDocument } from './map';
 import { buildGeometry, footprintGeometryProblem, initialDoorStates } from './geometry';
+import { storeSnapshot } from './snapshots';
 
 const source = {
   kind: 'canonical-profile',
@@ -1350,8 +1351,9 @@ export function applyMap(
   b.sceneRevision += 1;
   for (const r of repositioned) b.positions[r.actor] = r.to;
   append(b, 'map-applied', {
-    // Geometry snapshot for replays; background bytes are visual and left out.
-    snapshot: { ...map, background: null },
+    // Geometry snapshot ID for replays (layers stored once); background bytes are visual
+    // and left out.
+    snapshot: storeSnapshot(b.snapshots, map),
     backgroundOmitted: map.background !== null || !!options.omittedBackground,
     positions,
     id: map.id,

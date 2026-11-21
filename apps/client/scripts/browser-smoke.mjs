@@ -204,8 +204,8 @@ await page.getByRole('tab', { name: 'Расстановка' }).click();
   const { readFileSync } = await import('node:fs');
   const data = JSON.parse(readFileSync(file, 'utf8'));
   check(
-    data.format === 'kadat-client-combat-v0.4' &&
-      data.steps.some((s) => s.type === 'map' && s.map.cols === 24),
+    data.format === 'kadat-client-combat-v0.5' &&
+      data.steps.some((s) => s.type === 'map' && data.snapshots.maps[s.snapshot]?.cols === 24),
     'replay of a 24 × 12 history is exported with its map snapshot',
   );
 }
@@ -502,7 +502,7 @@ await page.getByRole('tab', { name: 'Расстановка' }).click();
   const replayPath = join(work, 'combat.json');
   await (await replayDownload).saveAs(replayPath);
   const replay = JSON.parse(readFileSync(replayPath, 'utf8'));
-  check(replay.format === 'kadat-client-combat-v0.4', 'replay is exported as v0.4');
+  check(replay.format === 'kadat-client-combat-v0.5', 'replay is exported as v0.5');
   await page.reload();
   await page.waitForSelector('svg.map');
   await page
@@ -712,6 +712,157 @@ await page.getByRole('tab', { name: 'Расстановка' }).click();
     p95(highlightMs) < 1000,
     `big map highlight responds (p95 ${p95(highlightMs).toFixed(0)} ms)`,
   );
+  rmSync(work, { recursive: true, force: true });
+}
+
+// Replay through the interface after five separate applies of a painted 200 × 200 map;
+// drag gestures carry the scene revision captured when they start.
+{
+  const { writeFileSync, readFileSync, rmSync, mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const work = mkdtempSync(join(tmpdir(), 'kadat-five-'));
+  const click = async (x, y) => {
+    const pt = await screen(x, y);
+    await page.mouse.click(pt.x, pt.y);
+  };
+  const count = (selector) => page.locator(selector).count();
+  const apply = async (n) => {
+    await page.getByRole('button', { name: 'Применить карту' }).click();
+    check(await toastWith(`ревизия ${n}`), `apply #${n} through the interface`);
+  };
+  await page.reload();
+  await page.waitForSelector('svg.map');
+  // A 200 × 200 map with 10 000 painted floor cells (rows 0–49).
+  const floor = {};
+  for (let r = 0; r < 50; r++)
+    for (let c = 0; c < 200; c++) floor[`${c}:${r}`] = (c + r) % 2 ? 'grey' : 'sand';
+  const mapPath = join(work, 'painted.kadat-map.json');
+  writeFileSync(
+    mapPath,
+    JSON.stringify({
+      documentType: 'kadat-map',
+      schemaVersion: 2,
+      map: {
+        schemaVersion: 2,
+        id: 'painted',
+        name: 'Размеченная карта',
+        cols: 200,
+        rows: 200,
+        cellMeters: 1,
+        background: null,
+        floor,
+        decorations: [],
+        walls: [],
+        doors: [],
+        obstacles: [],
+        zones: [],
+      },
+    }),
+  );
+  await page.getByRole('tab', { name: /Редактор карты/ }).click();
+  await page.getByLabel('Файл карты').setInputFiles(mapPath);
+  check(await toastWith('открыт как черновик'), 'the painted 200 × 200 map opens');
+  await apply(1);
+  await page.getByRole('button', { name: /Стена/ }).click();
+  for (const [x, y] of [
+    [30, 60],
+    [30, 80],
+    [30, 80],
+  ])
+    await click(x, y);
+  await apply(2);
+  await page.getByRole('button', { name: /Дверь/ }).click();
+  await drag({ x: 30, y: 70 }, { x: 30, y: 71 });
+  await apply(3);
+  await page.getByLabel('Подпись нового препятствия').fill('Баррикада');
+  await page.getByRole('button', { name: /Препятствие/ }).click();
+  await drag({ x: 40.5, y: 65.5 }, { x: 41.5, y: 65.5 });
+  await apply(4);
+  await page.getByRole('button', { name: /Прямоугольник/ }).click();
+  await drag({ x: 60.5, y: 60.5 }, { x: 62.5, y: 61.5 });
+  await apply(5);
+  check((await floorCells()) === 10006, 'five applies: 10 006 painted cells on the scene');
+
+  // Combat: one accepted move, then the replay is downloaded through the button.
+  await page.getByRole('tab', { name: 'Расстановка' }).click();
+  await page.getByRole('button', { name: 'Начать бой' }).click();
+  await page.locator('.mode').nth(1).click();
+  await click(7.5, 10.5);
+  check((await od()) === 1, 'an accepted move before saving the replay');
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Скачать replay' }).click();
+  const replayPath = join(work, 'five.json');
+  await (await download).saveAs(replayPath);
+  const text = readFileSync(replayPath, 'utf8');
+  const replay = JSON.parse(text);
+  const floorLayers = new Set(Object.values(replay.snapshots.maps).map((m) => m.layers.floor));
+  check(
+    replay.format === 'kadat-client-combat-v0.5' &&
+      replay.steps.filter((s) => s.type === 'map').length === 5 &&
+      Object.keys(replay.snapshots.maps).length === 5,
+    'the downloaded replay references five snapshots',
+  );
+  check(
+    floorLayers.size === 2,
+    `floor stored once per distinct version (${floorLayers.size} layers, not 10)`,
+  );
+  check(
+    (text.match(/"0:0"/g) ?? []).length === 2,
+    'the painted cell 0:0 appears only in the two stored floor layers',
+  );
+  console.log(`INFO replay after five applies: ${(Buffer.byteLength(text) / 1024).toFixed(0)} KiB`);
+
+  // A drag whose scene revision changes before release is refused; a normal drag works.
+  await page.locator('.mode').nth(1).click();
+  {
+    const from = await screen(7.5, 10.5);
+    const to = await screen(9.5, 10.5);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(to.x, to.y, { steps: 5 });
+    await page.evaluate(() => window.__kadatTest.bumpSceneRevision());
+    await page.mouse.up();
+  }
+  check(await toastWith('Сцена изменилась'), 'a drag is refused when the scene changed during it');
+  check((await od()) === 1, 'the refused drag spends no OD');
+  check((await tokenPosition('kelus-drakar')).x === 7.5, 'Kelus stays after the refused drag');
+  await page.locator('.mode').nth(1).click();
+  await drag({ x: 7.5, y: 10.5 }, { x: 9.5, y: 10.5 });
+  check(
+    (await od()) === 0 && (await tokenPosition('kelus-drakar')).x === 9.5,
+    'a drag without a scene change is accepted',
+  );
+
+  // Restart and open the downloaded replay through the interface.
+  await page.reload();
+  await page.waitForSelector('svg.map');
+  await page
+    .locator('label.file-button', { hasText: 'Открыть replay' })
+    .locator('input')
+    .setInputFiles(replayPath);
+  check(await toastWith('Replay воспроизведён'), 'the replay opens through the interface');
+  check(
+    (await mapSize()) === '200x200' &&
+      (await floorCells()) === 10006 &&
+      (await count('[data-wall]')) === 1 &&
+      (await count('[data-door]')) === 1 &&
+      (await count('[data-obstacle]')) === 1,
+    'the replay restores the painted map with its wall, door and obstacle',
+  );
+  check(
+    (await tokenPosition('kelus-drakar')).x === 7.5 && (await od()) === 1,
+    'the replay restores the saved move (Kelus at 7.5, 1 OD)',
+  );
+  // A broken replay leaves the current battle as it is.
+  const brokenPath = join(work, 'broken.json');
+  writeFileSync(brokenPath, text.replace('"M3"', '"M9"'));
+  await page
+    .locator('label.file-button', { hasText: 'Открыть replay' })
+    .locator('input')
+    .setInputFiles(brokenPath);
+  check(await toastWith('Текущий бой не изменён'), 'a broken replay is refused');
+  check((await tokenPosition('kelus-drakar')).x === 7.5, 'the current battle is kept');
   rmSync(work, { recursive: true, force: true });
 }
 

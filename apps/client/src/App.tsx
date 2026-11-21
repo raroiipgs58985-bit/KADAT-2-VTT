@@ -70,7 +70,13 @@ import {
   type EditorDraft,
   type EditorHistory,
 } from './game/map-editor';
-import { demoBattle, exportReplay, importReplay, resolvedDemoBattle } from './game/replay';
+import {
+  demoBattle,
+  parseReplayText,
+  REPLAY_MAX_BYTES,
+  resolvedDemoBattle,
+  serializeReplay,
+} from './game/replay';
 import { EditorPanel, toolList } from './ui/EditorPanel';
 import { ActorCard } from './ui/ActorCard';
 import {
@@ -394,11 +400,14 @@ export function App() {
             type="button"
             title="Скачать боевой replay (формат v0.4, со снимками карты)"
             onClick={() => {
-              const url = URL.createObjectURL(
-                new Blob([JSON.stringify(exportReplay(battle), null, 2)], {
-                  type: 'application/json',
-                }),
-              );
+              let text: string;
+              try {
+                text = serializeReplay(battle);
+              } catch (error) {
+                fail(error);
+                return;
+              }
+              const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
               const link = document.createElement('a');
               link.href = url;
               link.download = 'kadat-combat-replay.json';
@@ -418,13 +427,17 @@ export function App() {
                 e.target.value = '';
                 if (!file) return;
                 try {
-                  if (file.size > 10_000_000) throw new Error('Replay больше 10 МБ');
+                  if (file.size > REPLAY_MAX_BYTES)
+                    throw new Error(`Replay больше предела ${REPLAY_MAX_BYTES / 1024 / 1024} МиБ`);
                   replaceBattle(
-                    importReplay(JSON.parse(await file.text())),
+                    parseReplayText(await file.text()),
                     'Replay воспроизведён из сохранённых бросков.',
                   );
                 } catch (error) {
-                  setToast({ text: `Replay не загружен: ${String(error)}`, tone: 'error' });
+                  setToast({
+                    text: `Replay не загружен: ${error instanceof Error ? error.message : String(error)}. Текущий бой не изменён.`,
+                    tone: 'error',
+                  });
                 }
               }}
             />
