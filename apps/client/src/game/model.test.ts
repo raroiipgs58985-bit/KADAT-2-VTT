@@ -9,14 +9,22 @@ it('restores real profiles, health and author-approved full ammunition', () => {
   expect(fixture.actors[1]!.characteristics.НР.value).toBe(50);
   expect(weapons[2]!.raw).toContain('1к10+10');
 });
-it('moves continuously, manually selects turns and logs without mutating profiles', () => {
+it('places on cell centres, manually selects turns and logs without mutating profiles', () => {
   const original = JSON.stringify(fixture),
     b = createBattle();
-  move(b, 'pak', 6.125, 9.875);
+  move(b, 'pak', 6.5, 9.5);
   selectActor(b, 'pak');
-  expect(b.positions.pak).toEqual({ x: 6.125, y: 9.875 });
+  expect(b.positions.pak).toEqual({ x: 6.5, y: 9.5 });
   expect(b.log.at(-1)?.type).toBe('manual-turn');
   expect(JSON.stringify(fixture)).toBe(original);
+});
+it('rejects off-grid, overlapping and out-of-map placement atomically', () => {
+  const b = createBattle(),
+    before = JSON.stringify(b);
+  expect(() => move(b, 'pak', 6.125, 9.875)).toThrow(/не привязана к клеткам/);
+  expect(() => move(b, 'pak', 5.5, 10.5)).toThrow(/заняты другим персонажем/);
+  expect(() => move(b, 'pak', 20.5, 10.5)).toThrow(/границы карты/);
+  expect(JSON.stringify(b)).toBe(before);
 });
 it('rejects invalid coordinates atomically and restores initial state', () => {
   const b = createBattle(),

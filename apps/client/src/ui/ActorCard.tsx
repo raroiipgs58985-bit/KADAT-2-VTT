@@ -1,4 +1,5 @@
 import { actorStatus, weaponSupport } from '../game/engine';
+import { area, footprintPresets, sameFootprint, type Footprint } from '../game/grid';
 import { locationName } from '../game/journal';
 import { actor, movementProfiles, weapons, type ActorId, type Battle } from '../game/model';
 
@@ -20,7 +21,19 @@ function Meter({ value, max, tone }: { value: number; max: number; tone: string 
   );
 }
 
-export function ActorCard({ battle, id }: { battle: Battle; id: ActorId }) {
+export function ActorCard({
+  battle,
+  id,
+  setup,
+  onFootprint,
+}: {
+  battle: Battle;
+  id: ActorId;
+  setup: boolean;
+  onFootprint: (footprint: Footprint) => void;
+}) {
+  const footprint = battle.footprints[id];
+  const presetId = footprintPresets.find((p) => sameFootprint(p.footprint, footprint))?.id ?? '1x1';
   const profile = actor(id);
   const status = actorStatus(battle, id);
   const move = movementProfiles[id];
@@ -95,6 +108,38 @@ export function ActorCard({ battle, id }: { battle: Battle; id: ActorId }) {
           </ul>
         </section>
       )}
+
+      <section>
+        <h3>Токен на карте</h3>
+        <dl className="facts">
+          <div>
+            <dt>Занимает клеток (площадь, задаёт ведущий)</dt>
+            <dd>
+              {setup ? (
+                <select
+                  aria-label="Площадь токена"
+                  value={presetId}
+                  onChange={(e) =>
+                    onFootprint(footprintPresets.find((p) => p.id === e.target.value)!.footprint)
+                  }
+                >
+                  {footprintPresets.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                `${area(footprint)} (${footprint.width} × ${footprint.height})`
+              )}
+            </dd>
+          </div>
+        </dl>
+        <p className="muted small">
+          Канонический {field('Особенности:')?.formattedValue ?? 'Размер'} — отдельная черта
+          профиля; связь Размера с числом клеток таблицами не задана.
+        </p>
+      </section>
 
       <section>
         <h3>Характеристики</h3>

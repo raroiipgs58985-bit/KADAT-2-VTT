@@ -46,12 +46,14 @@ import {
   ids,
   move,
   movementProfiles,
+  placementProblemFor,
   weapons,
   type ActorId,
   type Battle,
   type WeaponId,
 } from './model';
 import { rulings } from './rulings';
+import { cellsOf, validateFootprint, type Footprint } from './grid';
 
 const source = {
   kind: 'canonical-profile',
@@ -971,7 +973,7 @@ export function woundMovementBoundary(b: Battle, actorId: ActorId): string | nul
 }
 function authorBoundary(state: EngineState, actorId: ActorId, mode: MoveMode): string | null {
   if ((mode === 'run' || mode === 'sprint') && rulings.runSprintDistances !== 'mechanics')
-    return 'Ждёт решения автора: дистанции Бега/Спринта в Механике (СКР×6 / ×12) и в профилях (×3 / ×6) расходятся.';
+    return 'Ждёт подтверждения автора: Бег — СКР×6, Спринт — СКР×12 (так считает Core). Требуется явное подтверждение перед включением.';
   const turn = state.wounds.combat.session.turnsStarted;
   if (
     mode === 'free-move' &&
@@ -1034,9 +1036,9 @@ export function moveActor(b: Battle, command: MoveCommand) {
     if (!mode) throw new Error('Неизвестный режим движения');
     if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
     const { x, y } = command.to;
-    if (!Number.isFinite(x) || !Number.isFinite(y) || Math.min(x, y) < 0 || Math.max(x, y) > 20)
-      throw new Error('Точка назначения вне карты 20 × 20 м');
     movementGate(state, command.actor);
+    const placement = placementProblemFor(b, command.actor, { x, y });
+    if (placement) throw new Error(`Точка назначения недопустима: ${placement}`);
     const blocked =
       woundMovementBoundary(b, command.actor) ?? authorBoundary(state, command.actor, command.mode);
     if (blocked) throw new RuleDecisionRequired(blocked);
@@ -1063,6 +1065,7 @@ export function moveActor(b: Battle, command: MoveCommand) {
       command,
       from,
       to: { x, y },
+      cells: cellsOf({ x, y }, b.footprints[command.actor]),
       distance,
       maxDistance,
       odBefore: resolved.execution.odBefore,
@@ -1261,4 +1264,28 @@ export function standUp(b: Battle, command: { id: string; actor: ActorId }) {
     append(b, 'posture-rejected', { command, reason: explainEngineError(error), committed: false });
     throw error;
   }
+}
+
+/**
+ * Changes a token's occupied area before combat. The top-left cell stays where it is; the
+ * new footprint must fit on the map without overlapping other tokens.
+ */
+export function setFootprint(b: Battle, id: ActorId, footprint: Footprint) {
+  if (combatStarted(b)) throw new Error('Площадь токена меняется только до начала боя.');
+  if (!ids.includes(id)) throw new Error('Неизвестный персонаж');
+  validateFootprint(footprint);
+  const old = b.footprints[id];
+  const center = b.positions[id];
+  const anchor = { col: center.x - old.width / 2, row: center.y - old.height / 2 };
+  const next = { x: anchor.col + footprint.width / 2, y: anchor.row + footprint.height / 2 };
+  const problem = placementProblemFor(b, id, next, footprint);
+  if (problem) throw new Error(problem);
+  b.footprints[id] = { width: footprint.width, height: footprint.height };
+  b.positions[id] = next;
+  append(b, 'footprint', {
+    actor: id,
+    footprint: b.footprints[id],
+    center: next,
+    cells: cellsOf(next, footprint),
+  });
 }

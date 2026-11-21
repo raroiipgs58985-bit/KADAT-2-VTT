@@ -51,11 +51,20 @@ export function describeEntry(entry: LogEntry): JournalLine {
         tone: 'info',
       };
     case 'placement': {
-      const after = d.after as { x: number; y: number };
+      const cells = (d.cells as { col: number; row: number }[] | undefined) ?? [];
       return {
         ...base,
         title: `Расстановка: ${name(d.actor)}`,
-        summary: `Перенесён в (${metres(after.x)}; ${metres(after.y)}) до начала боя, ОД не тратятся.`,
+        summary: `Клетки ${cells.map((c) => `${c.col},${c.row}`).join(' + ')} — до начала боя, ОД не тратятся.`,
+        tone: 'info',
+      };
+    }
+    case 'footprint': {
+      const f = d.footprint as { width: number; height: number };
+      return {
+        ...base,
+        title: `Площадь токена: ${name(d.actor)}`,
+        summary: `${f.width * f.height} кл. (${f.width} × ${f.height}), задано ведущим до начала боя.`,
         tone: 'info',
       };
     }

@@ -53,7 +53,7 @@ function patchActor(
 const ref = { actorId: 'kelus-drakar' };
 let n = 0;
 const go = (b: Battle, mode: 'half-move' | 'free-move', x: number) =>
-  moveActor(b, { id: `m${++n}`, actor: 'kelus-drakar', mode, to: { x, y: 10 } });
+  moveActor(b, { id: `m${++n}`, actor: 'kelus-drakar', mode, to: { x: x + 0.5, y: 10.5 } });
 
 describe('Wound consequences the Core movement resolver does not read', () => {
   it('a СКР penalty from an injury stops movement instead of granting full distance', () => {
@@ -64,7 +64,7 @@ describe('Wound consequences the Core movement resolver does not read', () => {
     expect(woundMovementBoundary(b, 'kelus-drakar')).toMatch(/штраф к СКР \(-1\)/);
     expect(movementOptions(b, 'kelus-drakar').every((o) => o.blockedBy === 'author')).toBe(true);
     expect(() => go(b, 'half-move', 7)).toThrow(RuleDecisionRequired);
-    expect(b.positions['kelus-drakar']).toEqual({ x: 5, y: 10 });
+    expect(b.positions['kelus-drakar']).toEqual({ x: 5.5, y: 10.5 });
     expect(turnInfo(b).od).toBe(2);
   });
 

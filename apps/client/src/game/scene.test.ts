@@ -35,12 +35,12 @@ const option = (b: ReturnType<typeof createBattle>, mode: MoveMode) =>
 describe('Setup phase', () => {
   it('allows logged GM placement only before combat starts', () => {
     const b = createBattle();
-    placeActor(b, 'pak', 12, 9);
-    expect(b.positions.pak).toEqual({ x: 12, y: 9 });
+    placeActor(b, 'pak', 12.5, 9.5);
+    expect(b.positions.pak).toEqual({ x: 12.5, y: 9.5 });
     expect(b.log.at(-1)?.type).toBe('placement');
     startCombat(b, fixedDice(''));
-    expect(() => placeActor(b, 'pak', 13, 9)).toThrow(/только до начала боя/);
-    expect(b.positions.pak).toEqual({ x: 12, y: 9 });
+    expect(() => placeActor(b, 'pak', 13.5, 9.5)).toThrow(/только до начала боя/);
+    expect(b.positions.pak).toEqual({ x: 12.5, y: 9.5 });
   });
 
   it('offers no movement before the combat has started', () => {
@@ -71,9 +71,9 @@ describe('Movement through the accepted Core', () => {
 
   it('spends OD, moves the token and logs the Core execution', () => {
     const b = started();
-    const result = moveActor(b, step('kelus-drakar', 'half-move', 8, 10));
+    const result = moveActor(b, step('kelus-drakar', 'half-move', 8.5, 10.5));
     expect(result).toMatchObject({ status: 'RESOLVED', distance: 3, maxDistance: 4 });
-    expect(b.positions['kelus-drakar']).toEqual({ x: 8, y: 10 });
+    expect(b.positions['kelus-drakar']).toEqual({ x: 8.5, y: 10.5 });
     expect(turnInfo(b).od).toBe(1);
     expect(b.log.at(-1)).toMatchObject({
       type: 'move',
@@ -85,8 +85,8 @@ describe('Movement through the accepted Core', () => {
   it('rejects a destination beyond the Core distance without spending anything', () => {
     const b = started();
     const before = structuredClone(b.positions);
-    expect(() => moveActor(b, step('kelus-drakar', 'half-move', 9.5, 10))).toThrow(
-      /4.50 м больше допустимой 4 м/,
+    expect(() => moveActor(b, step('kelus-drakar', 'half-move', 10.5, 10.5))).toThrow(
+      /5.00 м больше допустимой 4 м/,
     );
     expect(b.positions).toEqual(before);
     expect(turnInfo(b).od).toBe(2);
@@ -95,23 +95,23 @@ describe('Movement through the accepted Core', () => {
 
   it('rejects insufficient OD atomically through Core validation', () => {
     const b = started();
-    moveActor(b, step('kelus-drakar', 'full-move', 13, 10));
+    moveActor(b, step('kelus-drakar', 'full-move', 13.5, 10.5));
     expect(turnInfo(b).od).toBe(0);
-    expect(() => moveActor(b, step('kelus-drakar', 'half-move', 14, 10))).toThrow(
+    expect(() => moveActor(b, step('kelus-drakar', 'half-move', 14.5, 10.5))).toThrow(
       'Insufficient OD',
     );
-    expect(b.positions['kelus-drakar']).toEqual({ x: 13, y: 10 });
+    expect(b.positions['kelus-drakar']).toEqual({ x: 13.5, y: 10.5 });
   });
 
   it('allows one free move without OD and blocks a repeat until the author decides', () => {
     const b = started();
-    moveActor(b, step('kelus-drakar', 'free-move', 6, 10));
+    moveActor(b, step('kelus-drakar', 'free-move', 6.5, 10.5));
     expect(turnInfo(b).od).toBe(2);
     expect(option(b, 'free-move')).toMatchObject({ available: false, blockedBy: 'author' });
-    expect(() => moveActor(b, step('kelus-drakar', 'free-move', 7, 10))).toThrow(
+    expect(() => moveActor(b, step('kelus-drakar', 'free-move', 7.5, 10.5))).toThrow(
       RuleDecisionRequired,
     );
-    expect(b.positions['kelus-drakar']).toEqual({ x: 6, y: 10 });
+    expect(b.positions['kelus-drakar']).toEqual({ x: 6.5, y: 10.5 });
     expect(b.log.at(-1)).toMatchObject({
       type: 'move-rejected',
       detail: { authorDecisionRequired: true },
@@ -120,30 +120,34 @@ describe('Movement through the accepted Core', () => {
 
   it('never resolves Run or Sprint while their distances are unresolved', () => {
     const b = started();
-    expect(() => moveActor(b, step('kelus-drakar', 'run', 6, 10))).toThrow(RuleDecisionRequired);
+    expect(() => moveActor(b, step('kelus-drakar', 'run', 6.5, 10.5))).toThrow(
+      RuleDecisionRequired,
+    );
     expect(turnInfo(b).od).toBe(2);
     expect(turnInfo(b).reactions['kelus-drakar']).toBe(1);
   });
 
   it('only the active participant moves, and the turn passes through Core', () => {
     const b = started();
-    expect(() => moveActor(b, step('pak', 'half-move', 14, 10))).toThrow(/ход другого/);
+    expect(() => moveActor(b, step('pak', 'half-move', 14.5, 10.5))).toThrow(/ход другого/);
     nextTurn(b, fixedDice(''));
     expect(turnInfo(b).active).toBe('pak');
-    moveActor(b, step('pak', 'half-move', 12, 10));
-    expect(b.positions.pak).toEqual({ x: 12, y: 10 });
+    moveActor(b, step('pak', 'half-move', 12.5, 10.5));
+    expect(b.positions.pak).toEqual({ x: 12.5, y: 10.5 });
     expect(movementOptions(b, 'kelus-drakar').every((o) => !o.available)).toBe(true);
   });
 
   it('rejects destinations outside the map and zero-length moves', () => {
     const b = started();
-    expect(() => moveActor(b, step('kelus-drakar', 'half-move', -1, 10))).toThrow(/вне карты/);
-    expect(() => moveActor(b, step('kelus-drakar', 'half-move', 5, 10))).toThrow(/совпадает/);
+    expect(() => moveActor(b, step('kelus-drakar', 'half-move', -0.5, 10.5))).toThrow(
+      /границы карты/,
+    );
+    expect(() => moveActor(b, step('kelus-drakar', 'half-move', 5.5, 10.5))).toThrow(/совпадает/);
   });
 
   it('a move and a shot share the same 2 OD and the shot measures the new distance', () => {
     const b = started();
-    moveActor(b, step('kelus-drakar', 'half-move', 9, 10));
+    moveActor(b, step('kelus-drakar', 'half-move', 9.5, 10.5));
     const shot = attack(
       b,
       {
@@ -167,10 +171,10 @@ describe('Movement through the accepted Core', () => {
 describe('Replay and reporting', () => {
   it('replays combat start, movement and attacks exactly', () => {
     const b = started();
-    moveActor(b, step('kelus-drakar', 'free-move', 6.5, 10));
-    moveActor(b, step('kelus-drakar', 'half-move', 9, 11));
+    moveActor(b, step('kelus-drakar', 'free-move', 7.5, 10.5));
+    moveActor(b, step('kelus-drakar', 'half-move', 9.5, 11.5));
     nextTurn(b, fixedDice(''));
-    moveActor(b, step('pak', 'full-move', 11, 11));
+    moveActor(b, step('pak', 'full-move', 11.5, 11.5));
     const replayed = importReplay(JSON.parse(JSON.stringify(exportReplay(b))));
     expect(replayed.positions).toEqual(b.positions);
     expect(replayed.hp).toEqual(b.hp);

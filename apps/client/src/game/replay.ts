@@ -6,6 +6,7 @@ import {
   moveActor,
   nextTurn,
   placeActor,
+  setFootprint,
   standUp,
   selectManualOrder,
   startCombat,
@@ -15,6 +16,7 @@ import {
 import { fixedDice } from './dice';
 import { createBattle, move, type ActorId, type Battle } from './model';
 import { rulings } from './rulings';
+import type { Footprint } from './grid';
 type Step =
   | { type: 'attack'; command: AttackCommand; rolls: DiceRoll[] }
   | { type: 'next-turn'; rolls: DiceRoll[] }
@@ -23,7 +25,8 @@ type Step =
   | { type: 'cancel-unstarted' }
   | { type: 'start-combat'; rolls: DiceRoll[] }
   | { type: 'move'; command: MoveCommand }
-  | { type: 'stand'; command: { id: string; actor: ActorId } };
+  | { type: 'stand'; command: { id: string; actor: ActorId } }
+  | { type: 'footprint'; actor: ActorId; footprint: Footprint };
 const FORMAT = 'kadat-client-combat-v0.3';
 export interface Replay {
   format: typeof FORMAT;
@@ -51,6 +54,10 @@ export function exportReplay(b: Battle): Replay {
       steps.push({ type: 'start-combat', rolls: detail.rolls ?? [] });
     else if (entry.type === 'next-turn' || entry.type === 'TURN_CONTEXT_REQUIRED')
       steps.push({ type: 'next-turn', rolls: detail.rolls ?? [] });
+    if (entry.type === 'footprint') {
+      const f = entry.detail as { actor: ActorId; footprint: Footprint };
+      steps.push({ type: 'footprint', actor: f.actor, footprint: f.footprint });
+    }
     if (entry.type === 'posture')
       steps.push({
         type: 'stand',
@@ -101,6 +108,7 @@ export function importReplay(value: unknown): Battle {
     else if (step.type === 'cancel-unstarted') cancelUnstarted(b);
     else if (step.type === 'move') moveActor(b, step.command);
     else if (step.type === 'stand') standUp(b, step.command);
+    else if (step.type === 'footprint') setFootprint(b, step.actor, step.footprint);
     else if (step.type === 'start-combat')
       startCombat(b, dice(step.rolls.slice(getEngine(b).pendingTurn?.prefix.length ?? 0)));
     else if (step.type === 'attack') {
@@ -124,7 +132,7 @@ export function importReplay(value: unknown): Battle {
 export function demoBattle(pakHits = true): Battle {
   const b = createBattle();
   // Explicit setup before either combat action, not free movement during a turn.
-  move(b, 'pak', 5.75, 10);
+  move(b, 'pak', 6.5, 10.5);
   attack(
     b,
     {

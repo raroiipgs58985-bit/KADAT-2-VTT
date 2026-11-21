@@ -10,6 +10,7 @@ import {
   placeActor,
   resumeAttack,
   selectManualOrder,
+  setFootprint,
   standUp,
   startCombat,
   turnInfo,
@@ -234,7 +235,12 @@ export function App() {
                 </button>
               ))}
             </div>
-            <ActorCard battle={battle} id={selected} />
+            <ActorCard
+              battle={battle}
+              id={selected}
+              setup={!info.started}
+              onFootprint={(f) => run((b) => setFootprint(b, selected, f))}
+            />
           </div>
         </aside>
 
@@ -296,6 +302,7 @@ export function App() {
                 position={battle.positions[selected]}
                 canAct={canAct}
                 posture={actorStatus(battle, selected).posture}
+                footprint={battle.footprints[selected]}
                 onStand={() => run((b) => standUp(b, { id: commandId('stand'), actor: selected }))}
               />
             ) : (

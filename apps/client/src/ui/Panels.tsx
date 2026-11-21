@@ -121,6 +121,7 @@ export function MovePanel(props: {
   canAct: boolean;
   posture: 'standing' | 'kneeling' | 'prone';
   onStand: () => void;
+  footprint: { width: number; height: number };
 }) {
   const [x, setX] = useState('');
   const [y, setY] = useState('');
@@ -165,31 +166,37 @@ export function MovePanel(props: {
           className="coords-form"
           onSubmit={(e) => {
             e.preventDefault();
-            props.onMoveTo(Number(x), Number(y));
+            // The typed cell is the top-left cell of the token's area.
+            props.onMoveTo(
+              Number(x) + props.footprint.width / 2,
+              Number(y) + props.footprint.height / 2,
+            );
           }}
         >
           <span className="muted small">
-            Или точные координаты (сейчас {props.position.x}; {props.position.y}):
+            Или клетка назначения — левая верхняя клетка токена (сейчас{' '}
+            {props.position.x - props.footprint.width / 2},{' '}
+            {props.position.y - props.footprint.height / 2}):
           </span>
           <label>
-            X, м
+            Столбец
             <input
               type="number"
-              step="any"
+              step={1}
               min={0}
-              max={20}
+              max={20 - props.footprint.width}
               required
               value={x}
               onChange={(e) => setX(e.target.value)}
             />
           </label>
           <label>
-            Y, м
+            Строка
             <input
               type="number"
-              step="any"
+              step={1}
               min={0}
-              max={20}
+              max={20 - props.footprint.height}
               required
               value={y}
               onChange={(e) => setY(e.target.value)}

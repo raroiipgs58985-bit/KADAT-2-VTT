@@ -193,7 +193,7 @@ describe('Real accepted Core → personal effects → C-1 → C-2', () => {
       defense: 'DECLINE',
     };
     expect(() => attack(b, command, fixedDice(''))).toThrow('reach');
-    move(b, 'pak', 5.75, 10);
+    move(b, 'pak', 6.5, 10.5);
     if (rulings.chainTiming === null) {
       expect(attack(b, command, fixedDice('100:25')).status).toBe('CONTEXT_REQUIRED');
       expect(getEngine(b).pending!.reason).toContain('порядок');
@@ -212,7 +212,7 @@ describe('Real accepted Core → personal effects → C-1 → C-2', () => {
   it('resolves Pak actual melee miss independently of chain armor timing', () => {
     const b = createBattle();
     selectManualOrder(b, 'pak');
-    move(b, 'pak', 5.75, 10);
+    move(b, 'pak', 6.5, 10.5);
     expect(
       attack(
         b,

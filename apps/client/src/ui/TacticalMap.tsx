@@ -1,9 +1,23 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { actor, ids, type ActorId, type Battle } from '../game/model';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
+import { GRID, cellKey, cellsOf, distance, snapCenter, type Point } from '../game/grid';
+import {
+  actor,
+  destinationsWithin,
+  ids,
+  placementProblemFor,
+  type ActorId,
+  type Battle,
+} from '../game/model';
 
-export const MAP_METERS = 20;
+export const MAP_METERS = GRID.cols;
 const MARGIN = 1.6;
-const TOKEN_RADIUS = 0.5;
+const INSET = 0.08;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
 
@@ -25,17 +39,11 @@ interface Props {
   onMove: (id: ActorId, x: number, y: number) => void;
   onPlace: (id: ActorId, x: number, y: number) => void;
 }
-type Point = { x: number; y: number };
 type Drag =
   | { kind: 'token'; id: ActorId; pointer: number; offset: Point; at: Point }
   | { kind: 'pan'; pointer: number; start: Point; center: Point };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-const clampMap = (p: Point): Point => ({
-  x: clamp(p.x, 0, MAP_METERS),
-  y: clamp(p.y, 0, MAP_METERS),
-});
-const round = (n: number) => Math.round(n * 100) / 100;
 const fmt = (n: number) => `${Number(n.toFixed(2))}`;
 const tokenColor = (id: ActorId) => (id === 'pak' ? 'var(--token-b)' : 'var(--token-a)');
 const initials = (id: ActorId) =>
@@ -44,6 +52,12 @@ const initials = (id: ActorId) =>
     .map((w) => w[0])
     .join('')
     .slice(0, 2);
+const inMap = (p: Point) => p.x >= 0 && p.y >= 0 && p.x <= MAP_METERS && p.y <= MAP_METERS;
+
+/** Rectangle of a footprint centred at `c`, in metres. */
+function rectOf(c: Point, w: number, h: number) {
+  return { x: c.x - w / 2, y: c.y - h / 2, width: w, height: h };
+}
 
 export function TacticalMap(props: Props) {
   const { battle, selected, activeActor, turnActive, setupMode, moveIntent, attackLine } = props;
@@ -89,21 +103,36 @@ export function TacticalMap(props: Props) {
     const el = svg.current!;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const focus = (() => {
-        const p = el.createSVGPoint();
-        p.x = e.clientX;
-        p.y = e.clientY;
-        const m = p.matrixTransform(el.getScreenCTM()!.inverse());
-        return { x: m.x, y: m.y };
-      })();
-      zoomRef.current(zoom * (e.deltaY < 0 ? 1.2 : 1 / 1.2), focus);
+      const p = el.createSVGPoint();
+      p.x = e.clientX;
+      p.y = e.clientY;
+      const m = p.matrixTransform(el.getScreenCTM()!.inverse());
+      zoomRef.current(zoom * (e.deltaY < 0 ? 1.2 : 1 / 1.2), { x: m.x, y: m.y });
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, [zoom]);
 
+  // Every cell-aligned destination the Core distance allows, for the moving token's area.
+  const destinations = useMemo(
+    () => (moveIntent ? destinationsWithin(battle, moveIntent.actor, moveIntent.maxDistance) : []),
+    [battle, moveIntent],
+  );
+  const destinationKeys = useMemo(
+    () => new Set(destinations.map((d) => `${d.x}:${d.y}`)),
+    [destinations],
+  );
+  const reachCells = useMemo(() => {
+    if (!moveIntent) return [];
+    const f = battle.footprints[moveIntent.actor];
+    const cells = new Map<string, { col: number; row: number }>();
+    for (const d of destinations) for (const c of cellsOf(d, f)) cells.set(cellKey(c), c);
+    return [...cells.values()];
+  }, [battle, destinations, moveIntent]);
+
   const canDrag = (id: ActorId) =>
     setupMode || (turnActive && id === activeActor && moveIntent?.actor === id);
+  const snapFor = (id: ActorId, p: Point) => snapCenter(p, battle.footprints[id]);
 
   const onTokenDown = (e: ReactPointerEvent, id: ActorId) => {
     e.stopPropagation();
@@ -131,7 +160,10 @@ export function TacticalMap(props: Props) {
     setHover(p);
     if (!drag || drag.pointer !== e.pointerId) return;
     if (drag.kind === 'token') {
-      setDrag({ ...drag, at: clampMap({ x: p.x - drag.offset.x, y: p.y - drag.offset.y }) });
+      setDrag({
+        ...drag,
+        at: snapFor(drag.id, { x: p.x - drag.offset.x, y: p.y - drag.offset.y }),
+      });
     } else {
       const rect = svg.current!.getBoundingClientRect();
       const perPixel = view.size / Math.min(rect.width, rect.height);
@@ -150,10 +182,9 @@ export function TacticalMap(props: Props) {
     if (drag && drag.pointer === e.pointerId) {
       if (drag.kind === 'token') {
         const pos = battle.positions[drag.id];
-        const target = { x: round(drag.at.x), y: round(drag.at.y) };
-        if (Math.hypot(target.x - pos.x, target.y - pos.y) > 0.01) {
-          if (setupMode) props.onPlace(drag.id, target.x, target.y);
-          else props.onMove(drag.id, target.x, target.y);
+        if (drag.at.x !== pos.x || drag.at.y !== pos.y) {
+          if (setupMode) props.onPlace(drag.id, drag.at.x, drag.at.y);
+          else props.onMove(drag.id, drag.at.x, drag.at.y);
         }
       }
       setDrag(null);
@@ -161,21 +192,33 @@ export function TacticalMap(props: Props) {
     }
     if (moveIntent && (e.target as Element).closest('[data-actor]') === null) {
       const p = toMap(e.clientX, e.clientY);
-      if (p.x < 0 || p.y < 0 || p.x > MAP_METERS || p.y > MAP_METERS) return;
-      props.onMove(moveIntent.actor, round(p.x), round(p.y));
+      if (!inMap(p)) return;
+      const target = snapFor(moveIntent.actor, p);
+      props.onMove(moveIntent.actor, target.x, target.y);
     }
   };
 
-  // Movement preview: either the dragged token or the hovered point in move mode.
-  const mover = moveIntent ? battle.positions[moveIntent.actor] : null;
+  // Ghost: the snapped area the dragged token or the move-mode cursor would occupy.
+  const ghostActor = drag?.kind === 'token' ? drag.id : moveIntent?.actor;
   const ghost =
-    drag?.kind === 'token' && !setupMode
+    drag?.kind === 'token'
       ? drag.at
-      : moveIntent && hover && !drag
-        ? clampMap(hover)
+      : moveIntent && hover && !drag && inMap(hover)
+        ? snapFor(moveIntent.actor, hover)
         : null;
-  const ghostDistance = mover && ghost ? Math.hypot(ghost.x - mover.x, ghost.y - mover.y) : 0;
-  const ghostValid = moveIntent ? ghostDistance <= moveIntent.maxDistance + 1e-9 : true;
+  const ghostFrom = ghostActor ? battle.positions[ghostActor] : null;
+  const ghostDistance = ghost && ghostFrom ? distance(ghost, ghostFrom) : 0;
+  const ghostProblem =
+    ghost && ghostActor
+      ? setupMode
+        ? placementProblemFor(battle, ghostActor, ghost)
+        : moveIntent && !destinationKeys.has(`${ghost.x}:${ghost.y}`)
+          ? (placementProblemFor(battle, ghostActor, ghost) ??
+            (ghostDistance === 0 ? 'текущая позиция' : 'дальше допустимого'))
+          : null
+      : null;
+  const showGhost =
+    ghost && ghostActor && ghostFrom && (ghost.x !== ghostFrom.x || ghost.y !== ghostFrom.y);
 
   const lines = [];
   for (let i = 0; i <= MAP_METERS; i++) {
@@ -192,10 +235,16 @@ export function TacticalMap(props: Props) {
       {i}
     </text>,
   ]);
-
   const attack = attackLine
     ? { a: battle.positions[attackLine.from], b: battle.positions[attackLine.to] }
     : null;
+  const hoverCell =
+    hover && inMap(hover)
+      ? {
+          col: Math.min(MAP_METERS - 1, Math.floor(hover.x)),
+          row: Math.min(MAP_METERS - 1, Math.floor(hover.y)),
+        }
+      : null;
 
   return (
     <div className="map-shell">
@@ -218,27 +267,23 @@ export function TacticalMap(props: Props) {
         </button>
         <span className="map-hint">
           {setupMode
-            ? 'Расстановка: перетаскивайте токены (до начала боя)'
+            ? 'Расстановка: перетаскивайте токены по клеткам (до начала боя)'
             : moveIntent
-              ? `«${moveIntent.modeLabel}»: щёлкните точку или перетащите токен`
+              ? `«${moveIntent.modeLabel}»: щёлкните подсвеченную клетку или перетащите токен`
               : 'Щёлкните токен, чтобы выбрать персонажа'}
         </span>
-        {hover &&
-          hover.x >= 0 &&
-          hover.y >= 0 &&
-          hover.x <= MAP_METERS &&
-          hover.y <= MAP_METERS && (
-            <span className="coords">
-              x {fmt(hover.x)} · y {fmt(hover.y)} м
-            </span>
-          )}
+        {hoverCell && (
+          <span className="coords">
+            клетка {hoverCell.col}, {hoverCell.row}
+          </span>
+        )}
       </div>
       <svg
         ref={svg}
         className={`map ${moveIntent ? 'is-targeting' : ''} ${drag?.kind === 'pan' ? 'is-panning' : ''}`}
         viewBox={`${view.x} ${view.y} ${view.size} ${view.size}`}
         role="application"
-        aria-label="Тактическая карта 20 × 20 метров"
+        aria-label="Тактическая карта 20 × 20 метров, клетка 1 × 1 м"
         onPointerDown={onBackgroundDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -246,6 +291,18 @@ export function TacticalMap(props: Props) {
         onPointerCancel={() => setDrag(null)}
       >
         <rect className="map-floor" x={0} y={0} width={MAP_METERS} height={MAP_METERS} />
+        <g data-testid="reach" data-cells={reachCells.length}>
+          {reachCells.map((c) => (
+            <rect
+              key={cellKey(c)}
+              className="reach-cell"
+              x={c.col}
+              y={c.row}
+              width={1}
+              height={1}
+            />
+          ))}
+        </g>
         {lines}
         <rect className="map-border" x={0} y={0} width={MAP_METERS} height={MAP_METERS} />
         {labels}
@@ -266,6 +323,19 @@ export function TacticalMap(props: Props) {
           </text>
         </g>
 
+        {ids.map((id) => {
+          const f = battle.footprints[id];
+          return (
+            <rect
+              key={`occ-${id}`}
+              className="occupied"
+              data-occupied={id}
+              data-cells={f.width * f.height}
+              {...rectOf(battle.positions[id], f.width, f.height)}
+            />
+          );
+        })}
+
         {attack && (
           <g className="attack-line">
             <line x1={attack.a.x} y1={attack.a.y} x2={attack.b.x} y2={attack.b.y} />
@@ -274,36 +344,44 @@ export function TacticalMap(props: Props) {
               y={(attack.a.y + attack.b.y) / 2 - 0.35}
               textAnchor="middle"
             >
-              {fmt(Math.hypot(attack.a.x - attack.b.x, attack.a.y - attack.b.y))} м
+              {fmt(distance(attack.a, attack.b))} м
             </text>
           </g>
         )}
 
-        {moveIntent && mover && (
-          <circle
-            className="reach"
-            cx={mover.x}
-            cy={mover.y}
-            r={moveIntent.maxDistance}
-            data-testid="reach"
-          />
-        )}
-        {moveIntent && mover && ghost && (
-          <g className={`ghost ${ghostValid ? 'valid' : 'invalid'}`}>
-            <line x1={mover.x} y1={mover.y} x2={ghost.x} y2={ghost.y} />
-            <circle cx={ghost.x} cy={ghost.y} r={TOKEN_RADIUS} />
-            <text x={ghost.x} y={ghost.y - TOKEN_RADIUS - 0.3} textAnchor="middle">
-              {fmt(ghostDistance)} / {fmt(moveIntent.maxDistance)} м
+        {showGhost && ghost && ghostActor && ghostFrom && (
+          <g className={`ghost ${ghostProblem ? 'invalid' : 'valid'}`} data-testid="ghost">
+            <line x1={ghostFrom.x} y1={ghostFrom.y} x2={ghost.x} y2={ghost.y} />
+            <rect
+              {...rectOf(
+                ghost,
+                battle.footprints[ghostActor].width - INSET * 2,
+                battle.footprints[ghostActor].height - INSET * 2,
+              )}
+              rx={0.3}
+            />
+            <text
+              x={ghost.x}
+              y={ghost.y - battle.footprints[ghostActor].height / 2 - 0.25}
+              textAnchor="middle"
+            >
+              {fmt(ghostDistance)}
+              {moveIntent ? ` / ${fmt(moveIntent.maxDistance)}` : ''} м
+              {ghostProblem ? ` — ${ghostProblem}` : ''}
             </text>
           </g>
         )}
 
         {ids.map((id) => {
+          const f = battle.footprints[id];
           const pos =
             drag?.kind === 'token' && drag.id === id && setupMode ? drag.at : battle.positions[id];
           const w = props.wounds[id];
           const ratio = w.max ? clamp(w.current / w.max, 0, 1) : 0;
-          const circumference = 2 * Math.PI * (TOKEN_RADIUS + 0.12);
+          const bodyW = f.width - INSET * 2,
+            bodyH = f.height - INSET * 2;
+          const radius = Math.min(bodyW, bodyH) / 2;
+          const barW = bodyW * 0.8;
           return (
             <g
               key={id}
@@ -312,23 +390,39 @@ export function TacticalMap(props: Props) {
               transform={`translate(${pos.x} ${pos.y})`}
               onPointerDown={(e) => onTokenDown(e, id)}
               role="button"
-              aria-label={`${actor(id).name}: раны ${w.current} из ${w.max}`}
+              aria-label={`${actor(id).name}: раны ${w.current} из ${w.max}, клеток ${f.width * f.height}`}
             >
               {turnActive && activeActor === id && (
-                <circle className="turn-ring" r={TOKEN_RADIUS + 0.38} />
+                <rect
+                  className="turn-ring"
+                  {...rectOf({ x: 0, y: 0 }, f.width + 0.2, f.height + 0.2)}
+                  rx={radius + 0.1}
+                />
               )}
-              <circle className="wound-track" r={TOKEN_RADIUS + 0.12} />
-              <circle
-                className="wound-arc"
-                r={TOKEN_RADIUS + 0.12}
-                strokeDasharray={`${circumference * ratio} ${circumference}`}
-                transform="rotate(-90)"
+              <rect
+                className="token-body"
+                {...rectOf({ x: 0, y: 0 }, bodyW, bodyH)}
+                rx={radius}
+                style={{ fill: tokenColor(id) }}
               />
-              <circle className="token-body" r={TOKEN_RADIUS} style={{ fill: tokenColor(id) }} />
               <text className="token-initials" textAnchor="middle" dominantBaseline="central">
                 {initials(id)}
               </text>
-              <text className="token-name" y={TOKEN_RADIUS + 0.62} textAnchor="middle">
+              <rect
+                className="wound-track"
+                x={-barW / 2}
+                y={bodyH / 2 - 0.16}
+                width={barW}
+                height={0.08}
+              />
+              <rect
+                className="wound-fill"
+                x={-barW / 2}
+                y={bodyH / 2 - 0.16}
+                width={barW * ratio}
+                height={0.08}
+              />
+              <text className="token-name" y={f.height / 2 + 0.42} textAnchor="middle">
                 {actor(id).name}
               </text>
             </g>

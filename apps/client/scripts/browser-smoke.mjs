@@ -58,14 +58,30 @@ const drag = async (from, to) => {
 const toast = () => page.textContent('.toast');
 const od = () => page.locator('.od .pip.on').count();
 
-// 1. Setup placement before combat.
+const occupiedCells = (id) =>
+  page.locator(`[data-occupied="${id}"]`).getAttribute('data-cells').then(Number);
+
+// 1. Setup placement before combat: drops snap to cell centres.
 await page.screenshot({ path: `${out}/01-setup.png` });
-await drag({ x: 15, y: 10 }, { x: 13, y: 8 });
+check((await occupiedCells('kelus-drakar')) === 1, 'size-1 token occupies one cell');
+await drag({ x: 15.5, y: 10.5 }, { x: 13.3, y: 8.8 });
 const pak = await tokenPosition('pak');
 check(
-  Math.abs(pak.x - 13) < 0.05 && Math.abs(pak.y - 8) < 0.05,
-  'setup drag places Pak at (13; 8)',
+  pak.x === 13.5 && pak.y === 8.5,
+  `setup drag snaps Pak to cell 13,8 (got ${pak.x}; ${pak.y})`,
 );
+
+// 1b. A token cannot be dropped onto another token.
+await drag({ x: 5.5, y: 10.5 }, { x: 13.5, y: 8.5 });
+check((await toast()).includes('заняты'), 'overlapping drop rejected');
+const kelus0 = await tokenPosition('kelus-drakar');
+check(kelus0.x === 5.5 && kelus0.y === 10.5, 'Kelus stays in his cell');
+
+// 1c. Pak takes a 2-cell area (GM setting, setup only).
+await page.getByRole('tab', { name: 'Пак' }).click();
+await page.getByLabel('Площадь токена').selectOption('2x1');
+check((await occupiedCells('pak')) === 2, 'size-2 token occupies two cells');
+await page.getByRole('tab', { name: 'Келус' }).click();
 
 // 2. Start combat.
 await page.getByRole('button', { name: 'Начать бой' }).click();
@@ -79,19 +95,20 @@ check(
 const modes = await page.locator('.move-modes li').allTextContents();
 check(modes[1].includes('4 м') && modes[2].includes('8 м'), 'Core distances 4 m / 8 m shown');
 check(
-  (await page.locator('.move-modes li').nth(3).textContent()).includes('Ждёт решения автора'),
+  (await page.locator('.move-modes li').nth(3).textContent()).includes('Ждёт подтверждения автора'),
   'Run is blocked pending the author',
 );
 
-// 4. Choose Полудвижение and click a destination inside the reach circle.
+// 4. Choose Полудвижение and click a highlighted cell (the click point snaps to its centre).
 await page.locator('.mode').nth(1).click();
-check((await page.locator('[data-testid="reach"]').count()) === 1, 'reach circle drawn');
-const hover = await screen(7.5, 10);
+const reach = Number(await page.locator('[data-testid="reach"]').getAttribute('data-cells'));
+check(reach > 0, `reachable cells highlighted (${reach})`);
+const hover = await screen(7.7, 10.2);
 await page.mouse.move(hover.x, hover.y);
 await page.screenshot({ path: `${out}/02-move-preview.png` });
 await page.mouse.click(hover.x, hover.y);
 const kelus = await tokenPosition('kelus-drakar');
-check(Math.abs(kelus.x - 7.5) < 0.05, 'click moves Kelus 2.5 m');
+check(kelus.x === 7.5 && kelus.y === 10.5, 'click snaps and moves Kelus 2 m to cell 7,10');
 check((await od()) === 1, 'half move spends 1 OD');
 
 // 5. Out-of-range destination is rejected without spending OD.
@@ -100,7 +117,7 @@ const far = await screen(14, 10);
 await page.mouse.click(far.x, far.y);
 check((await toast()).includes('больше допустимой'), 'too-far move rejected with reason');
 check((await od()) === 1, 'rejected move spends nothing');
-check(Math.abs((await tokenPosition('kelus-drakar')).x - 7.5) < 0.05, 'token stays in place');
+check((await tokenPosition('kelus-drakar')).x === 7.5, 'token stays in place');
 
 // 6. Attack with fixed dice through the Core.
 await page.locator('.dice summary').click();

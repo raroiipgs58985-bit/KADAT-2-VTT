@@ -9,8 +9,10 @@ export const rulings = {
   chainArmorLoss: 'effective-penetration',
   chainTiming: null as 'before' | 'after' | null,
   /**
-   * Бег/Спринт: Механика / Бой gives СКР×6 / СКР×12 (as the accepted Core does), while the
-   * personal profile movement cells read as ×3 / ×6 (Пак 4/8/12/24). Unresolved: null.
+   * Бег/Спринт. Механика / Бой: Бег СКР×6, Спринт СКР×12 (as the accepted Core does).
+   * Общая механика / Движение в режиме боя lists ½ / ×1 / ×2 / Натиск ×3 / Бег ×6, so profile
+   * cells such as 4/8/12/24 read as Полу / Полное / Натиск / Бег and agree. The earlier
+   * reading of a conflict was mistaken; both modes stay off until the author confirms.
    */
   runSprintDistances: null as 'mechanics' | 'profiles' | null,
   /**

@@ -1,4 +1,14 @@
 import data from './data/fixture.json';
+import {
+  SINGLE_CELL,
+  allCenters,
+  cellKey,
+  cellsOf,
+  distance,
+  placementProblem,
+  type Footprint,
+  type Point,
+} from './grid';
 import armorCatalog from './data/canonical-armor.json';
 export const pakArmorProperties = armorCatalog.sheets[0]!.data.find((d) => d.startRow === 32)!
   .rowData[0]!.values[2]!.formattedValue;
@@ -52,7 +62,10 @@ export interface LogEntry {
 }
 export interface Battle {
   active: ActorId;
+  /** Centre of each token's footprint, metres; always aligned to the 1 m grid. */
   positions: Record<ActorId, { x: number; y: number }>;
+  /** Cells each token occupies (GM-set token area, not the canonical «Размер»). */
+  footprints: Record<ActorId, Footprint>;
   hp: Record<ActorId, number>;
   ammo: Record<WeaponId, number | null>;
   log: LogEntry[];
@@ -63,7 +76,9 @@ export function append(b: Battle, type: string, detail: unknown) {
 export function createBattle(): Battle {
   return {
     active: 'kelus-drakar',
-    positions: { 'kelus-drakar': { x: 5, y: 10 }, pak: { x: 15, y: 10 } },
+    // Test placement on cell centres; the 10 m separation of the experiment is preserved.
+    positions: { 'kelus-drakar': { x: 5.5, y: 10.5 }, pak: { x: 15.5, y: 10.5 } },
+    footprints: { 'kelus-drakar': SINGLE_CELL, pak: SINGLE_CELL },
     hp: { 'kelus-drakar': 26, pak: 33 },
     ammo: Object.fromEntries(weapons.map((w) => [w.id, w.capacity])) as Battle['ammo'],
     log: [
@@ -79,21 +94,46 @@ export function createBattle(): Battle {
     ],
   };
 }
+/** Cells taken by every token except `except` (walls and obstacles will join this set). */
+export function occupiedCells(b: Battle, except?: ActorId): Set<string> {
+  const taken = new Set<string>();
+  for (const id of ids)
+    if (id !== except)
+      for (const c of cellsOf(b.positions[id], b.footprints[id])) taken.add(cellKey(c));
+  return taken;
+}
+export function placementProblemFor(
+  b: Battle,
+  id: ActorId,
+  center: Point,
+  footprint: Footprint = b.footprints[id],
+): string | null {
+  return placementProblem(center, footprint, occupiedCells(b, id));
+}
+/** Grid-aligned centres the token can stand on within `maxDistance` metres of its centre. */
+export function destinationsWithin(b: Battle, id: ActorId, maxDistance: number): Point[] {
+  const from = b.positions[id];
+  const blocked = occupiedCells(b, id);
+  const f = b.footprints[id];
+  return allCenters(f).filter(
+    (c) =>
+      distance(from, c) > 0 &&
+      distance(from, c) <= maxDistance + 1e-9 &&
+      placementProblem(c, f, blocked) === null,
+  );
+}
+/** Low-level placement: validates grid alignment, map bounds and overlap, then logs. */
 export function move(b: Battle, id: ActorId, x: number, y: number) {
-  if (
-    !ids.includes(id) ||
-    !Number.isFinite(x) ||
-    !Number.isFinite(y) ||
-    Math.min(x, y) < 0 ||
-    Math.max(x, y) > 20
-  )
-    throw new Error('Координаты должны быть в пределах карты 20 × 20 м.');
+  if (!ids.includes(id)) throw new Error('Неизвестный персонаж');
+  const problem = placementProblemFor(b, id, { x, y });
+  if (problem) throw new Error(problem);
   const before = b.positions[id];
   b.positions[id] = { x, y };
   append(b, 'placement', {
     actor: id,
     before,
     after: b.positions[id],
+    cells: cellsOf(b.positions[id], b.footprints[id]),
     meters: Math.hypot(x - before.x, y - before.y),
     od: 'manual placement; not a movement action',
   });
