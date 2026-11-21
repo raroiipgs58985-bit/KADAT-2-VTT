@@ -1,0 +1,43 @@
+{
+  "positions": {
+    "kelus-drakar": {
+      "x": 8.5,
+      "y": 10.5
+    },
+    "pak": {
+      "x": 10,
+      "y": 9.5
+    }
+  },
+  "hp": {
+    "kelus-drakar": 26,
+    "pak": 31
+  },
+  "ammo": {
+    "hotshot": 249,
+    "kelus-chain": 50,
+    "pak-chain": null,
+    "bracer": 10,
+    "flamer": 9
+  },
+  "footprints": {
+    "kelus-drakar": {
+      "width": 1,
+      "height": 1
+    },
+    "pak": {
+      "width": 2,
+      "height": 1
+    }
+  },
+  "logTypes": [
+    "loaded",
+    "footprint",
+    "placement",
+    "combat-start",
+    "move",
+    "attack",
+    "next-turn",
+    "move"
+  ]
+}

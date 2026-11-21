@@ -2,3 +2,4 @@
 **/dist/
 **/coverage/
 pnpm-lock.yaml
+apps/client/src/game/fixtures/

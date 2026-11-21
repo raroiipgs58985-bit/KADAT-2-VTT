@@ -38,6 +38,12 @@ importers:
 
   apps/client:
     dependencies:
+      '@kadat/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@kadat/rules-engine':
+        specifier: workspace:*
+        version: link:../../packages/rules-engine
       react:
         specifier: 19.3.0
         version: 19.3.0

@@ -76,3 +76,14 @@ Realtime не реализован. Renderer и база данных не вы�
 [Infantry Suppression & Combat Equipment — Phase 2.2D](infantry-suppression-equipment.md)
 описывает новый source-based слой и integration hooks.
 Стек и границы Client / Server / Rules Engine сохранены.
+
+## Состояние Phase 3A-1 — тактическая сцена клиента
+
+`apps/client` перестал быть заглушкой: в нём работает локальная тактическая
+сцена (карта, токены, перемещение, атака, журнал, replay) поверх принятого
+Combat Core. Независимый от React слой игры находится в
+`apps/client/src/game`; Rules Engine подключён из исходников. Это
+предложение агента — [ADR 0003](adr/0003-client-game-layer.md), статус
+Proposed. Сервер, realtime и хранение по-прежнему не реализованы.
+Подробности и открытые вопросы автору —
+[тактическая сцена клиента](tactical-scene-client.md).
