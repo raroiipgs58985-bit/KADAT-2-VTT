@@ -1,5 +1,6 @@
 import {
   MAP_SCHEMA_VERSION,
+  READABLE_MAP_SCHEMAS,
   RASTER_LIMITS,
   mapProblems,
   type Decoration,
@@ -20,7 +21,7 @@ export class MapFileError extends Error {
   override readonly name = 'MapFileError';
 }
 
-const MAP_KEYS = [
+const MAP_KEYS_V1 = [
   'schemaVersion',
   'id',
   'name',
@@ -31,6 +32,22 @@ const MAP_KEYS = [
   'floor',
   'decorations',
 ] as const;
+const MAP_KEYS = [...MAP_KEYS_V1, 'walls', 'doors', 'obstacles', 'zones'] as const;
+const WALL_KEYS = ['id', 'points'] as const;
+const VERTEX_KEYS = ['x', 'y'] as const;
+const DOOR_KEYS = ['id', 'wallId', 'from', 'to', 'open', 'blocksMovement', 'blocksVision'] as const;
+const OBSTACLE_KEYS = [
+  'id',
+  'col',
+  'row',
+  'width',
+  'height',
+  'label',
+  'blocksMovement',
+  'blocksVision',
+  'notes',
+] as const;
+const ZONE_KEYS = ['id', 'col', 'row', 'width', 'height', 'label'] as const;
 const BACKGROUND_KEYS = [
   'mime',
   'data',
@@ -60,6 +77,14 @@ function canonical(m: MapDocument): MapDocument {
     background: m.background ? pick(m.background, BACKGROUND_KEYS) : null,
     floor,
     decorations: m.decorations.map((d) => pick(d, DECORATION_KEYS)),
+    walls: m.walls.map((w) => ({ id: w.id, points: w.points.map((p) => pick(p, VERTEX_KEYS)) })),
+    doors: m.doors.map((d) => ({
+      ...pick(d, DOOR_KEYS),
+      from: pick(d.from, VERTEX_KEYS),
+      to: pick(d.to, VERTEX_KEYS),
+    })),
+    obstacles: m.obstacles.map((o) => pick(o, OBSTACLE_KEYS)),
+    zones: m.zones.map((z) => pick(z, ZONE_KEYS)),
   };
 }
 
@@ -97,16 +122,55 @@ export function parseMapFile(text: string): MapDocument {
   }
   if (!isObject(root) || root.documentType !== MAP_FILE_TYPE)
     throw new MapFileError('Это не файл карты KADAT (нет documentType: "kadat-map")');
-  if (root.schemaVersion !== MAP_SCHEMA_VERSION)
+  const version = root.schemaVersion;
+  if (!(READABLE_MAP_SCHEMAS as readonly unknown[]).includes(version))
     throw new MapFileError(
-      `Версия схемы карты ${String(root.schemaVersion)} не поддерживается (ожидается ${MAP_SCHEMA_VERSION})`,
+      `Версия схемы карты ${String(version)} не поддерживается (ожидается ${READABLE_MAP_SCHEMAS.join(' или ')})`,
     );
   exactKeys(root, ['documentType', 'schemaVersion', 'map'], 'файл');
-  const map = root.map;
-  if (!isObject(map)) throw new MapFileError('Нет описания карты');
-  exactKeys(map, MAP_KEYS, 'map');
-  if (map.schemaVersion !== MAP_SCHEMA_VERSION)
+  const source = root.map;
+  if (!isObject(source)) throw new MapFileError('Нет описания карты');
+  exactKeys(source, version === 1 ? MAP_KEYS_V1 : MAP_KEYS, 'map');
+  if (source.schemaVersion !== version)
     throw new MapFileError('Версия схемы в карте не совпадает с версией файла');
+  // Version 1 (stage 2) maps have no environment: upgrade with empty lists.
+  const map: Record<string, unknown> =
+    version === 1
+      ? {
+          ...source,
+          schemaVersion: MAP_SCHEMA_VERSION,
+          walls: [],
+          doors: [],
+          obstacles: [],
+          zones: [],
+        }
+      : source;
+  for (const [key, keys] of [
+    ['walls', WALL_KEYS],
+    ['doors', DOOR_KEYS],
+    ['obstacles', OBSTACLE_KEYS],
+    ['zones', ZONE_KEYS],
+  ] as const) {
+    const list = map[key];
+    if (!Array.isArray(list)) throw new MapFileError(`Поле map.${key} повреждено`);
+    list.forEach((x, i) => {
+      if (!isObject(x)) throw new MapFileError(`Элемент map.${key}[${i}] повреждён`);
+      exactKeys(x, keys, `map.${key}[${i}]`);
+    });
+  }
+  (map.walls as Record<string, unknown>[]).forEach((w, i) => {
+    if (!Array.isArray(w.points)) throw new MapFileError(`Поле map.walls[${i}].points повреждено`);
+    w.points.forEach((p: unknown, j: number) => {
+      if (!isObject(p)) throw new MapFileError(`Точка map.walls[${i}].points[${j}] повреждена`);
+      exactKeys(p, VERTEX_KEYS, `map.walls[${i}].points[${j}]`);
+    });
+  });
+  (map.doors as Record<string, unknown>[]).forEach((d, i) => {
+    for (const end of ['from', 'to'] as const) {
+      if (!isObject(d[end])) throw new MapFileError(`Поле map.doors[${i}].${end} повреждено`);
+      exactKeys(d[end], VERTEX_KEYS, `map.doors[${i}].${end}`);
+    }
+  });
   if (!isObject(map.floor)) throw new MapFileError('Поле map.floor повреждено');
   if (!Array.isArray(map.decorations)) throw new MapFileError('Поле map.decorations повреждено');
   map.decorations.forEach((d, i) => {

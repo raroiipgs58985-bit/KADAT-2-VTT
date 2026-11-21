@@ -8,9 +8,16 @@ import {
   placementProblem,
   type Footprint,
   type Point,
-  type GridSize,
 } from './grid';
 import { STANDARD_MAP, type MapDocument } from './map';
+import {
+  buildGeometry,
+  footprintGeometryProblem,
+  initialDoorStates,
+  straightPathProblem,
+  type GeometryIndex,
+  type PathProblem,
+} from './geometry';
 import armorCatalog from './data/canonical-armor.json';
 export const pakArmorProperties = armorCatalog.sheets[0]!.data.find((d) => d.startRow === 32)!
   .rowData[0]!.values[2]!.formattedValue;
@@ -72,6 +79,10 @@ export interface Battle {
   map: MapDocument;
   /** Increments on every applied map change; derived indexes are keyed by it. */
   mapRevision: number;
+  /** Current open/closed state of each door (session instance; the map holds the initial). */
+  doors: Record<string, boolean>;
+  /** Increments whenever the geometry relevant to movement changes (map apply, doors). */
+  sceneRevision: number;
   hp: Record<ActorId, number>;
   ammo: Record<WeaponId, number | null>;
   log: LogEntry[];
@@ -87,6 +98,8 @@ export function createBattle(): Battle {
     footprints: { 'kelus-drakar': SINGLE_CELL, pak: SINGLE_CELL },
     map: structuredClone(STANDARD_MAP),
     mapRevision: 0,
+    doors: {},
+    sceneRevision: 0,
     hp: { 'kelus-drakar': 26, pak: 33 },
     ammo: Object.fromEntries(weapons.map((w) => [w.id, w.capacity])) as Battle['ammo'],
     log: [
@@ -116,18 +129,41 @@ export function placementProblemFor(
   center: Point,
   footprint: Footprint = b.footprints[id],
 ): string | null {
-  return placementProblem(center, footprint, occupiedCells(b, id), b.map);
+  return (
+    placementProblem(center, footprint, occupiedCells(b, id), b.map) ??
+    footprintGeometryProblem(center, footprint, sceneGeometry(b))
+  );
 }
-/** Grid-aligned centres the token can stand on within `maxDistance` metres of its centre. */
+/** Geometry of the applied map with the current door states. */
+export const sceneGeometry = (b: Battle): GeometryIndex => buildGeometry(b.map, b.doors);
+
+export type MovementProblem = { kind: 'position'; reason: string } | PathProblem;
+/**
+ * The single movement check used by preview, highlighting and execution: the destination
+ * (grid, bounds, other tokens, obstacles, walls inside the footprint) and the straight path
+ * (walls, closed doors, obstacles, ambiguous corner contact, difficult terrain).
+ */
+export function movementProblem(
+  b: Battle,
+  id: ActorId,
+  to: Point,
+  g: GeometryIndex = sceneGeometry(b),
+): MovementProblem | null {
+  const f = b.footprints[id];
+  const position =
+    placementProblem(to, f, occupiedCells(b, id), b.map) ?? footprintGeometryProblem(to, f, g);
+  if (position) return { kind: 'position', reason: position };
+  return straightPathProblem(b.positions[id], to, f, g);
+}
+/** Grid-aligned centres reachable in a straight line within `maxDistance` metres. */
 export function destinationsWithin(b: Battle, id: ActorId, maxDistance: number): Point[] {
   const from = b.positions[id];
-  const blocked = occupiedCells(b, id);
-  const f = b.footprints[id];
-  return allCenters(f, b.map).filter(
+  const g = sceneGeometry(b);
+  return allCenters(b.footprints[id], b.map).filter(
     (c) =>
       distance(from, c) > 0 &&
       distance(from, c) <= maxDistance + 1e-9 &&
-      placementProblem(c, f, blocked, b.map) === null,
+      movementProblem(b, id, c, g) === null,
   );
 }
 /** Low-level placement: validates grid alignment, map bounds and overlap, then logs. */
@@ -179,17 +215,21 @@ export const movementProfiles: Record<
  * current scene). Tokens are checked against the map bounds and against each other.
  */
 export function tokenConflicts(
-  size: GridSize,
+  map: MapDocument,
   positions: Record<ActorId, Point>,
   footprints: Record<ActorId, Footprint>,
+  doors: Readonly<Record<string, boolean>> = initialDoorStates(map),
 ): { actor: ActorId; problem: string }[] {
   const out: { actor: ActorId; problem: string }[] = [];
+  const g = buildGeometry(map, doors);
   for (const id of ids) {
     const blocked = new Set<string>();
     for (const other of ids)
       if (other !== id)
         for (const c of cellsOf(positions[other], footprints[other])) blocked.add(cellKey(c));
-    const problem = placementProblem(positions[id], footprints[id], blocked, size);
+    const problem =
+      placementProblem(positions[id], footprints[id], blocked, map) ??
+      footprintGeometryProblem(positions[id], footprints[id], g);
     if (problem) out.push({ actor: id, problem });
   }
   return out;

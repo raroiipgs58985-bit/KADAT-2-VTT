@@ -1,11 +1,13 @@
 import type { DiceRoll } from '@kadat/contracts';
 import {
+  applyMap,
   attack,
   cancelUnstarted,
   getEngine,
   moveActor,
   nextTurn,
   placeActor,
+  setDoorOpen,
   setFootprint,
   standUp,
   selectManualOrder,
@@ -16,8 +18,8 @@ import {
 import { fixedDice } from './dice';
 import { createBattle, move, type ActorId, type Battle } from './model';
 import { rulings } from './rulings';
-import type { Footprint } from './grid';
-import { isStandardGeometry } from './map';
+import type { Footprint, Point } from './grid';
+import type { MapDocument } from './map';
 type Step =
   | { type: 'attack'; command: AttackCommand; rolls: DiceRoll[] }
   | { type: 'next-turn'; rolls: DiceRoll[] }
@@ -27,39 +29,36 @@ type Step =
   | { type: 'start-combat'; rolls: DiceRoll[] }
   | { type: 'move'; command: MoveCommand }
   | { type: 'stand'; command: { id: string; actor: ActorId } }
-  | { type: 'footprint'; actor: ActorId; footprint: Footprint };
-const FORMAT = 'kadat-client-combat-v0.3';
+  | { type: 'footprint'; actor: ActorId; footprint: Footprint }
+  // v0.4: geometry-sensitive commands.
+  | { type: 'map'; map: MapDocument; positions: Record<ActorId, Point> }
+  | { type: 'door'; doorId: string; open: boolean };
+
+/**
+ * v0.4 stores every applied map as a geometry snapshot (background bytes left out: they take
+ * no part in any calculation) plus door changes, so a replay never depends on current map
+ * files. v0.3 replays (standard 20 × 20 scene, no map commands) still import.
+ */
+export const REPLAY_FORMAT = 'kadat-client-combat-v0.4';
+const LEGACY_FORMAT = 'kadat-client-combat-v0.3';
+/** Geometry rules version: straight swept path, exact touching rules. */
+export const GEOMETRY_VERSION = 1;
+const BASELINE = 'e98837b92abc74ac501b52c5f2ea2e79b86f96b3';
+
 export interface Replay {
-  format: typeof FORMAT;
-  /** Present when applied maps had floor paint: visual only, not replayed. */
+  format: typeof REPLAY_FORMAT | typeof LEGACY_FORMAT;
+  geometryVersion?: number;
+  /** Present when applied maps had a background raster, which a replay does not carry. */
   visualLayersOmitted?: true;
   baseline: string;
   rulings: typeof rulings;
   steps: Step[];
   log: Battle['log'];
 }
-/**
- * v0.3 replays start from the standard 20 × 20 scene and know no map commands. They can only
- * be exported while the whole history kept that geometry; otherwise this explains why not.
- */
-export function replayExportProblem(b: Battle): string | null {
-  const nonStandard = (m: { cols: number; rows: number }) => !isStandardGeometry(m);
-  if (nonStandard(b.map))
-    return `Replay v0.3 поддерживает только сцену 20 × 20, а текущая карта ${b.map.cols} × ${b.map.rows}. Карту можно сохранить отдельно, когда появится файл карты; боевой replay для неё требует нового формата.`;
-  for (const entry of b.log) {
-    if (entry.type !== 'map-applied') continue;
-    const d = entry.detail as { cols: number; rows: number; repositioned: unknown[] };
-    if (nonStandard(d))
-      return `В истории боя есть карта ${d.cols} × ${d.rows}: replay v0.3 не может её воспроизвести.`;
-    if (d.repositioned.length)
-      return 'В истории есть перестановка токенов вместе с применением карты: replay v0.3 не может её воспроизвести.';
-  }
-  return null;
-}
+
 export function exportReplay(b: Battle): Replay {
-  const problem = replayExportProblem(b);
-  if (problem) throw new Error(problem);
   const steps: Step[] = [];
+  let backgroundOmitted = false;
   for (const entry of b.log) {
     const detail = entry.detail as {
       command?: AttackCommand;
@@ -97,16 +96,25 @@ export function exportReplay(b: Battle): Replay {
       });
     if (entry.type === 'manual-turn') steps.push({ type: 'manual-turn', actor: detail.actor });
     if (entry.type === 'cancel-unstarted') steps.push({ type: 'cancel-unstarted' });
+    if (entry.type === 'map-applied') {
+      const m = entry.detail as {
+        snapshot: MapDocument;
+        positions: Record<ActorId, Point>;
+        backgroundOmitted: boolean;
+      };
+      steps.push({ type: 'map', map: m.snapshot, positions: m.positions });
+      backgroundOmitted ||= m.backgroundOmitted;
+    }
+    if (entry.type === 'door') {
+      const d = entry.detail as { doorId: string; open: boolean };
+      steps.push({ type: 'door', doorId: d.doorId, open: d.open });
+    }
   }
-  const painted = b.log.some((e) => {
-    if (e.type !== 'map-applied') return false;
-    const d = e.detail as { floorCells: number; decorations?: number; background?: unknown };
-    return d.floorCells > 0 || (d.decorations ?? 0) > 0 || !!d.background;
-  });
   return structuredClone({
-    format: FORMAT,
-    ...(painted ? { visualLayersOmitted: true as const } : {}),
-    baseline: 'e98837b92abc74ac501b52c5f2ea2e79b86f96b3',
+    format: REPLAY_FORMAT,
+    geometryVersion: GEOMETRY_VERSION,
+    ...(backgroundOmitted ? { visualLayersOmitted: true as const } : {}),
+    baseline: BASELINE,
     rulings,
     steps,
     log: b.log,
@@ -116,12 +124,16 @@ export function importReplay(value: unknown): Battle {
   const r = value as Replay;
   if (
     !r ||
-    r.format !== FORMAT ||
-    r.baseline !== 'e98837b92abc74ac501b52c5f2ea2e79b86f96b3' ||
+    (r.format !== REPLAY_FORMAT && r.format !== LEGACY_FORMAT) ||
+    r.baseline !== BASELINE ||
     !Array.isArray(r.steps) ||
     r.steps.length > 1000
   )
     throw new Error('Неподдерживаемый формат replay');
+  if (r.format === REPLAY_FORMAT && r.geometryVersion !== GEOMETRY_VERSION)
+    throw new Error(
+      `Версия правил геометрии в replay (${String(r.geometryVersion)}) не поддерживается; история не заменяется`,
+    );
   for (const key of Object.keys(rulings) as (keyof typeof rulings)[])
     if (r.rulings?.[key] !== rulings[key])
       throw new Error('Решения автора в replay отличаются от текущих; автоматической миграции нет');
@@ -132,12 +144,16 @@ export function importReplay(value: unknown): Battle {
     return fixedDice(rolls.map((d) => `${d.sides}:${d.value}`).join(','));
   };
   for (const step of r.steps) {
+    if (r.format === LEGACY_FORMAT && (step.type === 'map' || step.type === 'door'))
+      throw new Error('Replay v0.3 не может содержать команды карты');
     if (step.type === 'placement') placeActor(b, step.actor, step.x, step.y);
     else if (step.type === 'manual-turn') selectManualOrder(b, step.actor);
     else if (step.type === 'cancel-unstarted') cancelUnstarted(b);
     else if (step.type === 'move') moveActor(b, step.command);
     else if (step.type === 'stand') standUp(b, step.command);
     else if (step.type === 'footprint') setFootprint(b, step.actor, step.footprint);
+    else if (step.type === 'map') applyMap(b, { map: step.map, positions: step.positions });
+    else if (step.type === 'door') setDoorOpen(b, step.doorId, step.open);
     else if (step.type === 'start-combat')
       startCombat(b, dice(step.rolls.slice(getEngine(b).pendingTurn?.prefix.length ?? 0)));
     else if (step.type === 'attack') {

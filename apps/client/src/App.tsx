@@ -10,6 +10,7 @@ import {
   placeActor,
   resumeAttack,
   selectManualOrder,
+  setDoorOpen,
   setFootprint,
   standUp,
   startCombat,
@@ -29,6 +30,19 @@ import {
 import { readRasterFile, useBackgroundUrl, verifyEmbeddedRaster } from './ui/raster-io';
 import {
   addDecoration,
+  addDoor,
+  addObstacle,
+  addWall,
+  addZone,
+  hostWall,
+  removeDoor,
+  removeObstacle,
+  removeWall,
+  removeZone,
+  tryChange,
+  updateDoor,
+  updateObstacle,
+  updateZone,
   applyDraft,
   calibrateBackground,
   commit,
@@ -55,13 +69,7 @@ import {
   type EditorDraft,
   type EditorHistory,
 } from './game/map-editor';
-import {
-  demoBattle,
-  exportReplay,
-  importReplay,
-  replayExportProblem,
-  resolvedDemoBattle,
-} from './game/replay';
+import { demoBattle, exportReplay, importReplay, resolvedDemoBattle } from './game/replay';
 import { EditorPanel, toolList } from './ui/EditorPanel';
 import { ActorCard } from './ui/ActorCard';
 import {
@@ -76,7 +84,13 @@ import {
 } from './ui/Panels';
 import { commandFeedback } from './ui/feedback';
 import { combatStore, useCombat } from './ui/store';
-import { TacticalMap, type EditorTool, type MoveIntent, type SceneMode } from './ui/TacticalMap';
+import {
+  TacticalMap,
+  type EditorTool,
+  type MoveIntent,
+  type SceneMode,
+  type SelectedObject,
+} from './ui/TacticalMap';
 
 const commandId = (kind: string) => `${kind}-${crypto.randomUUID().slice(0, 8)}`;
 const defaultAttack = (attacker: ActorId): AttackForm => ({
@@ -104,7 +118,15 @@ export function App() {
   const [history, setHistory] = useState<EditorHistory | null>(null);
   const [tool, setTool] = useState<EditorTool>('brush');
   const [colour, setColour] = useState<FloorColorId>('grey');
-  const [selectedDecorationId, setSelectedDecorationId] = useState<string | null>(null);
+  const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
+  const selectedDecorationId = selectedObject?.kind === 'decoration' ? selectedObject.id : null;
+  const setSelectedDecorationId = (id: string | null) =>
+    setSelectedObject(id ? { kind: 'decoration', id } : null);
+  const [newObstacle, setNewObstacle] = useState({
+    label: '',
+    blocksMovement: true,
+    blocksVision: true,
+  });
   const [newDecorationLabel, setNewDecorationLabel] = useState('');
   const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
   const mode: SceneMode = info.started ? 'combat' : setupMode;
@@ -119,6 +141,23 @@ export function App() {
   const backgroundUrl = useBackgroundUrl(shownMap.background);
   const selectedDecoration =
     draft?.map.decorations.find((x) => x.id === selectedDecorationId) ?? null;
+  /** Environment edit that is refused with reasons when it would break the map. */
+  const editMap = (change: Parameters<typeof tryChange>[1], done?: string) => {
+    if (!history) return;
+    const result = tryChange(history.present, change);
+    if (!result.draft) {
+      setToast({ text: `Не добавлено: ${result.problems.join(' ')}`, tone: 'warning' });
+      return;
+    }
+    setHistory(commit(history, result.draft));
+    if (done) setToast({ text: done, tone: 'success' });
+  };
+  const rectOf = (a: { col: number; row: number }, c: { col: number; row: number }) => ({
+    col: Math.min(a.col, c.col),
+    row: Math.min(a.row, c.row),
+    width: Math.abs(a.col - c.col) + 1,
+    height: Math.abs(a.row - c.row) + 1,
+  });
   const fail = (error: unknown) =>
     setToast({ text: error instanceof Error ? error.message : String(error), tone: 'error' });
   const loadBackground = async (file: File) => {
@@ -271,7 +310,15 @@ export function App() {
       setToast({ text: 'Сначала выберите режим движения.', tone: 'warning' });
       return;
     }
-    run((b) => moveActor(b, { id: commandId('move'), actor: id, mode: moveMode, to: { x, y } }));
+    run((b) =>
+      moveActor(b, {
+        id: commandId('move'),
+        actor: id,
+        mode: moveMode,
+        to: { x, y },
+        sceneRevision: b.sceneRevision,
+      }),
+    );
     setMoveMode(null);
   };
   const replaceBattle = (next: ReturnType<typeof createBattle>, text: string) => {
@@ -333,13 +380,8 @@ export function App() {
           </button>
           <button
             type="button"
-            title={replayExportProblem(battle) ?? 'Скачать боевой replay (формат v0.3)'}
+            title="Скачать боевой replay (формат v0.4, со снимками карты)"
             onClick={() => {
-              const problem = replayExportProblem(battle);
-              if (problem) {
-                setToast({ text: problem, tone: 'warning' });
-                return;
-              }
               const url = URL.createObjectURL(
                 new Blob([JSON.stringify(exportReplay(battle), null, 2)], {
                   type: 'application/json',
@@ -500,21 +542,69 @@ export function App() {
             }
             onPaint={(cells, c) => edit((d) => paint(d, cells, c))}
             backgroundUrl={backgroundUrl}
-            selectedDecoration={selectedDecorationId}
-            onSelectDecoration={setSelectedDecorationId}
-            onAddDecoration={(a, c) =>
-              edit((d) =>
-                addDecoration(d, {
-                  id: commandId('dec'),
-                  col: Math.min(a.col, c.col),
-                  row: Math.min(a.row, c.row),
-                  width: Math.abs(a.col - c.col) + 1,
-                  height: Math.abs(a.row - c.row) + 1,
-                  color: colour,
-                  label: newDecorationLabel.trim(),
-                }),
+            selectedObject={editing ? selectedObject : null}
+            onSelectObject={setSelectedObject}
+            onAddRect={(kind, a, c) => {
+              if (kind === 'decoration')
+                edit((d) =>
+                  addDecoration(d, {
+                    id: commandId('dec'),
+                    ...rectOf(a, c),
+                    color: colour,
+                    label: newDecorationLabel.trim(),
+                  }),
+                );
+              else if (kind === 'obstacle')
+                editMap((m) =>
+                  addObstacle(m, {
+                    id: commandId('obs'),
+                    ...rectOf(a, c),
+                    label: newObstacle.label.trim(),
+                    blocksMovement: newObstacle.blocksMovement,
+                    blocksVision: newObstacle.blocksVision,
+                    notes: '',
+                  }),
+                );
+              else
+                editMap((m) =>
+                  addZone(m, { id: commandId('zone'), ...rectOf(a, c), label: 'Трудный ландшафт' }),
+                );
+            }}
+            onAddWall={(points) =>
+              editMap(
+                (m) => addWall(m, { id: commandId('wall'), points }),
+                `Стена добавлена: ${points.length - 1} отр.`,
               )
             }
+            onAddDoor={(from, to) => {
+              const host = draft && hostWall(draft.map, from, to);
+              if (!host) {
+                setToast({
+                  text: 'Дверь не добавлена: проём должен лежать на одном прямом участке существующей стены.',
+                  tone: 'warning',
+                });
+                return;
+              }
+              editMap(
+                (m) =>
+                  addDoor(m, {
+                    id: commandId('door'),
+                    wallId: host.id,
+                    from,
+                    to,
+                    open: false,
+                    blocksMovement: true,
+                    blocksVision: true,
+                  }),
+                'Дверь добавлена (закрыта; флаги — в панели).',
+              );
+            }}
+            onToggleDoor={(id) =>
+              run((b) =>
+                setDoorOpen(b, id, !(b.doors[id] ?? b.map.doors.find((d) => d.id === id)!.open)),
+              )
+            }
+            doorStates={draft ? {} : battle.doors}
             onMoveBackground={(dx, dy) =>
               edit((d) =>
                 d.map.background
@@ -561,6 +651,20 @@ export function App() {
               onCalibrate={calibrate}
               onResetCalibration={() => setCalibrationPoints([])}
               selectedDecoration={selectedDecoration}
+              selectedObject={selectedObject}
+              map={history.present.map}
+              newObstacle={newObstacle}
+              onNewObstacle={setNewObstacle}
+              onUpdateDoor={(id, patch) => editMap((m) => updateDoor(m, id, patch))}
+              onUpdateObstacle={(id, patch) => editMap((m) => updateObstacle(m, id, patch))}
+              onUpdateZone={(id, label) => editMap((m) => updateZone(m, id, label))}
+              onDeleteObject={(o) => {
+                if (o.kind === 'wall') editMap((m) => removeWall(m, o.id));
+                else if (o.kind === 'door') editMap((m) => removeDoor(m, o.id));
+                else if (o.kind === 'obstacle') editMap((m) => removeObstacle(m, o.id));
+                else if (o.kind === 'zone') editMap((m) => removeZone(m, o.id));
+                setSelectedObject(null);
+              }}
               newDecorationLabel={newDecorationLabel}
               onNewDecorationLabel={setNewDecorationLabel}
               onUpdateDecoration={(patch) =>

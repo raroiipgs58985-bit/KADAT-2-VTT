@@ -6,12 +6,14 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { cellKey, cellsOf, distance, snapCenter, type Cell, type Point } from '../game/grid';
+import type { Vertex } from '../game/map';
 import { floorColor, type FloorColorId, type MapDocument } from '../game/map';
 import { rectangleCells } from '../game/map-editor';
 import {
   actor,
   destinationsWithin,
   ids,
+  movementProblem,
   placementProblemFor,
   type ActorId,
   type Battle,
@@ -24,7 +26,23 @@ const MAX_ZOOM = 12;
 
 export type SceneMode = 'editor' | 'placement' | 'combat';
 export type EditorTool =
-  'select' | 'hand' | 'background' | 'brush' | 'rect' | 'eraser' | 'decoration' | 'calibrate';
+  | 'select'
+  | 'hand'
+  | 'background'
+  | 'brush'
+  | 'rect'
+  | 'eraser'
+  | 'decoration'
+  | 'calibrate'
+  | 'wall'
+  | 'door'
+  | 'obstacle'
+  | 'zone';
+export type MapObjectKind = 'decoration' | 'wall' | 'door' | 'obstacle' | 'zone';
+export interface SelectedObject {
+  kind: MapObjectKind;
+  id: string;
+}
 export interface MoveIntent {
   actor: ActorId;
   modeLabel: string;
@@ -54,9 +72,14 @@ interface Props {
   onPaint: (cells: Cell[], colour: FloorColorId | null) => void;
   /** Object URL of the background raster (created and revoked by the owner). */
   backgroundUrl: string | null;
-  selectedDecoration: string | null;
-  onSelectDecoration: (id: string | null) => void;
-  onAddDecoration: (start: Cell, end: Cell) => void;
+  selectedObject: SelectedObject | null;
+  onSelectObject: (object: SelectedObject | null) => void;
+  onAddRect: (kind: 'decoration' | 'obstacle' | 'zone', start: Cell, end: Cell) => void;
+  onAddWall: (points: Vertex[]) => void;
+  onAddDoor: (from: Vertex, to: Vertex) => void;
+  onToggleDoor: (id: string) => void;
+  /** Current door states: the session's in placement/combat, the map's initial ones in the editor. */
+  doorStates: Readonly<Record<string, boolean>>;
   onMoveBackground: (dx: number, dy: number) => void;
   calibrationPoints: readonly Point[];
   onCalibrationPoint: (p: Point) => void;
@@ -65,7 +88,14 @@ type Drag =
   | { kind: 'token'; id: ActorId; pointer: number; offset: Point; at: Point }
   | { kind: 'pan'; pointer: number; start: Point; center: Point }
   | { kind: 'brush'; pointer: number; erase: boolean; cells: Map<string, Cell> }
-  | { kind: 'rect'; pointer: number; start: Cell; end: Cell; decoration: boolean }
+  | {
+      kind: 'rect';
+      pointer: number;
+      start: Cell;
+      end: Cell;
+      purpose: 'floor' | 'decoration' | 'obstacle' | 'zone';
+    }
+  | { kind: 'door'; pointer: number; start: Vertex; end: Vertex }
   | { kind: 'background'; pointer: number; start: Point; offset: Point };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -207,6 +237,33 @@ export function TacticalMap(props: Props) {
     mode === 'placement' ||
     (turnActive && id === activeActor && moveIntent?.actor === id);
   const snapFor = (id: ActorId, p: Point) => snapCenter(p, battle.footprints[id], map);
+  const vertexAt = (p: Point): Vertex => ({
+    x: clamp(Math.round(p.x), 0, map.cols),
+    y: clamp(Math.round(p.y), 0, map.rows),
+  });
+  // Wall drawing: successive clicks add vertices; click the last one again, double-click
+  // or press Enter to finish; Escape cancels the chain.
+  const [wallPoints, setWallPoints] = useState<Vertex[]>([]);
+  const finishWall = () => {
+    if (wallPoints.length >= 2) props.onAddWall(wallPoints);
+    setWallPoints([]);
+  };
+  const finishRef = useRef(finishWall);
+  finishRef.current = finishWall;
+  useEffect(() => {
+    if (props.tool !== 'wall' || mode !== 'editor') {
+      setWallPoints([]);
+      return;
+    }
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) return;
+      if (e.key === 'Escape') setWallPoints([]);
+      if (e.key === 'Enter') finishRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [props.tool, mode]);
 
   const onTokenDown = (e: ReactPointerEvent, id: ActorId) => {
     e.stopPropagation();
@@ -225,9 +282,40 @@ export function TacticalMap(props: Props) {
   };
   const onBackgroundDown = (e: ReactPointerEvent) => {
     const p = toMap(e.clientX, e.clientY);
+    if (mode === 'placement') {
+      const door = (e.target as Element).closest('[data-door]');
+      if (door) {
+        props.onToggleDoor(door.getAttribute('data-door')!);
+        return;
+      }
+    }
     if (mode === 'editor' && props.tool === 'select') {
-      const hit = (e.target as Element).closest('[data-decoration]');
-      props.onSelectDecoration(hit ? hit.getAttribute('data-decoration') : null);
+      const hit = (e.target as Element).closest('[data-object-kind]');
+      props.onSelectObject(
+        hit
+          ? {
+              kind: hit.getAttribute('data-object-kind') as MapObjectKind,
+              id: hit.getAttribute('data-object-id')!,
+            }
+          : null,
+      );
+      return;
+    }
+    if (mode === 'editor' && props.tool === 'wall') {
+      const v = vertexAt(p);
+      const last = wallPoints.at(-1);
+      if (last && last.x === v.x && last.y === v.y) {
+        finishWall();
+        return;
+      }
+      if (last && last.x !== v.x && last.y !== v.y) return; // only straight segments
+      setWallPoints([...wallPoints, v]);
+      return;
+    }
+    if (mode === 'editor' && props.tool === 'door') {
+      svg.current!.setPointerCapture(e.pointerId);
+      const v = vertexAt(p);
+      setDrag({ kind: 'door', pointer: e.pointerId, start: v, end: v });
       return;
     }
     if (mode === 'editor' && props.tool === 'calibrate') {
@@ -244,13 +332,14 @@ export function TacticalMap(props: Props) {
       if (!inMap(p)) return;
       svg.current!.setPointerCapture(e.pointerId);
       const cell = cellAt(p);
-      if (props.tool === 'rect' || props.tool === 'decoration')
+      if (['rect', 'decoration', 'obstacle', 'zone'].includes(props.tool))
         setDrag({
           kind: 'rect',
           pointer: e.pointerId,
           start: cell,
           end: cell,
-          decoration: props.tool === 'decoration',
+          purpose:
+            props.tool === 'rect' ? 'floor' : (props.tool as 'decoration' | 'obstacle' | 'zone'),
         });
       else
         setDrag({
@@ -282,6 +371,14 @@ export function TacticalMap(props: Props) {
         setDrag({ ...drag, cells: new Map(drag.cells).set(cellKey(cell), cell) });
     } else if (drag.kind === 'background') {
       setDrag({ ...drag, offset: { x: p.x - drag.start.x, y: p.y - drag.start.y } });
+    } else if (drag.kind === 'door') {
+      // Snap along the dominant axis so the opening stays straight.
+      const v = vertexAt(p);
+      const end =
+        Math.abs(v.x - drag.start.x) >= Math.abs(v.y - drag.start.y)
+          ? { x: v.x, y: drag.start.y }
+          : { x: drag.start.x, y: v.y };
+      setDrag({ ...drag, end });
     } else if (drag.kind === 'rect') {
       const cell = cellAt(p);
       setDrag({
@@ -314,8 +411,12 @@ export function TacticalMap(props: Props) {
       } else if (drag.kind === 'brush') {
         props.onPaint([...drag.cells.values()], drag.erase ? null : props.floorColour);
       } else if (drag.kind === 'rect') {
-        if (drag.decoration) props.onAddDecoration(drag.start, drag.end);
-        else props.onPaint(rectangleCells(drag.start, drag.end), props.floorColour);
+        if (drag.purpose === 'floor')
+          props.onPaint(rectangleCells(drag.start, drag.end), props.floorColour);
+        else props.onAddRect(drag.purpose, drag.start, drag.end);
+      } else if (drag.kind === 'door') {
+        if (drag.start.x !== drag.end.x || drag.start.y !== drag.end.y)
+          props.onAddDoor(drag.start, drag.end);
       } else if (drag.kind === 'background') {
         const { x, y } = drag.offset;
         if (x !== 0 || y !== 0) props.onMoveBackground(x, y);
@@ -341,15 +442,18 @@ export function TacticalMap(props: Props) {
         : null;
   const ghostFrom = ghostActor ? positions[ghostActor] : null;
   const ghostDistance = ghost && ghostFrom ? distance(ghost, ghostFrom) : 0;
-  const ghostProblem =
-    ghost && ghostActor && mode !== 'editor'
-      ? mode === 'placement'
-        ? placementProblemFor(battle, ghostActor, ghost)
-        : moveIntent && !destinationKeys.has(`${ghost.x}:${ghost.y}`)
-          ? (placementProblemFor(battle, ghostActor, ghost) ??
-            (ghostDistance === 0 ? 'текущая позиция' : 'дальше допустимого'))
-          : null
-      : null;
+  // The same movement check as execution, worded by outcome for the GM.
+  const ghostProblem = (() => {
+    if (!ghost || !ghostActor || mode === 'editor') return null;
+    if (mode === 'placement') return placementProblemFor(battle, ghostActor, ghost);
+    if (!moveIntent || destinationKeys.has(`${ghost.x}:${ghost.y}`)) return null;
+    if (ghostDistance === 0) return 'текущая позиция';
+    const problem = movementProblem(battle, ghostActor, ghost);
+    if (problem?.kind === 'position') return `некуда поставить: ${problem.reason}`;
+    if (problem?.kind === 'blocked') return `нет пути: ${problem.blocker.label}`;
+    if (problem) return 'нужно решение автора';
+    return ghostDistance > moveIntent.maxDistance + 1e-9 ? 'вне бюджета Core' : null;
+  })();
   const showGhost =
     ghost && ghostActor && ghostFrom && (ghost.x !== ghostFrom.x || ghost.y !== ghostFrom.y);
 
@@ -357,18 +461,21 @@ export function TacticalMap(props: Props) {
   const preview: { cells: Cell[]; erase: boolean } | null =
     drag?.kind === 'brush'
       ? { cells: [...drag.cells.values()], erase: drag.erase }
-      : drag?.kind === 'rect' && !drag.decoration
+      : drag?.kind === 'rect' && drag.purpose === 'floor'
         ? { cells: rectangleCells(drag.start, drag.end), erase: false }
         : null;
   const decorationPreview =
-    drag?.kind === 'rect' && drag.decoration
+    drag?.kind === 'rect' && drag.purpose !== 'floor'
       ? {
+          purpose: drag.purpose,
           col: Math.min(drag.start.col, drag.end.col),
           row: Math.min(drag.start.row, drag.end.row),
           width: Math.abs(drag.start.col - drag.end.col) + 1,
           height: Math.abs(drag.start.row - drag.end.row) + 1,
         }
       : null;
+  const isSelected = (kind: MapObjectKind, id: string) =>
+    props.selectedObject?.kind === kind && props.selectedObject.id === id;
   const bg = map.background;
   const bgOffset = drag?.kind === 'background' ? drag.offset : { x: 0, y: 0 };
 
@@ -401,24 +508,32 @@ export function TacticalMap(props: Props) {
       ? props.tool === 'hand'
         ? 'Рука: перетаскивайте карту; токены — в пределах черновика'
         : props.tool === 'select'
-          ? 'Выбор: щёлкните декорацию, чтобы изменить её в панели'
-          : props.tool === 'background'
-            ? bg
-              ? bg.locked
-                ? 'Фон заблокирован: снимите блокировку в панели'
-                : 'Фон: перетащите подложку; токены и сетка не двигаются'
-              : 'Фон: сначала загрузите изображение в панели'
-            : props.tool === 'decoration'
-              ? 'Декорация: протяните прямоугольник; подпись и цвет — в панели'
-              : props.tool === 'calibrate'
-                ? `Калибровка: щёлкните две точки известного отрезка (${props.calibrationPoints.length}/2)`
-                : props.tool === 'rect'
-                  ? 'Прямоугольник: зажмите и протяните; Escape — отмена'
-                  : props.tool === 'eraser'
-                    ? 'Ластик: проведите по клеткам; Escape — отмена'
-                    : 'Кисть: проведите по клеткам; Escape — отмена'
+          ? 'Выбор: щёлкните стену, дверь, препятствие, зону или декорацию'
+          : props.tool === 'wall'
+            ? `Стена: щёлкайте вершины сетки (только по горизонтали/вертикали); повторный щелчок по последней точке или Enter — завершить, Escape — отмена (${wallPoints.length} т.)`
+            : props.tool === 'door'
+              ? 'Дверь: протяните по прямому участку стены от вершины до вершины'
+              : props.tool === 'obstacle'
+                ? 'Препятствие: протяните прямоугольник; флаги и подпись — в панели'
+                : props.tool === 'zone'
+                  ? 'Зона трудного ландшафта: протяните прямоугольник'
+                  : props.tool === 'background'
+                    ? bg
+                      ? bg.locked
+                        ? 'Фон заблокирован: снимите блокировку в панели'
+                        : 'Фон: перетащите подложку; токены и сетка не двигаются'
+                      : 'Фон: сначала загрузите изображение в панели'
+                    : props.tool === 'decoration'
+                      ? 'Декорация: протяните прямоугольник; подпись и цвет — в панели'
+                      : props.tool === 'calibrate'
+                        ? `Калибровка: щёлкните две точки известного отрезка (${props.calibrationPoints.length}/2)`
+                        : props.tool === 'rect'
+                          ? 'Прямоугольник: зажмите и протяните; Escape — отмена'
+                          : props.tool === 'eraser'
+                            ? 'Ластик: проведите по клеткам; Escape — отмена'
+                            : 'Кисть: проведите по клеткам; Escape — отмена'
       : mode === 'placement'
-        ? 'Расстановка: перетаскивайте токены по клеткам (до начала боя)'
+        ? 'Расстановка: перетаскивайте токены по клеткам; щелчок по двери открывает или закрывает её'
         : moveIntent
           ? `«${moveIntent.modeLabel}»: щёлкните подсвеченную клетку или перетащите токен`
           : 'Щёлкните токен, чтобы выбрать персонажа';
@@ -521,8 +636,10 @@ export function TacticalMap(props: Props) {
           {map.decorations.map((d) => (
             <g
               key={d.id}
-              className={`decoration ${props.selectedDecoration === d.id ? 'selected' : ''}`}
+              className={`decoration ${isSelected('decoration', d.id) ? 'selected' : ''}`}
               data-decoration={d.id}
+              data-object-kind="decoration"
+              data-object-id={d.id}
             >
               <rect
                 x={d.col + 0.04}
@@ -546,7 +663,7 @@ export function TacticalMap(props: Props) {
           ))}
           {decorationPreview && (
             <rect
-              className="decoration-preview"
+              className={`decoration-preview purpose-${decorationPreview.purpose}`}
               data-testid="decoration-preview"
               x={decorationPreview.col}
               y={decorationPreview.row}
@@ -569,6 +686,102 @@ export function TacticalMap(props: Props) {
           ))}
         </g>
         {lines}
+        <g className="environment" data-testid="environment">
+          {map.zones.map((z) => (
+            <g
+              key={z.id}
+              className={`zone ${isSelected('zone', z.id) ? 'selected' : ''}`}
+              data-zone={z.id}
+              data-object-kind="zone"
+              data-object-id={z.id}
+            >
+              <rect x={z.col} y={z.row} width={z.width} height={z.height} />
+              <text x={z.col + 0.15} y={z.row + 0.45}>
+                {z.label || 'трудный ландшафт'}
+              </text>
+            </g>
+          ))}
+          {map.obstacles.map((o) => (
+            <g
+              key={o.id}
+              className={`obstacle ${o.blocksMovement ? 'solid' : 'passable'} ${o.blocksVision ? 'opaque' : 'transparent'} ${isSelected('obstacle', o.id) ? 'selected' : ''}`}
+              data-obstacle={o.id}
+              data-object-kind="obstacle"
+              data-object-id={o.id}
+            >
+              <rect
+                x={o.col + 0.03}
+                y={o.row + 0.03}
+                width={o.width - 0.06}
+                height={o.height - 0.06}
+              />
+              {o.label && (
+                <text
+                  x={o.col + o.width / 2}
+                  y={o.row + o.height / 2}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                >
+                  {o.label}
+                </text>
+              )}
+            </g>
+          ))}
+          {map.walls.map((w) => (
+            <g
+              key={w.id}
+              className={`wall ${isSelected('wall', w.id) ? 'selected' : ''}`}
+              data-wall={w.id}
+              data-object-kind="wall"
+              data-object-id={w.id}
+            >
+              <polyline className="hit" points={w.points.map((p) => `${p.x},${p.y}`).join(' ')} />
+              <polyline className="line" points={w.points.map((p) => `${p.x},${p.y}`).join(' ')} />
+            </g>
+          ))}
+          {map.doors.map((d) => {
+            const open = props.doorStates[d.id] ?? d.open;
+            return (
+              <g
+                key={d.id}
+                className={`door ${open ? 'open' : 'closed'} ${isSelected('door', d.id) ? 'selected' : ''} ${mode === 'placement' ? 'toggle' : ''}`}
+                data-door={d.id}
+                data-open={open}
+                data-object-kind="door"
+                data-object-id={d.id}
+              >
+                <line className="hit" x1={d.from.x} y1={d.from.y} x2={d.to.x} y2={d.to.y} />
+                <line className="gap" x1={d.from.x} y1={d.from.y} x2={d.to.x} y2={d.to.y} />
+                <line className="leaf" x1={d.from.x} y1={d.from.y} x2={d.to.x} y2={d.to.y} />
+                <title>
+                  {open ? 'Дверь открыта' : 'Дверь закрыта'}
+                  {mode === 'placement' ? ' — щёлкните, чтобы переключить' : ''}
+                </title>
+              </g>
+            );
+          })}
+          {mode === 'editor' && props.tool === 'wall' && wallPoints.length > 0 && (
+            <g className="wall-draft" data-testid="wall-draft">
+              <polyline
+                points={[...wallPoints, ...(hover ? [vertexAt(hover)] : [])]
+                  .map((p) => `${p.x},${p.y}`)
+                  .join(' ')}
+              />
+              {wallPoints.map((p, i) => (
+                <circle key={i} cx={p.x} cy={p.y} r={0.12} />
+              ))}
+            </g>
+          )}
+          {drag?.kind === 'door' && (
+            <line
+              className="door-draft"
+              x1={drag.start.x}
+              y1={drag.start.y}
+              x2={drag.end.x}
+              y2={drag.end.y}
+            />
+          )}
+        </g>
         <rect className="map-border" x={0} y={0} width={map.cols} height={map.rows} />
         {labels}
         <g className="scale-bar" transform={`translate(0 ${map.rows + 0.7})`}>

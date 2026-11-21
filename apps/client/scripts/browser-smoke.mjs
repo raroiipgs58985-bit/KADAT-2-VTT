@@ -195,10 +195,20 @@ check(
   `GM choice «из расстановки» is applied (got ${pakChosen.x}; ${pakChosen.y})`,
 );
 
-// Replay v0.3 cannot be exported for another map size: the reason is shown.
+// Replay v0.4 exports a history on another map size (it carries the map snapshot).
 await page.getByRole('tab', { name: 'Расстановка' }).click();
-await page.getByRole('button', { name: 'Скачать replay' }).click();
-check((await toast()).includes('только сцену 20 × 20'), 'replay export explains the size limit');
+{
+  const exported = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Скачать replay' }).click();
+  const file = await (await exported).path();
+  const { readFileSync } = await import('node:fs');
+  const data = JSON.parse(readFileSync(file, 'utf8'));
+  check(
+    data.format === 'kadat-client-combat-v0.4' &&
+      data.steps.some((s) => s.type === 'map' && s.map.cols === 24),
+    'replay of a 24 × 12 history is exported with its map snapshot',
+  );
+}
 
 // Stage 2: background raster, calibration, decorations and the portable map file.
 {
@@ -249,7 +259,7 @@ check((await toast()).includes('только сцену 20 × 20'), 'replay expo
   );
 
   // A labelled decoration and some floor paint.
-  await page.getByPlaceholder('например, Ящики').fill('Ящики');
+  await page.getByPlaceholder('например, Ковёр').fill('Ящики');
   await page.getByRole('button', { name: /Декорация/ }).click();
   await drag({ x: 3.5, y: 5.5 }, { x: 5.5, y: 6.5 });
   check(
@@ -378,6 +388,136 @@ check((await toast()).includes('только сцену 20 × 20'), 'replay expo
     'an empty 8 × 8 map still lists the conflicting tokens',
   );
   await page.getByRole('button', { name: 'Отменить изменения' }).click();
+  rmSync(work, { recursive: true, force: true });
+}
+
+// Stage 3: walls, doors and obstacles; straight path checks; replay on the saved snapshot.
+{
+  const { readFileSync, rmSync, mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const work = mkdtempSync(join(tmpdir(), 'kadat-stage3-'));
+  const click = async (x, y) => {
+    const pt = await screen(x, y);
+    await page.mouse.click(pt.x, pt.y);
+  };
+  const count = (selector) => page.locator(selector).count();
+  await page.reload();
+  await page.waitForSelector('svg.map');
+  await page.getByRole('tab', { name: /Редактор карты/ }).click();
+
+  // A room: walls around x 8..14, y 6..14 drawn by successive clicks, finished on the start.
+  await page.getByRole('button', { name: /Стена/ }).click();
+  for (const [x, y] of [
+    [8, 6],
+    [14, 6],
+    [14, 14],
+    [8, 14],
+    [8, 6],
+    [8, 6],
+  ])
+    await click(x, y);
+  check((await count('[data-wall]')) === 1, 'a closed wall chain is created');
+  // A diagonal segment is not accepted while drawing.
+  await click(2, 2);
+  await click(4, 4);
+  check((await count('[data-testid="wall-draft"] circle')) === 1, 'a diagonal vertex is ignored');
+  await page.keyboard.press('Escape');
+  check((await count('[data-testid="wall-draft"]')) === 0, 'Escape cancels the wall chain');
+
+  // A one-edge door on the west wall and a crate obstacle inside.
+  await page.getByRole('button', { name: /Дверь/ }).click();
+  await drag({ x: 8, y: 10 }, { x: 8, y: 11 });
+  check((await count('[data-door]')) === 1, 'a door is placed on the wall');
+  await drag({ x: 2, y: 2 }, { x: 4, y: 2 });
+  check(await toastWith('на одном прямом участке'), 'a door off any wall is refused');
+  await page.getByLabel('Подпись нового препятствия').fill('Ящики');
+  await page.getByRole('button', { name: /Препятствие/ }).click();
+  await drag({ x: 11.5, y: 8.5 }, { x: 11.5, y: 11.5 });
+  check((await count('[data-obstacle]')) === 1, 'an obstacle is drawn');
+  await page.getByRole('button', { name: 'Применить карту' }).click();
+  check(await toastWith('Карта применена'), 'the room is applied');
+  await page.screenshot({ path: `${out}/00e-room.png` });
+
+  // Save, restart and reopen the map file.
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Сохранить карту в файл' }).click();
+  const mapPath = join(work, 'room.kadat-map.json');
+  await (await download).saveAs(mapPath);
+  const saved = JSON.parse(readFileSync(mapPath, 'utf8'));
+  check(
+    saved.schemaVersion === 2 && saved.map.walls.length === 1 && saved.map.doors.length === 1,
+    'the saved file (schema 2) holds the wall and the door',
+  );
+  await page.reload();
+  await page.waitForSelector('svg.map');
+  await page.getByRole('tab', { name: /Редактор карты/ }).click();
+  await page.getByLabel('Файл карты').setInputFiles(mapPath);
+  check(await toastWith('открыт как черновик'), 'the room file opens');
+  await page.getByRole('button', { name: 'Применить карту' }).click();
+  check(
+    (await count('[data-wall]')) === 1 &&
+      (await count('[data-door]')) === 1 &&
+      (await count('[data-obstacle]')) === 1,
+    'walls, door and obstacle survive the round trip',
+  );
+
+  // Setup: Kelus west of the door; the door toggles by a click and the change is logged.
+  await page.getByRole('tab', { name: 'Расстановка' }).click();
+  await drag({ x: 5.5, y: 10.5 }, { x: 6.5, y: 10.5 });
+  const doorState = () => page.locator('[data-door]').getAttribute('data-open');
+  await click(8, 10.5);
+  check((await doorState()) === 'true', 'a click opens the door in setup');
+  check(await toastWith('Дверь открыта'), 'the door change is logged');
+  await click(8, 10.5);
+  check((await doorState()) === 'false', 'a second click closes it again');
+
+  // Combat: through the closed door is refused without spending OD; nothing inside the room
+  // is highlighted; a free move elsewhere is accepted.
+  await page.getByRole('button', { name: 'Начать бой' }).click();
+  await page.locator('.mode').nth(2).click(); // full move, 8 m
+  const insideRoom = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid="reach"] rect')].some(
+      (r) => Number(r.getAttribute('x')) >= 8,
+    ),
+  );
+  check(!insideRoom, 'no reachable cell is highlighted inside the closed room');
+  await page.locator('.mode').nth(2).click(); // deselect
+  await page.locator('.mode').nth(1).click(); // half move
+  await click(9.5, 10.5);
+  check(
+    await toastWith('закрытая дверь'),
+    'a move through the closed door is refused with the reason',
+  );
+  check((await od()) === 2, 'the refused move spends no OD');
+  const kelusStill = await tokenPosition('kelus-drakar');
+  check(kelusStill.x === 6.5, 'Kelus stays west of the door');
+  await page.locator('.mode').nth(1).click();
+  await click(3.5, 10.5);
+  check((await od()) === 1, 'an allowed move spends 1 OD');
+
+  // Replay v0.4 reproduces the accepted command on the saved snapshot.
+  const replayDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Скачать replay' }).click();
+  const replayPath = join(work, 'combat.json');
+  await (await replayDownload).saveAs(replayPath);
+  const replay = JSON.parse(readFileSync(replayPath, 'utf8'));
+  check(replay.format === 'kadat-client-combat-v0.4', 'replay is exported as v0.4');
+  await page.reload();
+  await page.waitForSelector('svg.map');
+  await page
+    .locator('label.file-button', { hasText: 'Открыть replay' })
+    .locator('input')
+    .setInputFiles(replayPath);
+  check(await toastWith('Replay воспроизведён'), 'the replay is imported');
+  const replayedKelus = await tokenPosition('kelus-drakar');
+  check(
+    (await count('[data-wall]')) === 1 &&
+      (await doorState()) === 'false' &&
+      replayedKelus.x === 3.5 &&
+      (await od()) === 1,
+    'the replay restores the room, the closed door, Kelus at 3.5 and 1 OD',
+  );
   rmSync(work, { recursive: true, force: true });
 }
 

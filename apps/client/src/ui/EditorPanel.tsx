@@ -4,14 +4,17 @@ import {
   MAP_LIMITS,
   RASTER_LIMITS,
   type Decoration,
+  type Door,
   type FloorColorId,
   type MapBackground,
+  type MapDocument,
+  type Obstacle,
 } from '../game/map';
 import { MAP_FILE_EXTENSION } from '../game/map-file';
 import type { EditorHistory } from '../game/map-editor';
 import { actor, type ActorId } from '../game/model';
 import type { Point } from '../game/grid';
-import type { EditorTool } from './TacticalMap';
+import type { EditorTool, SelectedObject } from './TacticalMap';
 
 export const toolList: { id: EditorTool; label: string; key: string }[] = [
   { id: 'select', label: 'Выбор', key: 'V' },
@@ -22,7 +25,187 @@ export const toolList: { id: EditorTool; label: string; key: string }[] = [
   { id: 'rect', label: 'Прямоугольник', key: 'R' },
   { id: 'eraser', label: 'Ластик', key: 'E' },
   { id: 'decoration', label: 'Декорация', key: 'D' },
+  { id: 'wall', label: 'Стена', key: 'W' },
+  { id: 'door', label: 'Дверь', key: 'N' },
+  { id: 'obstacle', label: 'Препятствие', key: 'P' },
+  { id: 'zone', label: 'Трудный ландшафт', key: 'T' },
 ];
+
+type DoorPatch = Partial<Pick<Door, 'open' | 'blocksMovement' | 'blocksVision'>>;
+type ObstaclePatch = Partial<Pick<Obstacle, 'label' | 'blocksMovement' | 'blocksVision' | 'notes'>>;
+
+/** Text input committing one undo step on blur or Enter. */
+function TextField(props: {
+  label: string;
+  value: string;
+  max: number;
+  multiline?: boolean;
+  onCommit: (value: string) => void;
+}) {
+  const [text, setText] = useState(props.value);
+  useEffect(() => setText(props.value), [props.value]);
+  const commit = () => {
+    if (text !== props.value) props.onCommit(text);
+  };
+  return (
+    <label>
+      {props.label}
+      {props.multiline ? (
+        <textarea
+          value={text}
+          maxLength={props.max}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commit}
+        />
+      ) : (
+        <input
+          value={text}
+          maxLength={props.max}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit();
+          }}
+        />
+      )}
+    </label>
+  );
+}
+
+/** Properties of the selected wall, door, obstacle or zone. */
+function ObjectProperties(props: {
+  object: SelectedObject;
+  map: MapDocument;
+  onUpdateDoor: (id: string, patch: DoorPatch) => void;
+  onUpdateObstacle: (id: string, patch: ObstaclePatch) => void;
+  onUpdateZone: (id: string, label: string) => void;
+  onDelete: (object: SelectedObject) => void;
+}) {
+  const { object, map } = props;
+  if (object.kind === 'wall') {
+    const wall = map.walls.find((w) => w.id === object.id);
+    if (!wall) return null;
+    const doors = map.doors.filter((d) => d.wallId === wall.id);
+    const length = wall.points
+      .slice(1)
+      .reduce(
+        (n, p, i) => n + Math.abs(p.x - wall.points[i]!.x) + Math.abs(p.y - wall.points[i]!.y),
+        0,
+      );
+    return (
+      <div className="stack" data-testid="object-props">
+        <p className="muted small">
+          Стена: {wall.points.length - 1} отр., {length} м. Блокирует движение и видимость.
+          {doors.length ? ` Двери на ней: ${doors.length}.` : ''}
+        </p>
+        <button type="button" onClick={() => props.onDelete(object)}>
+          {doors.length ? `Удалить стену и её двери (${doors.length})` : 'Удалить стену'}
+        </button>
+      </div>
+    );
+  }
+  if (object.kind === 'door') {
+    const door = map.doors.find((d) => d.id === object.id);
+    if (!door) return null;
+    return (
+      <div className="stack" data-testid="object-props">
+        <p className="muted small">
+          Дверь ({door.from.x}; {door.from.y}) — ({door.to.x}; {door.to.y}) на стене {door.wallId}.
+          Открытая дверь не блокирует ничего; закрытая — по флагам ниже.
+        </p>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={door.open}
+            onChange={(e) => props.onUpdateDoor(door.id, { open: e.target.checked })}
+          />
+          Открыта в начале сцены
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={door.blocksMovement}
+            onChange={(e) => props.onUpdateDoor(door.id, { blocksMovement: e.target.checked })}
+          />
+          Закрытая блокирует движение
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={door.blocksVision}
+            onChange={(e) => props.onUpdateDoor(door.id, { blocksVision: e.target.checked })}
+          />
+          Закрытая блокирует видимость
+        </label>
+        <button type="button" onClick={() => props.onDelete(object)}>
+          Удалить дверь
+        </button>
+      </div>
+    );
+  }
+  if (object.kind === 'obstacle') {
+    const o = map.obstacles.find((x) => x.id === object.id);
+    if (!o) return null;
+    return (
+      <div className="stack" data-testid="object-props">
+        <TextField
+          label="Подпись препятствия"
+          value={o.label}
+          max={MAP_LIMITS.maxLabelLength}
+          onCommit={(label) => props.onUpdateObstacle(o.id, { label })}
+        />
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={o.blocksMovement}
+            onChange={(e) => props.onUpdateObstacle(o.id, { blocksMovement: e.target.checked })}
+          />
+          Блокирует движение
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={o.blocksVision}
+            onChange={(e) => props.onUpdateObstacle(o.id, { blocksVision: e.target.checked })}
+          />
+          Блокирует видимость
+        </label>
+        <TextField
+          label="Заметки (высота, толщина, прочность — без расчёта)"
+          value={o.notes}
+          max={MAP_LIMITS.maxNotesLength}
+          multiline
+          onCommit={(notes) => props.onUpdateObstacle(o.id, { notes })}
+        />
+        <button type="button" onClick={() => props.onDelete(object)}>
+          Удалить препятствие
+        </button>
+      </div>
+    );
+  }
+  if (object.kind === 'zone') {
+    const z = map.zones.find((x) => x.id === object.id);
+    if (!z) return null;
+    return (
+      <div className="stack" data-testid="object-props">
+        <TextField
+          label="Подпись зоны"
+          value={z.label}
+          max={MAP_LIMITS.maxLabelLength}
+          onCommit={(label) => props.onUpdateZone(z.id, label)}
+        />
+        <p className="note-author">
+          Правило трудного ландшафта не подключено: движение через зону ждёт решения автора,
+          предпросмотр геометрии работает.
+        </p>
+        <button type="button" onClick={() => props.onDelete(object)}>
+          Удалить зону
+        </button>
+      </div>
+    );
+  }
+  return null;
+}
 
 /** A number input that commits one undo step on blur or Enter, not on every keystroke. */
 function NumberField(props: {
@@ -102,6 +285,14 @@ export function EditorPanel(props: {
   onRemoveDecoration: () => void;
   onSaveFile: () => void;
   onOpenFile: (file: File) => void;
+  selectedObject: SelectedObject | null;
+  map: MapDocument;
+  newObstacle: { label: string; blocksMovement: boolean; blocksVision: boolean };
+  onNewObstacle: (value: { label: string; blocksMovement: boolean; blocksVision: boolean }) => void;
+  onUpdateDoor: (id: string, patch: DoorPatch) => void;
+  onUpdateObstacle: (id: string, patch: ObstaclePatch) => void;
+  onUpdateZone: (id: string, label: string) => void;
+  onDeleteObject: (object: SelectedObject) => void;
 }) {
   const [calibrationMeters, setCalibrationMeters] = useState('');
   const [decorationText, setDecorationText] = useState('');
@@ -235,6 +426,57 @@ export function EditorPanel(props: {
         </button>
       </div>
 
+      <h3>Окружение</h3>
+      {props.selectedObject && props.selectedObject.kind !== 'decoration' ? (
+        <ObjectProperties
+          object={props.selectedObject}
+          map={props.map}
+          onUpdateDoor={props.onUpdateDoor}
+          onUpdateObstacle={props.onUpdateObstacle}
+          onUpdateZone={props.onUpdateZone}
+          onDelete={props.onDeleteObject}
+        />
+      ) : (
+        <div className="stack">
+          <p className="muted small">
+            Стены: {props.map.walls.length} · двери: {props.map.doors.length} · препятствия:{' '}
+            {props.map.obstacles.length} · зоны: {props.map.zones.length}. Выберите объект
+            инструментом «Выбор», чтобы изменить или удалить его.
+          </p>
+          <label>
+            Подпись нового препятствия
+            <input
+              value={props.newObstacle.label}
+              maxLength={MAP_LIMITS.maxLabelLength}
+              placeholder="например, Ящики"
+              aria-label="Подпись нового препятствия"
+              onChange={(e) => props.onNewObstacle({ ...props.newObstacle, label: e.target.value })}
+            />
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={props.newObstacle.blocksMovement}
+              onChange={(e) =>
+                props.onNewObstacle({ ...props.newObstacle, blocksMovement: e.target.checked })
+              }
+            />
+            Новое препятствие блокирует движение
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={props.newObstacle.blocksVision}
+              aria-label="Новое препятствие блокирует видимость"
+              onChange={(e) =>
+                props.onNewObstacle({ ...props.newObstacle, blocksVision: e.target.checked })
+              }
+            />
+            Новое препятствие блокирует видимость
+          </label>
+        </div>
+      )}
+
       <h3>Декорация</h3>
       {props.selectedDecoration ? (
         <div className="stack" data-testid="decoration-props">
@@ -268,7 +510,7 @@ export function EditorPanel(props: {
           <input
             value={props.newDecorationLabel}
             maxLength={MAP_LIMITS.maxLabelLength}
-            placeholder="например, Ящики"
+            placeholder="например, Ковёр"
             onChange={(e) => props.onNewDecorationLabel(e.target.value)}
           />
         </label>

@@ -6,13 +6,17 @@ import { GRID, cellKey, type GridSize } from './grid';
  * and labelled decorations. Camera, zoom and derived indexes are not part of the document.
  * Floor colours, decorations and the background are purely visual: they carry no rule.
  */
-export const MAP_SCHEMA_VERSION = 1 as const;
+export const MAP_SCHEMA_VERSION = 2 as const;
+/** Older schema versions that can be opened (and are upgraded on read). */
+export const READABLE_MAP_SCHEMAS = [1, 2] as const;
 export const MAP_LIMITS = {
   minCells: 1,
   maxCells: 200,
   maxNameLength: 80,
   maxDecorations: 2000,
   maxLabelLength: 60,
+  maxEnvironment: 5000,
+  maxNotesLength: 300,
 } as const;
 /** v1 raster limits: source file size, side length and total pixels. */
 export const RASTER_LIMITS = {
@@ -59,6 +63,53 @@ export interface MapBackground {
   readonly opacity: number;
   readonly locked: boolean;
 }
+/** A grid vertex (corner of cells), in whole metres. */
+export interface Vertex {
+  readonly x: number;
+  readonly y: number;
+}
+/** A chain of horizontal/vertical segments along cell edges. Blocks movement and vision. */
+export interface Wall {
+  readonly id: string;
+  readonly points: readonly Vertex[];
+}
+/**
+ * A continuous interval of whole edges on one straight segment of a wall. An open door
+ * removes all blocking on its opening; a closed door blocks movement and vision as flagged.
+ */
+export interface Door {
+  readonly id: string;
+  readonly wallId: string;
+  readonly from: Vertex;
+  readonly to: Vertex;
+  readonly open: boolean;
+  readonly blocksMovement: boolean;
+  readonly blocksVision: boolean;
+}
+/** Cells with independent movement and vision flags; notes are text only, no calculation. */
+export interface Obstacle {
+  readonly id: string;
+  readonly col: number;
+  readonly row: number;
+  readonly width: number;
+  readonly height: number;
+  readonly label: string;
+  readonly blocksMovement: boolean;
+  readonly blocksVision: boolean;
+  readonly notes: string;
+}
+/**
+ * Difficult terrain marking. Its canonical rule (halved СКР, falls when running) is not
+ * connected: movement through it stops for an author decision; geometry preview works.
+ */
+export interface TerrainZone {
+  readonly id: string;
+  readonly col: number;
+  readonly row: number;
+  readonly width: number;
+  readonly height: number;
+  readonly label: string;
+}
 export interface MapDocument extends GridSize {
   readonly schemaVersion: typeof MAP_SCHEMA_VERSION;
   readonly id: string;
@@ -68,6 +119,10 @@ export interface MapDocument extends GridSize {
   /** Painted floor cells, keyed `col:row`. Visual only. */
   readonly floor: Readonly<Record<string, FloorColorId>>;
   readonly decorations: readonly Decoration[];
+  readonly walls: readonly Wall[];
+  readonly doors: readonly Door[];
+  readonly obstacles: readonly Obstacle[];
+  readonly zones: readonly TerrainZone[];
 }
 
 export const STANDARD_MAP: MapDocument = Object.freeze({
@@ -80,6 +135,10 @@ export const STANDARD_MAP: MapDocument = Object.freeze({
   background: null,
   floor: Object.freeze({}),
   decorations: Object.freeze([]) as readonly Decoration[],
+  walls: Object.freeze([]) as readonly Wall[],
+  doors: Object.freeze([]) as readonly Door[],
+  obstacles: Object.freeze([]) as readonly Obstacle[],
+  zones: Object.freeze([]) as readonly TerrainZone[],
 });
 
 export function emptyMap(id: string, name: string, cols: number, rows: number): MapDocument {
@@ -93,6 +152,10 @@ export function emptyMap(id: string, name: string, cols: number, rows: number): 
     background: null,
     floor: {},
     decorations: [],
+    walls: [],
+    doors: [],
+    obstacles: [],
+    zones: [],
   };
 }
 
@@ -135,7 +198,170 @@ export function mapProblems(m: MapDocument): string[] {
     problems.push(
       `Разметка пола выходит за новые границы: ${outside} кл. Сотрите её или верните размер.`,
     );
-  problems.push(...decorationProblems(m), ...backgroundProblems(m.background));
+  problems.push(
+    ...decorationProblems(m),
+    ...backgroundProblems(m.background),
+    ...environmentProblems(m),
+  );
+  return problems;
+}
+
+/** Horizontal or vertical segment between two vertices, normalised (a ≤ b along its axis). */
+export function segmentLine(a: Vertex, b: Vertex) {
+  if (a.y === b.y && a.x !== b.x)
+    return { axis: 'h' as const, at: a.y, from: Math.min(a.x, b.x), to: Math.max(a.x, b.x) };
+  if (a.x === b.x && a.y !== b.y)
+    return { axis: 'v' as const, at: a.x, from: Math.min(a.y, b.y), to: Math.max(a.y, b.y) };
+  return null;
+}
+type Line = NonNullable<ReturnType<typeof segmentLine>>;
+const overlapLength = (p: Line, q: Line) =>
+  p.axis === q.axis && p.at === q.at ? Math.min(p.to, q.to) - Math.max(p.from, q.from) : 0;
+const isVertex = (v: unknown, m: GridSize): v is Vertex =>
+  typeof v === 'object' &&
+  v !== null &&
+  Number.isInteger((v as Vertex).x) &&
+  Number.isInteger((v as Vertex).y) &&
+  (v as Vertex).x >= 0 &&
+  (v as Vertex).y >= 0 &&
+  (v as Vertex).x <= m.cols &&
+  (v as Vertex).y <= m.rows;
+/** Straight segments of a wall as lines. */
+export const wallLines = (w: Wall) => w.points.slice(1).map((p, i) => segmentLine(w.points[i]!, p));
+
+function environmentProblems(m: MapDocument): string[] {
+  const problems: string[] = [];
+  const lists = [
+    ['walls', m.walls],
+    ['doors', m.doors],
+    ['obstacles', m.obstacles],
+    ['zones', m.zones],
+  ] as const;
+  for (const [name, list] of lists)
+    if (!Array.isArray(list)) {
+      problems.push(`Список ${name} повреждён`);
+      return problems;
+    }
+  const total = m.walls.length + m.doors.length + m.obstacles.length + m.zones.length;
+  if (total > MAP_LIMITS.maxEnvironment)
+    problems.push(`Объектов окружения больше ${MAP_LIMITS.maxEnvironment}`);
+  const uniqueIds = (list: readonly { id: unknown }[], what: string) => {
+    const seen = new Set<unknown>();
+    for (const x of list) {
+      if (typeof x?.id !== 'string' || !x.id.trim() || seen.has(x.id))
+        problems.push(`Повторяющийся или пустой ID (${what}): ${String(x?.id)}`);
+      seen.add(x?.id);
+    }
+  };
+  uniqueIds(m.walls, 'стена');
+  uniqueIds(m.doors, 'дверь');
+  uniqueIds(m.obstacles, 'препятствие');
+  uniqueIds(m.zones, 'зона');
+
+  // Walls: axis-aligned, non-zero segments on the map, no coinciding intervals.
+  const lines: { wall: string; line: Line }[] = [];
+  let wallsOutside = 0;
+  for (const w of m.walls) {
+    if (!Array.isArray(w.points) || w.points.length < 2) {
+      problems.push(`Стена ${w.id}: нужно не меньше двух точек`);
+      continue;
+    }
+    if (
+      !w.points.every((p) =>
+        isVertex(p, { cols: Number.MAX_SAFE_INTEGER, rows: Number.MAX_SAFE_INTEGER }),
+      )
+    ) {
+      problems.push(`Стена ${w.id}: точки должны быть целыми вершинами сетки`);
+      continue;
+    }
+    if (!w.points.every((p) => isVertex(p, m))) wallsOutside++;
+    const own = wallLines(w);
+    if (own.some((l) => l === null)) {
+      problems.push(
+        `Стена ${w.id}: отрезки должны быть горизонтальными или вертикальными и ненулевыми`,
+      );
+      continue;
+    }
+    for (const line of own as Line[]) {
+      const clash = lines.find((o) => overlapLength(o.line, line) > 0);
+      if (clash)
+        problems.push(
+          clash.wall === w.id
+            ? `Стена ${w.id}: отрезки накладываются друг на друга`
+            : `Стена ${w.id} совпадает на участке со стеной ${clash.wall}`,
+        );
+      lines.push({ wall: w.id, line });
+    }
+  }
+  if (wallsOutside) problems.push(`Стены выходят за границы карты: ${wallsOutside}`);
+
+  // Doors: one interval on one straight segment of an existing wall; no overlaps.
+  const doorLines: { id: string; line: Line }[] = [];
+  for (const d of m.doors) {
+    const wall = m.walls.find((w) => w.id === d.wallId);
+    if (!wall) {
+      problems.push(`Дверь ${d.id} ссылается на несуществующую стену ${String(d.wallId)}`);
+      continue;
+    }
+    if (
+      ![d.open, d.blocksMovement, d.blocksVision].every((f) => typeof f === 'boolean') ||
+      !isVertex(d.from, { cols: Number.MAX_SAFE_INTEGER, rows: Number.MAX_SAFE_INTEGER }) ||
+      !isVertex(d.to, { cols: Number.MAX_SAFE_INTEGER, rows: Number.MAX_SAFE_INTEGER })
+    ) {
+      problems.push(`Дверь ${d.id} повреждена`);
+      continue;
+    }
+    const line = segmentLine(d.from, d.to);
+    if (!line) {
+      problems.push(`Дверь ${d.id}: проём должен быть горизонтальным или вертикальным и ненулевым`);
+      continue;
+    }
+    const host = wallLines(wall).find(
+      (l) =>
+        l && l.axis === line.axis && l.at === line.at && l.from <= line.from && line.to <= l.to,
+    );
+    if (!host) problems.push(`Дверь ${d.id} не лежит на одном прямом участке стены ${wall.id}`);
+    const clash = doorLines.find((o) => overlapLength(o.line, line) > 0);
+    if (clash) problems.push(`Двери ${clash.id} и ${d.id} перекрываются`);
+    doorLines.push({ id: d.id, line });
+  }
+
+  // Obstacles and zones: whole-cell rectangles on the map.
+  const rectBad = (r: {
+    col: unknown;
+    row: unknown;
+    width: unknown;
+    height: unknown;
+    label: unknown;
+  }) =>
+    !isCount(r.col, 0) ||
+    !isCount(r.row, 0) ||
+    !isCount(r.width, 1) ||
+    !isCount(r.height, 1) ||
+    typeof r.label !== 'string' ||
+    r.label.length > MAP_LIMITS.maxLabelLength;
+  let rectsOutside = 0;
+  for (const o of m.obstacles) {
+    if (
+      rectBad(o) ||
+      typeof o.blocksMovement !== 'boolean' ||
+      typeof o.blocksVision !== 'boolean' ||
+      typeof o.notes !== 'string' ||
+      o.notes.length > MAP_LIMITS.maxNotesLength
+    ) {
+      problems.push(`Препятствие ${o.id} повреждено`);
+      continue;
+    }
+    if (o.col + o.width > m.cols || o.row + o.height > m.rows) rectsOutside++;
+  }
+  for (const z of m.zones) {
+    if (rectBad(z)) {
+      problems.push(`Зона ${z.id} повреждена`);
+      continue;
+    }
+    if (z.col + z.width > m.cols || z.row + z.height > m.rows) rectsOutside++;
+  }
+  if (rectsOutside) problems.push(`Препятствия или зоны выходят за границы карты: ${rectsOutside}`);
   return problems;
 }
 

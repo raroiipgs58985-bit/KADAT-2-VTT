@@ -1016,3 +1016,106 @@ kbd {
   display: inline-block;
   text-align: center;
 }
+
+/* Stage 3: environment */
+.environment .hit {
+  stroke: transparent;
+  stroke-width: 0.45;
+  fill: none;
+  stroke-linecap: round;
+}
+.wall .line {
+  fill: none;
+  stroke: #c9d4df;
+  stroke-width: 0.14;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  pointer-events: none;
+}
+.wall.selected .line {
+  stroke: var(--accent);
+}
+.door .leaf {
+  stroke-width: 0.16;
+  stroke-linecap: butt;
+  pointer-events: none;
+}
+.door .gap {
+  stroke: #141b22;
+  stroke-width: 0.2;
+  pointer-events: none;
+}
+.door.closed .leaf {
+  stroke: #e0a65c;
+}
+.door.open .leaf {
+  stroke: #4fc29a;
+  stroke-width: 0.06;
+  stroke-dasharray: 0.15 0.1;
+}
+.door.selected .leaf {
+  stroke: var(--accent);
+}
+.door.toggle {
+  cursor: pointer;
+}
+.obstacle rect {
+  stroke-width: 0.05;
+}
+.obstacle.solid rect {
+  fill: rgba(120, 90, 60, 0.75);
+  stroke: #c79a6a;
+}
+.obstacle.passable rect {
+  fill: rgba(160, 160, 160, 0.25);
+  stroke: #a0a0a0;
+  stroke-dasharray: 0.15 0.1;
+}
+.obstacle.transparent rect {
+  fill-opacity: 0.45;
+}
+.obstacle text,
+.zone text {
+  font-size: 0.38px;
+  fill: #f4f7fa;
+  paint-order: stroke;
+  stroke: #0b1117;
+  stroke-width: 0.07;
+  pointer-events: none;
+}
+.obstacle.selected rect,
+.zone.selected rect {
+  stroke: var(--accent);
+  stroke-width: 0.1;
+}
+.zone rect {
+  fill: rgba(140, 110, 40, 0.18);
+  stroke: rgba(200, 160, 60, 0.6);
+  stroke-width: 0.04;
+  stroke-dasharray: 0.3 0.15;
+}
+.zone text {
+  font-size: 0.32px;
+  fill: #e8d49a;
+}
+.mode-editor .environment [data-object-kind] {
+  cursor: pointer;
+}
+.wall-draft polyline,
+.door-draft {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.1;
+  stroke-dasharray: 0.2 0.12;
+  pointer-events: none;
+}
+.wall-draft circle {
+  fill: var(--accent);
+  pointer-events: none;
+}
+.decoration-preview.purpose-obstacle {
+  fill: rgba(120, 90, 60, 0.6) !important;
+}
+.decoration-preview.purpose-zone {
+  fill: rgba(140, 110, 40, 0.3) !important;
+}

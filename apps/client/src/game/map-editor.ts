@@ -4,11 +4,18 @@ import {
   insideMap,
   mapProblems,
   sameMap,
+  segmentLine,
+  wallLines,
   type Decoration,
+  type Door,
   type FloorColorId,
   type MapBackground,
   type MapDocument,
+  type Obstacle,
   type RasterMime,
+  type TerrainZone,
+  type Vertex,
+  type Wall,
 } from './map';
 import { actor, ids, tokenConflicts, type ActorId, type Battle } from './model';
 import { applyMap } from './engine';
@@ -98,8 +105,9 @@ export function paint(d: EditorDraft, cells: readonly Cell[], colour: FloorColor
   return { ...d, map: { ...d.map, floor } };
 }
 /**
- * Explicit GM action: erase floor paint outside the current bounds and delete decorations
- * that do not fit entirely inside them. Nothing is clipped silently.
+ * Explicit GM action: erase floor paint outside the current bounds and delete decorations,
+ * walls (with their doors), obstacles and zones that do not fit entirely inside them.
+ * Nothing is clipped silently.
  */
 export function eraseOutside(d: EditorDraft): EditorDraft {
   const floor = Object.fromEntries(
@@ -108,10 +116,24 @@ export function eraseOutside(d: EditorDraft): EditorDraft {
       return insideMap(d.map, col!, row!);
     }),
   );
-  const decorations = d.map.decorations.filter(
-    (x) => x.col + x.width <= d.map.cols && x.row + x.height <= d.map.rows,
+  const fits = (x: { col: number; row: number; width: number; height: number }) =>
+    x.col + x.width <= d.map.cols && x.row + x.height <= d.map.rows;
+  const walls = d.map.walls.filter((w) =>
+    w.points.every((p) => p.x <= d.map.cols && p.y <= d.map.rows),
   );
-  return { ...d, map: { ...d.map, floor, decorations } };
+  const wallIds = new Set(walls.map((w) => w.id));
+  return {
+    ...d,
+    map: {
+      ...d.map,
+      floor,
+      decorations: d.map.decorations.filter(fits),
+      walls,
+      doors: d.map.doors.filter((x) => wallIds.has(x.wallId)),
+      obstacles: d.map.obstacles.filter(fits),
+      zones: d.map.zones.filter(fits),
+    },
+  };
 }
 
 /** Replaces the draft map with an opened document; token positions stay as they are. */
@@ -279,3 +301,83 @@ export function applyDraft(b: Battle, d: EditorDraft) {
     );
   return applyMap(b, { map: d.map, positions });
 }
+
+// --- Environment: walls, doors, obstacles, terrain zones ---------------------------------
+
+/**
+ * Applies an environment change only if it introduces no new map problem; otherwise returns
+ * the reasons. Existing problems (e.g. a pending resize) do not block unrelated edits.
+ */
+export function tryChange(
+  d: EditorDraft,
+  change: (m: MapDocument) => MapDocument,
+): { draft: EditorDraft; problems: [] } | { draft: null; problems: string[] } {
+  const before = new Set(mapProblems(d.map));
+  const map = change(d.map);
+  const added = mapProblems(map).filter((p) => !before.has(p));
+  return added.length ? { draft: null, problems: added } : { draft: { ...d, map }, problems: [] };
+}
+export const addWall = (m: MapDocument, wall: Wall): MapDocument => ({
+  ...m,
+  walls: [...m.walls, wall],
+});
+/** Deletes a wall together with every door on it, as one change. */
+export const removeWall = (m: MapDocument, id: string): MapDocument => ({
+  ...m,
+  walls: m.walls.filter((w) => w.id !== id),
+  doors: m.doors.filter((x) => x.wallId !== id),
+});
+/** The wall with a straight segment that contains the interval, if any. */
+export function hostWall(m: MapDocument, from: Vertex, to: Vertex): Wall | null {
+  const line = segmentLine(from, to);
+  if (!line) return null;
+  return (
+    m.walls.find((w) =>
+      wallLines(w).some(
+        (l) =>
+          l && l.axis === line.axis && l.at === line.at && l.from <= line.from && line.to <= l.to,
+      ),
+    ) ?? null
+  );
+}
+export const addDoor = (m: MapDocument, door: Door): MapDocument => ({
+  ...m,
+  doors: [...m.doors, door],
+});
+export const updateDoor = (
+  m: MapDocument,
+  id: string,
+  patch: Partial<Pick<Door, 'open' | 'blocksMovement' | 'blocksVision'>>,
+): MapDocument => ({ ...m, doors: m.doors.map((x) => (x.id === id ? { ...x, ...patch } : x)) });
+export const removeDoor = (m: MapDocument, id: string): MapDocument => ({
+  ...m,
+  doors: m.doors.filter((x) => x.id !== id),
+});
+export const addObstacle = (m: MapDocument, o: Obstacle): MapDocument => ({
+  ...m,
+  obstacles: [...m.obstacles, o],
+});
+export const updateObstacle = (
+  m: MapDocument,
+  id: string,
+  patch: Partial<Pick<Obstacle, 'label' | 'blocksMovement' | 'blocksVision' | 'notes'>>,
+): MapDocument => ({
+  ...m,
+  obstacles: m.obstacles.map((x) => (x.id === id ? { ...x, ...patch } : x)),
+});
+export const removeObstacle = (m: MapDocument, id: string): MapDocument => ({
+  ...m,
+  obstacles: m.obstacles.filter((x) => x.id !== id),
+});
+export const addZone = (m: MapDocument, z: TerrainZone): MapDocument => ({
+  ...m,
+  zones: [...m.zones, z],
+});
+export const updateZone = (m: MapDocument, id: string, label: string): MapDocument => ({
+  ...m,
+  zones: m.zones.map((x) => (x.id === id ? { ...x, label } : x)),
+});
+export const removeZone = (m: MapDocument, id: string): MapDocument => ({
+  ...m,
+  zones: m.zones.filter((x) => x.id !== id),
+});

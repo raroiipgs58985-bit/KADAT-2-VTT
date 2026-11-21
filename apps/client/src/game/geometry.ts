@@ -1,0 +1,294 @@
+import { cellKey, cellsOf, type Footprint, type Point } from './grid';
+import { segmentLine, wallLines, type MapDocument } from './map';
+
+/**
+ * Map geometry for positions and straight movement paths.
+ *
+ * Unit edges are keyed `h:x:y` (from (x, y) to (x + 1, y)) and `v:x:y` (from (x, y) to
+ * (x, y + 1)). Walls and closed doors block the edges they cover; movement-blocking
+ * obstacles occupy cells and block their outer boundary edges. An open door removes every
+ * barrier on its opening, including the wall beneath it.
+ *
+ * Path checks use exact integer arithmetic: all coordinates are multiples of 0.5 m, so they
+ * are doubled before any comparison. This makes "touching" and "crossing" decidable.
+ */
+export interface Blocker {
+  readonly kind: 'wall' | 'door' | 'obstacle';
+  readonly id: string;
+  readonly label: string;
+}
+export interface GeometryIndex {
+  readonly cols: number;
+  readonly rows: number;
+  readonly movementEdges: ReadonlyMap<string, Blocker>;
+  readonly visionEdges: ReadonlyMap<string, Blocker>;
+  readonly blockedCells: ReadonlyMap<string, Blocker>;
+  readonly terrainCells: ReadonlyMap<string, { id: string; label: string }>;
+}
+
+export const initialDoorStates = (m: MapDocument): Record<string, boolean> =>
+  Object.fromEntries(m.doors.map((d) => [d.id, d.open]));
+
+const lineEdges = (line: { axis: 'h' | 'v'; at: number; from: number; to: number }) => {
+  const keys: string[] = [];
+  for (let i = line.from; i < line.to; i++)
+    keys.push(line.axis === 'h' ? `h:${i}:${line.at}` : `v:${line.at}:${i}`);
+  return keys;
+};
+
+export function buildGeometry(
+  m: MapDocument,
+  doorOpen: Readonly<Record<string, boolean>> = initialDoorStates(m),
+): GeometryIndex {
+  const movementEdges = new Map<string, Blocker>();
+  const visionEdges = new Map<string, Blocker>();
+  const blockedCells = new Map<string, Blocker>();
+  const terrainCells = new Map<string, { id: string; label: string }>();
+  for (const w of m.walls) {
+    const blocker: Blocker = { kind: 'wall', id: w.id, label: 'стена' };
+    for (const line of wallLines(w))
+      if (line)
+        for (const key of lineEdges(line)) {
+          movementEdges.set(key, blocker);
+          visionEdges.set(key, blocker);
+        }
+  }
+  for (const d of m.doors) {
+    const line = segmentLine(d.from, d.to);
+    if (!line) continue;
+    const open = doorOpen[d.id] ?? d.open;
+    const blocker: Blocker = { kind: 'door', id: d.id, label: 'закрытая дверь' };
+    for (const key of lineEdges(line)) {
+      if (open || !d.blocksMovement) movementEdges.delete(key);
+      else movementEdges.set(key, blocker);
+      if (open || !d.blocksVision) visionEdges.delete(key);
+      else visionEdges.set(key, blocker);
+    }
+  }
+  const addCells = (
+    target: Map<string, Blocker>,
+    edges: Map<string, Blocker>,
+    filter: (o: MapDocument['obstacles'][number]) => boolean,
+  ) => {
+    for (const o of m.obstacles) {
+      if (!filter(o)) continue;
+      const blocker: Blocker = {
+        kind: 'obstacle',
+        id: o.id,
+        label: o.label ? `препятствие «${o.label}»` : 'препятствие',
+      };
+      for (let row = o.row; row < o.row + o.height; row++)
+        for (let col = o.col; col < o.col + o.width; col++) target.set(`${col}:${row}`, blocker);
+    }
+    // Outer boundary edges of the blocked cells.
+    for (const [key, blocker] of target) {
+      const [col, row] = key.split(':').map(Number) as [number, number];
+      const sides: [string, string][] = [
+        [`${col}:${row - 1}`, `h:${col}:${row}`],
+        [`${col}:${row + 1}`, `h:${col}:${row + 1}`],
+        [`${col - 1}:${row}`, `v:${col}:${row}`],
+        [`${col + 1}:${row}`, `v:${col + 1}:${row}`],
+      ];
+      for (const [neighbour, edge] of sides)
+        if (!target.has(neighbour) && !edges.has(edge)) edges.set(edge, blocker);
+    }
+  };
+  addCells(blockedCells, movementEdges, (o) => o.blocksMovement);
+  addCells(new Map(), visionEdges, (o) => o.blocksVision);
+  for (const z of m.zones)
+    for (let row = z.row; row < z.row + z.height; row++)
+      for (let col = z.col; col < z.col + z.width; col++)
+        terrainCells.set(`${col}:${row}`, { id: z.id, label: z.label || 'трудный ландшафт' });
+  return { cols: m.cols, rows: m.rows, movementEdges, visionEdges, blockedCells, terrainCells };
+}
+
+const what = (b: Blocker) => b.label;
+
+/** Why a footprint cannot stand at `center` because of the environment, or null. */
+export function footprintGeometryProblem(
+  center: Point,
+  f: Footprint,
+  g: GeometryIndex,
+): string | null {
+  const cells = cellsOf(center, f);
+  for (const c of cells) {
+    const blocker = g.blockedCells.get(cellKey(c));
+    if (blocker) return `Клетки заняты: ${what(blocker)}`;
+  }
+  const inside = new Set(cells.map(cellKey));
+  for (const c of cells) {
+    // Edges between two cells of the same footprint: a wall or closed door there means the
+    // token would stand across it.
+    if (inside.has(`${c.col + 1}:${c.row}`)) {
+      const b = g.movementEdges.get(`v:${c.col + 1}:${c.row}`);
+      if (b) return `Токен стоит поперёк: ${what(b)}`;
+    }
+    if (inside.has(`${c.col}:${c.row + 1}`)) {
+      const b = g.movementEdges.get(`h:${c.col}:${c.row + 1}`);
+      if (b) return `Токен стоит поперёк: ${what(b)}`;
+    }
+  }
+  return null;
+}
+
+// --- Exact swept-path geometry (doubled integer coordinates) -----------------------------
+
+type V = { x: number; y: number };
+const sub = (a: V, b: V): V => ({ x: a.x - b.x, y: a.y - b.y });
+const cross = (a: V, b: V) => a.x * b.y - a.y * b.x;
+const dot = (a: V, b: V) => a.x * b.x + a.y * b.y;
+
+/** Convex hull, counter-clockwise, collinear points removed (Andrew's monotone chain). */
+function hull(points: V[]): V[] {
+  const p = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
+  const build = (list: V[]) => {
+    const out: V[] = [];
+    for (const q of list) {
+      while (out.length >= 2 && cross(sub(out.at(-1)!, out.at(-2)!), sub(q, out.at(-2)!)) <= 0)
+        out.pop();
+      out.push(q);
+    }
+    return out;
+  };
+  const lower = build(p);
+  const upper = build([...p].reverse());
+  return [...lower.slice(0, -1), ...upper.slice(0, -1)];
+}
+const rectCorners = (c: V, hw: number, hh: number): V[] => [
+  { x: c.x - hw, y: c.y - hh },
+  { x: c.x + hw, y: c.y - hh },
+  { x: c.x + hw, y: c.y + hh },
+  { x: c.x - hw, y: c.y + hh },
+];
+const project = (pts: V[], n: V) => {
+  let lo = Infinity,
+    hi = -Infinity;
+  for (const p of pts) {
+    const v = dot(p, n);
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return { lo, hi };
+};
+const normals = (poly: V[]) =>
+  poly.map((a, i) => {
+    const e = sub(poly[(i + 1) % poly.length]!, a);
+    return { x: -e.y, y: e.x };
+  });
+/** 'interior': convex sets overlap with positive extent; 'touch': contact only; 'none'. */
+function relation(a: V[], b: V[]): 'interior' | 'touch' | 'none' {
+  let touching = false;
+  const axes = [...normals(a), ...(b.length > 1 ? normals(b) : [])];
+  for (const n of axes) {
+    if (n.x === 0 && n.y === 0) continue;
+    const pa = project(a, n),
+      pb = project(b, n);
+    if (pa.hi < pb.lo || pb.hi < pa.lo) return 'none';
+    if (pa.hi === pb.lo || pb.hi === pa.lo) touching = true;
+  }
+  return touching ? 'touch' : 'interior';
+}
+/** Parameter interval [lo, hi] (as fractions) of segment p→q inside the closed convex polygon. */
+function clip(poly: V[], p: V, q: V) {
+  let lo = { n: 0, d: 1 },
+    hi = { n: 1, d: 1 };
+  const less = (a: { n: number; d: number }, b: { n: number; d: number }) => a.n * b.d < b.n * a.d;
+  const dir = sub(q, p);
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i]!,
+      e = sub(poly[(i + 1) % poly.length]!, a);
+    const c0 = cross(e, sub(p, a)),
+      c1 = cross(e, dir);
+    if (c1 === 0) {
+      if (c0 < 0) return null;
+    } else if (c1 > 0) {
+      const t = { n: -c0, d: c1 };
+      if (less(lo, t)) lo = t;
+    } else {
+      const t = { n: c0, d: -c1 };
+      if (less(t, hi)) hi = t;
+    }
+  }
+  if (less(hi, lo)) return null;
+  return { lo, hi, point: lo.n * hi.d === hi.n * lo.d };
+}
+const onClosedRect = (pt: { x: number; y: number; d: number }, c: V, hw: number, hh: number) =>
+  pt.x >= (c.x - hw) * pt.d &&
+  pt.x <= (c.x + hw) * pt.d &&
+  pt.y >= (c.y - hh) * pt.d &&
+  pt.y <= (c.y + hh) * pt.d;
+
+export type PathProblem =
+  | { kind: 'blocked'; blocker: Blocker; reason: string }
+  | { kind: 'ambiguous'; at: Point; reason: string }
+  | { kind: 'terrain'; zone: { id: string; label: string }; reason: string };
+
+/**
+ * Checks the whole area a footprint sweeps when moving in a straight line from one centre to
+ * another. Crossing a wall, closed door or obstacle edge blocks the move; sliding along one
+ * or fitting exactly through an opening is fine. A token corner grazing a corner point during
+ * a diagonal move is reported as ambiguous (author question), as is crossing marked
+ * difficult terrain, whose rule is not connected.
+ */
+export function straightPathProblem(
+  from: Point,
+  to: Point,
+  f: Footprint,
+  g: GeometryIndex,
+): PathProblem | null {
+  const a: V = { x: from.x * 2, y: from.y * 2 };
+  const b: V = { x: to.x * 2, y: to.y * 2 };
+  const hw = f.width,
+    hh = f.height; // doubled half sizes
+  const swept = hull([...rectCorners(a, hw, hh), ...rectCorners(b, hw, hh)]);
+  const box = {
+    x0: Math.floor(Math.min(a.x, b.x) / 2 - f.width),
+    x1: Math.ceil(Math.max(a.x, b.x) / 2 + f.width),
+    y0: Math.floor(Math.min(a.y, b.y) / 2 - f.height),
+    y1: Math.ceil(Math.max(a.y, b.y) / 2 + f.height),
+  };
+  const diagonal = a.x !== b.x && a.y !== b.y;
+  let ambiguous: Point | null = null;
+  for (let x = box.x0; x <= box.x1; x++)
+    for (let y = box.y0; y <= box.y1; y++)
+      for (const [key, p2, q2] of [
+        [`h:${x}:${y}`, { x: 2 * x, y: 2 * y }, { x: 2 * x + 2, y: 2 * y }],
+        [`v:${x}:${y}`, { x: 2 * x, y: 2 * y }, { x: 2 * x, y: 2 * y + 2 }],
+      ] as const) {
+        const blocker = g.movementEdges.get(key);
+        if (!blocker) continue;
+        const rel = relation(swept, [p2, q2]);
+        if (rel === 'interior')
+          return { kind: 'blocked', blocker, reason: `Путь пересекает: ${what(blocker)}` };
+        if (rel !== 'touch' || !diagonal || ambiguous) continue;
+        const contact = clip(swept, p2, q2);
+        if (!contact || !contact.point) continue; // sliding along an edge is fine
+        const t = contact.lo;
+        const pt = {
+          x: p2.x * t.d + (q2.x - p2.x) * t.n,
+          y: p2.y * t.d + (q2.y - p2.y) * t.n,
+          d: t.d,
+        };
+        // Resting contact at the start or the end position is fine; a mid-move graze is not.
+        if (onClosedRect(pt, a, hw, hh) || onClosedRect(pt, b, hw, hh)) continue;
+        ambiguous = { x: pt.x / pt.d / 2, y: pt.y / pt.d / 2 };
+      }
+  if (ambiguous)
+    return {
+      kind: 'ambiguous',
+      at: ambiguous,
+      reason: `Ждёт решения автора: при диагональном движении угол токена касается угла препятствия в точке (${ambiguous.x}; ${ambiguous.y}) — считать ли такое касание проходом, не определено`,
+    };
+  for (const [key, zone] of g.terrainCells) {
+    const [col, row] = key.split(':').map(Number) as [number, number];
+    if (col < box.x0 || col > box.x1 || row < box.y0 || row > box.y1) continue;
+    const cell = rectCorners({ x: 2 * col + 1, y: 2 * row + 1 }, 1, 1);
+    if (relation(swept, cell) === 'interior')
+      return {
+        kind: 'terrain',
+        zone,
+        reason: `Ждёт решения автора: путь проходит через трудный ландшафт «${zone.label}» — правило смешанного маршрута не подключено`,
+      };
+  }
+  return null;
+}

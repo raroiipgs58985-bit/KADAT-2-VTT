@@ -68,6 +68,13 @@ export function describeEntry(entry: LogEntry): JournalLine {
         tone: 'success',
       };
     }
+    case 'door':
+      return {
+        ...base,
+        title: d.open ? 'Дверь открыта' : 'Дверь закрыта',
+        summary: `Проём (${(d.from as { x: number }).x}; ${(d.from as { y: number }).y}) — (${(d.to as { x: number }).x}; ${(d.to as { y: number }).y}), подготовка сцены.`,
+        tone: 'info',
+      };
     case 'footprint': {
       const f = d.footprint as { width: number; height: number };
       return {

@@ -31,7 +31,9 @@ import {
   startCombat,
   turnInfo,
 } from './engine';
-import { exportReplay, importReplay, replayExportProblem } from './replay';
+import { exportReplay, importReplay } from './replay';
+import legacyReplay from './fixtures/replay-v0.3.json';
+import legacyExpected from './fixtures/replay-v0.3.expected.json';
 import { fixedDice } from './dice';
 
 const presets: [string, Footprint][] = [
@@ -218,7 +220,7 @@ describe('Applying a map to the scene', () => {
   });
 });
 
-describe('Replay v0.3 and the map', () => {
+describe('Replay and the map', () => {
   it('still imports the original 20 × 20 scenario', () => {
     const b = createBattle();
     startCombat(b, fixedDice(''));
@@ -228,21 +230,43 @@ describe('Replay v0.3 and the map', () => {
     expect(replayed.positions).toEqual(b.positions);
   });
 
-  it('is refused with a reason once the history used another map size', () => {
+  it('v0.4 replays a history on another map size with re-placed tokens', () => {
     const b = createBattle();
-    applyMap(b, resize(startEditing(b).present, 24, 12));
-    expect(replayExportProblem(b)).toMatch(/24 × 12/);
-    expect(() => exportReplay(b)).toThrow(/24 × 12/);
-    applyMap(b, resize(startEditing(b).present, 20, 20));
-    expect(replayExportProblem(b)).toMatch(/В истории боя есть карта 24 × 12/);
+    let d = resize(startEditing(b).present, 24, 12);
+    d = placeToken(d, 'pak', { x: 21.5, y: 6.5 }, b.positions.pak);
+    applyMap(b, d);
+    startCombat(b, fixedDice(''));
+    moveActor(b, { id: 'm1', actor: 'kelus-drakar', mode: 'full-move', to: { x: 13.5, y: 10.5 } });
+    const replay = exportReplay(b);
+    expect(replay.format).toBe('kadat-client-combat-v0.4');
+    const replayed = importReplay(JSON.parse(JSON.stringify(replay)));
+    expect(replayed.map).toMatchObject({ cols: 24, rows: 12 });
+    expect(replayed.positions).toEqual(b.positions);
+    expect(replayed.log.map((e) => e.type)).toEqual(b.log.map((e) => e.type));
   });
 
-  it('marks omitted floor paint on a standard-size map', () => {
+  it('floor paint is part of the snapshot; only a background raster is marked as omitted', () => {
     const b = createBattle();
     applyMap(b, paint(startEditing(b).present, [{ col: 1, row: 1 }], 'green'));
     const replay = exportReplay(b);
-    expect(replay.visualLayersOmitted).toBe(true);
-    expect(importReplay(JSON.parse(JSON.stringify(replay))).map.floor).toEqual({});
+    expect(replay.visualLayersOmitted).toBeUndefined();
+    expect(importReplay(JSON.parse(JSON.stringify(replay))).map.floor).toEqual({ '1:1': 'green' });
+  });
+
+  it('a saved v0.3 replay reproduces the same final state', () => {
+    const replayed = importReplay(legacyReplay);
+    expect({
+      positions: replayed.positions,
+      hp: replayed.hp,
+      ammo: replayed.ammo,
+      footprints: replayed.footprints,
+      logTypes: replayed.log.map((e) => e.type),
+    }).toEqual(legacyExpected);
+  });
+
+  it('refuses an unknown geometry rules version without replacing anything', () => {
+    const replay = { ...exportReplay(createBattle()), geometryVersion: 99 };
+    expect(() => importReplay(replay)).toThrow(/Версия правил геометрии/);
   });
 });
 

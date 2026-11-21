@@ -85,6 +85,24 @@ describe('Map file round trip', () => {
   });
 });
 
+describe('Older map files', () => {
+  it('a version 1 file (stage 2) opens and is upgraded with an empty environment', () => {
+    const v2 = JSON.parse(serializeMapFile(sampleMap()));
+    const { walls, doors, obstacles, zones, ...v1map } = v2.map;
+    expect([walls, doors, obstacles, zones]).toEqual([[], [], [], []]);
+    const v1 = JSON.stringify({ ...v2, schemaVersion: 1, map: { ...v1map, schemaVersion: 1 } });
+    const opened = parseMapFile(v1);
+    expect(opened.schemaVersion).toBe(2);
+    expect(opened.walls).toEqual([]);
+    expect(sameMap(opened, sampleMap())).toBe(true);
+  });
+  it('a version 1 file with version 2 fields is refused', () => {
+    const v2 = JSON.parse(serializeMapFile(sampleMap()));
+    const v1 = JSON.stringify({ ...v2, schemaVersion: 1, map: { ...v2.map, schemaVersion: 1 } });
+    expect(reason(v1)).toMatch(/Неизвестное поле map.walls/);
+  });
+});
+
 describe('Map file is refused with a readable reason', () => {
   it('broken JSON', () => {
     expect(reason('{"documentType": "kadat-map",')).toMatch(/не является JSON/);
@@ -93,7 +111,7 @@ describe('Map file is refused with a readable reason', () => {
     expect(reason(JSON.stringify(exportReplay(createBattle())))).toMatch(/не файл карты KADAT/);
   });
   it('an unknown schema version', () => {
-    expect(reason(fileOf((r) => (r.schemaVersion = 2)))).toMatch(/Версия схемы карты 2/);
+    expect(reason(fileOf((r) => (r.schemaVersion = 3)))).toMatch(/Версия схемы карты 3/);
   });
   it('an unknown or missing field', () => {
     expect(reason(fileOf((r) => ((r.map as Record<string, unknown>).extra = 1)))).toMatch(

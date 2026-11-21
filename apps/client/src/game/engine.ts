@@ -46,6 +46,7 @@ import {
   ids,
   move,
   movementProfiles,
+  movementProblem,
   placementProblemFor,
   tokenConflicts,
   weapons,
@@ -55,7 +56,8 @@ import {
 } from './model';
 import { rulings } from './rulings';
 import { cellsOf, validateFootprint, type Footprint } from './grid';
-import { mapProblems, type MapDocument } from './map';
+import { mapProblems, segmentLine, type MapDocument } from './map';
+import { buildGeometry, footprintGeometryProblem, initialDoorStates } from './geometry';
 
 const source = {
   kind: 'canonical-profile',
@@ -913,6 +915,8 @@ export interface MoveCommand {
   actor: ActorId;
   mode: MoveMode;
   to: { x: number; y: number };
+  /** Scene revision the move was previewed on; a stale preview is refused, never re-routed. */
+  sceneRevision?: number;
 }
 export interface MoveOption {
   mode: MoveMode;
@@ -1039,11 +1043,16 @@ export function moveActor(b: Battle, command: MoveCommand) {
     if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
     const { x, y } = command.to;
     movementGate(state, command.actor);
-    const placement = placementProblemFor(b, command.actor, { x, y });
-    if (placement) throw new Error(`Точка назначения недопустима: ${placement}`);
-    const blocked =
+    if (command.sceneRevision !== undefined && command.sceneRevision !== b.sceneRevision)
+      throw new Error('Сцена изменилась после предпросмотра: выберите точку назначения заново');
+    const authorBlock =
       woundMovementBoundary(b, command.actor) ?? authorBoundary(state, command.actor, command.mode);
-    if (blocked) throw new RuleDecisionRequired(blocked);
+    if (authorBlock) throw new RuleDecisionRequired(authorBlock);
+    const geometry = movementProblem(b, command.actor, { x, y });
+    if (geometry?.kind === 'position')
+      throw new Error(`Точка назначения недопустима: ${geometry.reason}`);
+    if (geometry?.kind === 'blocked') throw new Error(geometry.reason);
+    if (geometry) throw new RuleDecisionRequired(geometry.reason);
     const from = b.positions[command.actor];
     const distance = Math.hypot(x - from.x, y - from.y);
     if (distance === 0) throw new Error('Точка назначения совпадает с текущей позицией');
@@ -1334,8 +1343,14 @@ export function applyMap(
     }));
   b.map = map;
   b.mapRevision += 1;
+  b.doors = initialDoorStates(map);
+  b.sceneRevision += 1;
   for (const r of repositioned) b.positions[r.actor] = r.to;
   append(b, 'map-applied', {
+    // Geometry snapshot for replays; background bytes are visual and left out.
+    snapshot: { ...map, background: null },
+    backgroundOmitted: map.background !== null,
+    positions,
     id: map.id,
     name: map.name,
     cols: map.cols,
@@ -1353,4 +1368,36 @@ export function applyMap(
     repositioned,
   });
   return { status: 'RESOLVED' as const, revision: b.mapRevision };
+}
+
+/**
+ * Opens or closes a door during setup only (changing doors in combat waits for the author,
+ * TZ question 3). Closing is refused while a token's footprint spans the doorway.
+ */
+export function setDoorOpen(b: Battle, doorId: string, open: boolean) {
+  if (combatStarted(b))
+    throw new Error('Двери переключаются только на этапе расстановки, до начала боя.');
+  const door = b.map.doors.find((d) => d.id === doorId);
+  if (!door) throw new Error('Такой двери нет на карте');
+  const current = b.doors[doorId] ?? door.open;
+  if (current === open) throw new Error(open ? 'Дверь уже открыта' : 'Дверь уже закрыта');
+  if (!open) {
+    const g = buildGeometry(b.map, { ...b.doors, [doorId]: false });
+    for (const id of ids) {
+      const problem = footprintGeometryProblem(b.positions[id], b.footprints[id], g);
+      if (problem)
+        throw new Error(`Нельзя закрыть дверь: ${actor(id).name} стоит в проёме (${problem})`);
+    }
+  }
+  b.doors = { ...b.doors, [doorId]: open };
+  b.sceneRevision += 1;
+  const line = segmentLine(door.from, door.to);
+  append(b, 'door', {
+    doorId,
+    open,
+    from: door.from,
+    to: door.to,
+    edges: line ? line.to - line.from : 0,
+  });
+  return { status: 'RESOLVED' as const };
 }
