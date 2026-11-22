@@ -407,20 +407,20 @@ export function App() {
   return (
     <div className={details ? 'app show-details' : 'app'}>
       <header className="app-header">
-        <div>
-          <span className="eyebrow detail">KADAT 2 · тактическая сцена · локальная сессия</span>
-          <h1>Келус Дракар против Пака</h1>
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            K
+          </span>
+          <div>
+            <h1>
+              KADAT 2 <span className="brand-tag">боевая сцена</span>
+            </h1>
+            <span className="brand-sub" title={battle.map.name}>
+              {battle.map.name}
+            </span>
+          </div>
         </div>
         <nav className="header-actions" aria-label="Сессия">
-          <button
-            type="button"
-            aria-pressed={details}
-            className={details ? 'chosen' : ''}
-            title="Показать технические подробности: характеристики, данные движка, кубики"
-            onClick={() => toggleDetails()}
-          >
-            Подробно
-          </button>
           <details className="menu">
             <summary>Сценарии</summary>
             <div
@@ -476,7 +476,8 @@ export function App() {
           </button>
           <button
             type="button"
-            title="Скачать боевой replay (формат v0.4, со снимками карты)"
+            className="btn-ghost"
+            title="Сохранить запись боя в файл (replay)"
             onClick={() => {
               let text: string;
               try {
@@ -495,7 +496,7 @@ export function App() {
           >
             Скачать replay
           </button>
-          <label className="file-button">
+          <label className="file-button btn-ghost" title="Открыть запись боя из файла">
             Открыть replay
             <input
               type="file"
@@ -520,6 +521,16 @@ export function App() {
               }}
             />
           </label>
+          <span className="divider" aria-hidden="true" />
+          <button
+            type="button"
+            aria-pressed={details}
+            className={details ? 'btn-ghost chosen' : 'btn-ghost'}
+            title="Показать технические подробности: характеристики, данные движка, кубики"
+            onClick={() => toggleDetails()}
+          >
+            Подробно
+          </button>
         </nav>
       </header>
 
@@ -804,6 +815,21 @@ export function App() {
               onApply={applyEditorDraft}
               onDiscard={() => setHistory(startEditing(battle))}
             />
+          ) : !info.started ? (
+            <section className="panel setup-guide" data-testid="setup-guide">
+              <span className="eyebrow">Подготовка к бою</span>
+              <ol>
+                <li>Перетащите токены на нужные клетки.</li>
+                <li>Щелчок по двери открывает или закрывает её.</li>
+                <li>Площадь токена задаётся по Размеру в карточке персонажа слева.</li>
+                <li>
+                  Выберите, кто ходит первым, и нажмите <strong>«Начать бой»</strong> слева.
+                </li>
+              </ol>
+              <p className="muted small">
+                Карту и окружение меняет вкладка «Редактор карты» над картой.
+              </p>
+            </section>
           ) : (
             <section className="panel actions">
               <div className="tabs" role="tablist" aria-label="Действия">
@@ -829,11 +855,6 @@ export function App() {
                   Атака
                 </button>
               </div>
-              {!info.started && (
-                <p className="muted small">
-                  Бой не начат: расставьте токены и нажмите «Начать бой».
-                </p>
-              )}
               {fallActor && (
                 <p className="note-warning" data-testid="fall-note">
                   {actor(fallActor).name} упал на трудной местности. Щёлкните на карте клетку, где
