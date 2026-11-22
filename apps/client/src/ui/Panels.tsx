@@ -99,10 +99,10 @@ export function PendingBanner(props: {
   if (!pending && !pendingTurn) return null;
   return (
     <section className="panel pending" role="alert">
-      <span className="eyebrow">Операция остановлена — состояние не изменено</span>
+      <span className="eyebrow">Действие остановлено</span>
       <p>{pending?.reason ?? pendingTurn?.reason}</p>
       {pending && (
-        <p className="muted small">
+        <p className="muted small detail">
           Сохранено кубиков: {pending.savedDice}. При продолжении бросаются только недостающие.
         </p>
       )}
@@ -135,9 +135,13 @@ export function MovePanel(props: {
   const [x, setX] = useState('');
   const [y, setY] = useState('');
   const chosen = props.options.find((o) => o.mode === props.selectedMode && o.available);
+  // One shared refusal (e.g. a stopped action) is shown once instead of under every mode.
+  const reasons = new Set(props.options.map((o) => (o.available ? null : (o.reason ?? null))));
+  const common = reasons.size === 1 ? [...reasons][0] : null;
   return (
     <div className="stack">
-      <p className="muted small">
+      {common && <p className="muted small">{common}</p>}
+      <p className="muted small detail">
         Дистанцию и расход ОД определяет движок KADAT (лист «Бой»). Карта лишь измеряет прямое
         расстояние в метрах.
       </p>
@@ -157,7 +161,7 @@ export function MovePanel(props: {
                 {o.maxDistance !== null ? `${o.maxDistance} м` : '—'}
               </span>
             </button>
-            {!o.available && o.reason && (
+            {!o.available && o.reason && !common && (
               <p className={`reason ${o.blockedBy === 'author' ? 'note-author' : 'muted small'}`}>
                 {o.reason}
               </p>
@@ -172,7 +176,7 @@ export function MovePanel(props: {
       )}
       {chosen && (
         <form
-          className="coords-form"
+          className="coords-form detail"
           onSubmit={(e) => {
             e.preventDefault();
             // The typed cell is the top-left cell of the token's area.
@@ -270,9 +274,9 @@ export function AttackPanel(props: {
           ))}
         </select>
       </label>
-      <p className={`weapon-note badge-${support.level}`}>{support.note}</p>
-      <p className="raw small">{weapon.raw}</p>
-      <div className="row">
+      <p className={`weapon-note badge-${support.level} detail`}>{support.note}</p>
+      <p className="raw small detail">{weapon.raw}</p>
+      <div className="row detail">
         <label>
           Модификатор ведущего
           <input
@@ -300,7 +304,7 @@ export function AttackPanel(props: {
           checked={form.decline}
           onChange={(e) => set({ decline: e.target.checked })}
         />
-        Цель явно отказывается от реакции (уклонение/парирование ещё не автоматизированы)
+        Цель без реакции (уклонение и парирование пока не автоматизированы)
       </label>
       {props.attackedThisTurn && (
         <p className="muted small">В этом ходу атака уже была: движок разрешает одну атаку.</p>
@@ -399,7 +403,7 @@ export function CombatLog({ battle }: { battle: Battle }) {
               </div>
               {line.summary && <p>{line.summary}</p>}
               {line.dice && <p className="dice-line">Броски: {line.dice}</p>}
-              <details>
+              <details className="detail">
                 <summary>Данные движка</summary>
                 <pre>{JSON.stringify(entry.detail, null, 2)}</pre>
               </details>

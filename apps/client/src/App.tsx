@@ -109,6 +109,14 @@ const defaultAttack = (attacker: ActorId): AttackForm => ({
   decline: true,
 });
 
+/** Simple view: the first sentence only; the full text stays in the journal. */
+function shortText(text: string): string {
+  const cut = text.search(/[.!?](\s|$)/);
+  return cut > 0 && cut < text.length - 1
+    ? `${text.slice(0, cut + 1)} Подробнее — в журнале.`
+    : text;
+}
+
 export function App() {
   const { battle, version } = useCombat();
   const info = useMemo(() => turnInfo(battle), [battle, version]);
@@ -170,6 +178,22 @@ export function App() {
     width: Math.abs(a.col - c.col) + 1,
     height: Math.abs(a.row - c.row) + 1,
   });
+  const [details, setDetails] = useState(() => {
+    try {
+      return localStorage.getItem('kadat.details') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleDetails = () =>
+    setDetails((d) => {
+      try {
+        localStorage.setItem('kadat.details', d ? '0' : '1');
+      } catch {
+        // Storage unavailable: the choice lasts for this page only.
+      }
+      return !d;
+    });
   const fail = (error: unknown) =>
     setToast({ text: error instanceof Error ? error.message : String(error), tone: 'error' });
   const loadBackground = async (file: File) => {
@@ -355,13 +379,22 @@ export function App() {
   };
 
   return (
-    <div className="app">
+    <div className={details ? 'app show-details' : 'app'}>
       <header className="app-header">
         <div>
-          <span className="eyebrow">KADAT 2 · тактическая сцена · локальная сессия</span>
+          <span className="eyebrow detail">KADAT 2 · тактическая сцена · локальная сессия</span>
           <h1>Келус Дракар против Пака</h1>
         </div>
         <nav className="header-actions" aria-label="Сессия">
+          <button
+            type="button"
+            aria-pressed={details}
+            className={details ? 'chosen' : ''}
+            title="Показать технические подробности: характеристики, данные движка, кубики"
+            onClick={() => toggleDetails()}
+          >
+            Подробно
+          </button>
           <details className="menu">
             <summary>Сценарии</summary>
             <div
@@ -466,7 +499,7 @@ export function App() {
 
       {toast && (
         <div className={`toast tone-${toast.tone}`} role="status">
-          <span>{toast.text}</span>
+          <span>{details ? toast.text : shortText(toast.text)}</span>
           <button type="button" aria-label="Закрыть" onClick={() => setToast(null)}>
             ×
           </button>
@@ -549,7 +582,7 @@ export function App() {
             >
               Бой
             </button>
-            <span className="muted small map-name">
+            <span className="muted small map-name detail">
               {battle.map.name} · {battle.map.cols} × {battle.map.rows} · ревизия{' '}
               {battle.mapRevision}
             </span>
@@ -813,7 +846,7 @@ export function App() {
               )}
             </section>
           )}
-          {!editing && <DicePanel dice={dice} onChange={setDice} />}
+          {!editing && details && <DicePanel dice={dice} onChange={setDice} />}
           <CombatLog battle={battle} />
         </aside>
       </main>

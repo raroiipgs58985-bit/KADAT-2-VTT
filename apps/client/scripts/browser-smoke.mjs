@@ -24,6 +24,10 @@ const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+// Technical checks run with «Подробно» on; the simple view is checked at the end.
+await page.addInitScript(() => {
+  if (!sessionStorage.getItem('smoke-simple')) localStorage.setItem('kadat.details', '1');
+});
 await page.goto(url);
 await page.waitForSelector('svg.map');
 
@@ -1006,6 +1010,14 @@ check(journal >= 7, `journal lists ${journal} entries`);
     'stand: attack button is disabled while the line is blocked',
   );
 }
+
+// 7b. Simple view: technical panels hidden, the essentials stay.
+await page.getByRole('button', { name: 'Подробно' }).click();
+check((await page.locator('.dice').count()) === 0, 'simple view hides the dice panel');
+check(!(await page.locator('.stats').first().isVisible()), 'simple view hides characteristics');
+check(await page.locator('.vitals').first().isVisible(), 'simple view keeps wounds and blood');
+await page.screenshot({ path: `${out}/04c-simple-view.png` });
+await page.getByRole('button', { name: 'Подробно' }).click();
 
 // 8. Phone layout renders without horizontal overflow.
 await page.setViewportSize({ width: 390, height: 844 });

@@ -109,7 +109,7 @@ export function ActorCard({
         </section>
       )}
 
-      <section>
+      <section className={setup ? '' : 'detail'}>
         <h3>Токен на карте</h3>
         <dl className="facts">
           <div>
@@ -135,13 +135,13 @@ export function ActorCard({
             </dd>
           </div>
         </dl>
-        <p className="muted small">
+        <p className="muted small detail">
           Канонический {field('Особенности:')?.formattedValue ?? 'Размер'} — отдельная черта
           профиля; связь Размера с числом клеток таблицами не задана.
         </p>
       </section>
 
-      <section>
+      <section className="detail">
         <h3>Характеристики</h3>
         <dl className="stats">
           {Object.entries(profile.characteristics).map(([key, c]) => (
@@ -178,7 +178,7 @@ export function ActorCard({
               <li key={w.id}>
                 <div className="weapon-line">
                   <strong>{w.name}</strong>
-                  <span className={`badge badge-${support.level}`}>
+                  <span className={`badge badge-${support.level} detail`}>
                     {supportLabel[support.level]}
                   </span>
                 </div>
@@ -191,7 +191,7 @@ export function ActorCard({
         </ul>
       </section>
 
-      <details className="profile-details">
+      <details className="profile-details detail">
         <summary>Навыки, таланты, импланты и снаряжение</summary>
         {details.map((p) => (
           <div key={p.label} className="profile-entry">

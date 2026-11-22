@@ -593,7 +593,7 @@ export function TacticalMap(props: Props) {
         <span className="map-hint" title={hint}>
           {hint}
         </span>
-        <span className="coords">
+        <span className="coords detail">
           {map.cols} × {map.rows}
           {` · клетка ${hoverCell ? `${hoverCell.col}, ${hoverCell.row}` : '—'}`}
         </span>

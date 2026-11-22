@@ -1132,3 +1132,8 @@ kbd {
   stroke-dasharray: 0.2 0.12;
   pointer-events: none;
 }
+
+/* Simple view: technical details appear only with «Подробно». */
+.app:not(.show-details) .detail {
+  display: none !important;
+}
