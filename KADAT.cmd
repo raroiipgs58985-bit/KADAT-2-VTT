@@ -1,10 +1,27 @@
 @echo off
 rem KADAT 2 - local launch of the tactical scene on Windows.
-rem Double-click this file. It checks Node.js 24, installs dependencies from the
+rem Double-click this file. It downloads the latest version (git pull), checks Node.js 24, installs dependencies from the
 rem lockfile (pnpm 11 via Corepack, no administrator rights needed) and opens the browser.
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
+
+rem Step 1: download the latest version of the branch (if this folder is a Git clone).
+if exist ".git" (
+  where git >nul 2>nul
+  if errorlevel 1 (
+    echo Git не найден - обновление пропущено, запускается текущая версия.
+  ) else (
+    echo Скачивание обновления...
+    git pull --ff-only
+    if errorlevel 1 (
+      echo Обновить не удалось ^(нет сети или есть локальные правки^). Запускается текущая версия.
+    )
+  )
+) else (
+  echo Папка не является клоном Git - обновление пропущено.
+)
+for /f "delims=" %%c in ('git log -1 "--format=%%h %%cd" "--date=format:%%d.%%m.%%Y %%H:%%M" 2^>nul') do echo Версия: %%c
 
 where node >nul 2>nul
 if errorlevel 1 (

@@ -950,6 +950,54 @@ check((await page.textContent('.turn-bar h2')).includes('Пак'), 'turn passes 
 const journal = await page.locator('.log-line').count();
 check(journal >= 7, `journal lists ${journal} entries`);
 
+// 7a. Ready-made stage 3 stand (ПРОВЕРКА-ЭТАПА.md): loads from the menu, door toggles,
+// closed door and mud both refuse without spending OD.
+{
+  const click = async (x, y) => {
+    const pt = await screen(x, y);
+    await page.mouse.click(pt.x, pt.y);
+  };
+  await page.locator('.dice select').selectOption('random');
+  await page.locator('.menu summary', { hasText: 'Сценарии' }).click();
+  await page.getByRole('button', { name: 'Стенд этапа 3: комната с дверью' }).click();
+  check(await toastWith('Стенд этапа 3 загружен'), 'stage 3 stand loads from the menu');
+  check(
+    !(await page.locator('details.menu').evaluate((d) => d.open)),
+    'the scenario menu closes after a pick',
+  );
+  check(
+    (await page.locator('[data-door]').count()) === 1 &&
+      (await page.locator('[data-door]').getAttribute('data-open')) === 'false',
+    'stand has one closed door',
+  );
+  check(
+    (await tokenPosition('kelus-drakar')).x === 6.5 && (await tokenPosition('pak')).x === 16.5,
+    'stand places Kelus west of the door and Pak east of the room',
+  );
+  await click(8, 10.5);
+  check(
+    (await page.locator('[data-door]').getAttribute('data-open')) === 'true',
+    'stand door opens by a click',
+  );
+  await click(8, 10.5);
+  await page.getByRole('button', { name: 'Начать бой' }).click();
+  if ((await page.textContent('.turn-bar h2')).includes('Пак'))
+    await page.getByRole('button', { name: 'Передать ход' }).click();
+  await page.getByRole('tab', { name: 'Келус' }).click();
+  await page.getByRole('tab', { name: 'Движение' }).click();
+  await page.locator('.mode').nth(1).click(); // half move
+  await click(9.5, 10.5);
+  check(await toastWith('закрытая дверь'), 'stand: closed door refuses the move');
+  check((await od()) === 2, 'stand: refused move spends no OD');
+  await page.locator('.mode').nth(1).click(); // deselect
+  await page.locator('.mode').nth(2).click(); // full move
+  await click(4.5, 15.5);
+  check(await toastWith('Ждёт решения автора'), 'stand: mud waits for the author');
+  check((await od()) === 2, 'stand: mud refusal spends no OD');
+  check((await tokenPosition('kelus-drakar')).x === 6.5, 'stand: Kelus stays in place');
+  await page.screenshot({ path: `${out}/04b-stage3-stand.png` });
+}
+
 // 8. Phone layout renders without horizontal overflow.
 await page.setViewportSize({ width: 390, height: 844 });
 const overflow = await page.evaluate(

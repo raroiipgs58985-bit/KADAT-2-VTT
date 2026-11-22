@@ -91,6 +91,7 @@ import {
 } from './ui/Panels';
 import { commandFeedback } from './ui/feedback';
 import { combatStore, useCombat } from './ui/store';
+import { stage3Stand } from './game/scenarios';
 import {
   TacticalMap,
   type EditorTool,
@@ -363,7 +364,14 @@ export function App() {
         <nav className="header-actions" aria-label="Сессия">
           <details className="menu">
             <summary>Сценарии</summary>
-            <div className="menu-body">
+            <div
+              className="menu-body"
+              onClick={(e) => {
+                // Close the menu once a scenario is picked.
+                if ((e.target as HTMLElement).closest('button'))
+                  e.currentTarget.closest('details')?.removeAttribute('open');
+              }}
+            >
               <button
                 type="button"
                 onClick={() =>
@@ -385,6 +393,17 @@ export function App() {
                 }
               >
                 Два попадания (ждёт автора)
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  replaceBattle(
+                    stage3Stand(),
+                    'Стенд этапа 3 загружен: комната с закрытой дверью, ящики, грязь. Проверяйте по файлу ПРОВЕРКА-ЭТАПА.md.',
+                  )
+                }
+              >
+                Стенд этапа 3: комната с дверью
               </button>
             </div>
           </details>
