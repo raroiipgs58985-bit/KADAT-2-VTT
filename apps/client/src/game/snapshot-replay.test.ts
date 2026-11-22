@@ -28,7 +28,10 @@ function fiveApplies(): Battle {
     (m) => m,
     (m) => ({ ...m, obstacles: m.obstacles.slice(1) }),
     (m) => ({ ...m, walls: m.walls.slice(1) }),
-    (m) => ({ ...m, zones: [{ id: 'z', col: 40, row: 100, width: 5, height: 5, label: 'Грязь' }] }),
+    (m) => ({
+      ...m,
+      zones: [{ id: 'z', col: 40, row: 100, width: 5, height: 5, label: 'Грязь', modifier: 0 }],
+    }),
     (m) => ({ ...m, name: 'Большая карта, правка 5' }),
   ];
   for (const edit of edits) {

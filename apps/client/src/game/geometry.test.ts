@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildGeometry, footprintGeometryProblem, straightPathProblem } from './geometry';
+import {
+  buildGeometry,
+  footprintGeometryProblem,
+  straightPathProblem,
+  terrainAlong,
+} from './geometry';
 import { emptyMap, mapProblems, type MapDocument } from './map';
 
 const one = { width: 1, height: 1 };
@@ -31,6 +36,9 @@ function walled(doorOpen: boolean | null, extra: Partial<MapDocument> = {}): Map
               open: doorOpen,
               blocksMovement: true,
               blocksVision: true,
+              locked: false,
+              lockModifier: 0,
+              lockOd: 0,
             },
           ],
     ...extra,
@@ -140,8 +148,8 @@ describe('Obstacles', () => {
   });
 });
 
-describe('Ambiguous corner contact', () => {
-  it('a diagonal move whose token corner grazes a wall end is reported, not passed', () => {
+describe('Corner contact (author ruling 7)', () => {
+  it('a diagonal move whose token corner touches a wall end at one point is allowed', () => {
     // Wall from (4, 0) down to (4, 4). Token 1 × 1 from (2.5, 5.5) to (5.5, 2.5): its
     // top-right corner travels along the line x + y = 9 and touches the wall end (4, 4)?
     // x + y = 8 at (4, 4): the corner path x + y = 9 misses it; the top-left corner path
@@ -159,20 +167,30 @@ describe('Ambiguous corner contact', () => {
       ],
     };
     const result = path(m, [2.5, 6.5], [6.5, 2.5]);
-    expect(result).toMatchObject({ kind: 'ambiguous', at: { x: 4, y: 4 } });
+    expect(result).toBeNull();
     // The same move one cell lower clears the wall end with room to spare.
     expect(path(m, [2.5, 7.5], [6.5, 3.5])).toBeNull();
   });
 });
 
 describe('Difficult terrain', () => {
-  it('crossing a marked zone waits for the author; passing beside it does not', () => {
+  it('does not block; its metres along the path are measured (ruling 11)', () => {
     const m: MapDocument = {
       ...emptyMap('t', 'Болото', 10, 10),
-      zones: [{ id: 'z', col: 4, row: 0, width: 2, height: 10, label: 'Болото' }],
+      zones: [{ id: 'z', col: 4, row: 0, width: 2, height: 10, label: 'Болото', modifier: -10 }],
     };
-    expect(path(m, [2.5, 3.5], [7.5, 3.5])).toMatchObject({ kind: 'terrain' });
-    expect(path(m, [2.5, 3.5], [3.5, 8.5])).toBeNull();
+    expect(path(m, [2.5, 3.5], [7.5, 3.5])).toBeNull();
+    const g = buildGeometry(m);
+    expect(terrainAlong({ x: 2.5, y: 3.5 }, { x: 7.5, y: 3.5 }, g)).toMatchObject({
+      meters: 2,
+      zones: [{ id: 'z', modifier: -10 }],
+    });
+    // A diagonal through the 2 m wide strip: 2 × √2 m inside.
+    expect(terrainAlong({ x: 3, y: 2 }, { x: 7, y: 6 }, g).meters).toBeCloseTo(2 * Math.SQRT2, 6);
+    expect(terrainAlong({ x: 2.5, y: 3.5 }, { x: 3.5, y: 8.5 }, g)).toEqual({
+      meters: 0,
+      zones: [],
+    });
   });
 });
 
@@ -264,6 +282,9 @@ describe('Environment validation', () => {
       open: false,
       blocksMovement: true,
       blocksVision: true,
+      locked: false,
+      lockModifier: 0,
+      lockOd: 0,
     });
     const ok = { ...base, walls: [wall], doors: [door('d', [1, 3], [3, 3])] };
     expect(mapProblems(ok)).toEqual([]);

@@ -33,11 +33,24 @@ export interface Point {
 }
 
 /** Only unambiguous rectangles are offered; other areas need an approved shape first. */
+/**
+ * Token area by the «Размер» trait (author ruling 12): Размер 0 and less — 1 × 1 m,
+ * Размер 1 — 2 × 2 m, Размер 2 — 3 × 3 m. Larger sizes are not needed yet.
+ */
 export const footprintPresets: readonly { id: string; label: string; footprint: Footprint }[] = [
-  { id: '1x1', label: '1 клетка (1 × 1)', footprint: { width: 1, height: 1 } },
-  { id: '2x1', label: '2 клетки (2 × 1, горизонтально)', footprint: { width: 2, height: 1 } },
-  { id: '1x2', label: '2 клетки (1 × 2, вертикально)', footprint: { width: 1, height: 2 } },
+  { id: '1x1', label: 'Размер 0 и меньше — 1 × 1', footprint: { width: 1, height: 1 } },
+  { id: '2x2', label: 'Размер 1 — 2 × 2', footprint: { width: 2, height: 2 } },
+  { id: '3x3', label: 'Размер 2 — 3 × 3', footprint: { width: 3, height: 3 } },
 ];
+export function footprintForSize(size: number): Footprint {
+  if (!Number.isInteger(size) || size > 2)
+    throw new Error(`Размер ${size}: площадь токена задана только для Размера 2 и меньше`);
+  return size <= 0
+    ? { width: 1, height: 1 }
+    : size === 1
+      ? { width: 2, height: 2 }
+      : { width: 3, height: 3 };
+}
 export const SINGLE_CELL: Footprint = footprintPresets[0]!.footprint;
 
 export const area = (f: Footprint) => f.width * f.height;
@@ -48,7 +61,7 @@ export const sameFootprint = (a: Footprint, b: Footprint) =>
 export function validateFootprint(f: Footprint) {
   if (!footprintPresets.some((p) => sameFootprint(p.footprint, f)))
     throw new Error(
-      `Площадь ${f.width} × ${f.height} не согласована: доступны только 1 × 1, 2 × 1 и 1 × 2`,
+      `Площадь ${f.width} × ${f.height} не задана: по Размеру доступны 1 × 1, 2 × 2 и 3 × 3`,
     );
 }
 

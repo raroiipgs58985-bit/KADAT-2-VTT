@@ -13,7 +13,7 @@ import { segmentLine, wallLines, type MapDocument } from './map';
  * are doubled before any comparison. This makes "touching" and "crossing" decidable.
  */
 export interface Blocker {
-  readonly kind: 'wall' | 'door' | 'obstacle';
+  readonly kind: 'wall' | 'door' | 'obstacle' | 'token';
   readonly id: string;
   readonly label: string;
 }
@@ -23,7 +23,13 @@ export interface GeometryIndex {
   readonly movementEdges: ReadonlyMap<string, Blocker>;
   readonly visionEdges: ReadonlyMap<string, Blocker>;
   readonly blockedCells: ReadonlyMap<string, Blocker>;
-  readonly terrainCells: ReadonlyMap<string, { id: string; label: string }>;
+  readonly terrainCells: ReadonlyMap<string, TerrainCell>;
+}
+
+export interface TerrainCell {
+  readonly id: string;
+  readonly label: string;
+  readonly modifier: number;
 }
 
 export const initialDoorStates = (m: MapDocument): Record<string, boolean> =>
@@ -43,7 +49,7 @@ export function buildGeometry(
   const movementEdges = new Map<string, Blocker>();
   const visionEdges = new Map<string, Blocker>();
   const blockedCells = new Map<string, Blocker>();
-  const terrainCells = new Map<string, { id: string; label: string }>();
+  const terrainCells = new Map<string, TerrainCell>();
   for (const w of m.walls) {
     const blocker: Blocker = { kind: 'wall', id: w.id, label: 'стена' };
     for (const line of wallLines(w))
@@ -98,7 +104,11 @@ export function buildGeometry(
   for (const z of m.zones)
     for (let row = z.row; row < z.row + z.height; row++)
       for (let col = z.col; col < z.col + z.width; col++)
-        terrainCells.set(`${col}:${row}`, { id: z.id, label: z.label || 'трудный ландшафт' });
+        terrainCells.set(`${col}:${row}`, {
+          id: z.id,
+          label: z.label || 'трудный ландшафт',
+          modifier: z.modifier,
+        });
   return { cols: m.cols, rows: m.rows, movementEdges, visionEdges, blockedCells, terrainCells };
 }
 
@@ -188,53 +198,20 @@ function relation(a: V[], b: V[]): 'interior' | 'touch' | 'none' {
   }
   return touching ? 'touch' : 'interior';
 }
-/** Parameter interval [lo, hi] (as fractions) of segment p→q inside the closed convex polygon. */
-function clip(poly: V[], p: V, q: V) {
-  let lo = { n: 0, d: 1 },
-    hi = { n: 1, d: 1 };
-  const less = (a: { n: number; d: number }, b: { n: number; d: number }) => a.n * b.d < b.n * a.d;
-  const dir = sub(q, p);
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i]!,
-      e = sub(poly[(i + 1) % poly.length]!, a);
-    const c0 = cross(e, sub(p, a)),
-      c1 = cross(e, dir);
-    if (c1 === 0) {
-      if (c0 < 0) return null;
-    } else if (c1 > 0) {
-      const t = { n: -c0, d: c1 };
-      if (less(lo, t)) lo = t;
-    } else {
-      const t = { n: c0, d: -c1 };
-      if (less(t, hi)) hi = t;
-    }
-  }
-  if (less(hi, lo)) return null;
-  return { lo, hi, point: lo.n * hi.d === hi.n * lo.d };
-}
-const onClosedRect = (pt: { x: number; y: number; d: number }, c: V, hw: number, hh: number) =>
-  pt.x >= (c.x - hw) * pt.d &&
-  pt.x <= (c.x + hw) * pt.d &&
-  pt.y >= (c.y - hh) * pt.d &&
-  pt.y <= (c.y + hh) * pt.d;
-
-export type PathProblem =
-  | { kind: 'blocked'; blocker: Blocker; reason: string }
-  | { kind: 'ambiguous'; at: Point; reason: string }
-  | { kind: 'terrain'; zone: { id: string; label: string }; reason: string };
+export type PathProblem = { kind: 'blocked'; blocker: Blocker; reason: string };
 
 /**
  * Checks the whole area a footprint sweeps when moving in a straight line from one centre to
- * another. Crossing a wall, closed door or obstacle edge blocks the move; sliding along one
- * or fitting exactly through an opening is fine. A token corner grazing a corner point during
- * a diagonal move is reported as ambiguous (author question), as is crossing marked
- * difficult terrain, whose rule is not connected.
+ * another. Crossing a wall, closed door, obstacle edge or another token's cells blocks the move;
+ * sliding along one, touching a corner at a single point (author ruling 7) or fitting exactly
+ * through an opening is fine. Difficult terrain does not block: it costs double (`terrainAlong`).
  */
 export function straightPathProblem(
   from: Point,
   to: Point,
   f: Footprint,
   g: GeometryIndex,
+  others: ReadonlySet<string> = new Set(),
 ): PathProblem | null {
   const a: V = { x: from.x * 2, y: from.y * 2 };
   const b: V = { x: to.x * 2, y: to.y * 2 };
@@ -247,8 +224,6 @@ export function straightPathProblem(
     y0: Math.floor(Math.min(a.y, b.y) / 2 - f.height),
     y1: Math.ceil(Math.max(a.y, b.y) / 2 + f.height),
   };
-  const diagonal = a.x !== b.x && a.y !== b.y;
-  let ambiguous: Point | null = null;
   for (let x = box.x0; x <= box.x1; x++)
     for (let y = box.y0; y <= box.y1; y++)
       for (const [key, p2, q2] of [
@@ -256,41 +231,77 @@ export function straightPathProblem(
         [`v:${x}:${y}`, { x: 2 * x, y: 2 * y }, { x: 2 * x, y: 2 * y + 2 }],
       ] as const) {
         const blocker = g.movementEdges.get(key);
-        if (!blocker) continue;
-        const rel = relation(swept, [p2, q2]);
-        if (rel === 'interior')
+        if (blocker && relation(swept, [p2, q2]) === 'interior')
           return { kind: 'blocked', blocker, reason: `Путь пересекает: ${what(blocker)}` };
-        if (rel !== 'touch' || !diagonal || ambiguous) continue;
-        const contact = clip(swept, p2, q2);
-        if (!contact || !contact.point) continue; // sliding along an edge is fine
-        const t = contact.lo;
-        const pt = {
-          x: p2.x * t.d + (q2.x - p2.x) * t.n,
-          y: p2.y * t.d + (q2.y - p2.y) * t.n,
-          d: t.d,
-        };
-        // Resting contact at the start or the end position is fine; a mid-move graze is not.
-        if (onClosedRect(pt, a, hw, hh) || onClosedRect(pt, b, hw, hh)) continue;
-        ambiguous = { x: pt.x / pt.d / 2, y: pt.y / pt.d / 2 };
       }
-  if (ambiguous)
-    return {
-      kind: 'ambiguous',
-      at: ambiguous,
-      reason: `Ждёт решения автора: при диагональном движении угол токена касается угла препятствия в точке (${ambiguous.x}; ${ambiguous.y}) — считать ли такое касание проходом, не определено`,
-    };
-  for (const [key, zone] of g.terrainCells) {
+  for (const key of others) {
     const [col, row] = key.split(':').map(Number) as [number, number];
     if (col < box.x0 || col > box.x1 || row < box.y0 || row > box.y1) continue;
-    const cell = rectCorners({ x: 2 * col + 1, y: 2 * row + 1 }, 1, 1);
-    if (relation(swept, cell) === 'interior')
+    if (relation(swept, rectCorners({ x: 2 * col + 1, y: 2 * row + 1 }, 1, 1)) === 'interior')
       return {
-        kind: 'terrain',
-        zone,
-        reason: `Ждёт решения автора: путь проходит через трудный ландшафт «${zone.label}» — правило смешанного маршрута не подключено`,
+        kind: 'blocked',
+        blocker: { kind: 'token', id: key, label: 'чужой токен' },
+        reason: 'Путь проходит сквозь клетку другого персонажа: обойдите (решение 9)',
       };
   }
   return null;
+}
+
+/** Part of the segment from `from` to `to` inside the cell [col, col+1] × [row, row+1]. */
+function clipToCell(from: Point, to: Point, col: number, row: number): [number, number] | null {
+  let t0 = 0,
+    t1 = 1;
+  const dx = to.x - from.x,
+    dy = to.y - from.y;
+  for (const [p, q] of [
+    [-dx, from.x - col],
+    [dx, col + 1 - from.x],
+    [-dy, from.y - row],
+    [dy, row + 1 - from.y],
+  ] as const) {
+    if (p === 0) {
+      if (q < 0) return null;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 > t1) return null;
+  }
+  return t1 - t0 > 1e-9 ? [t0, t1] : null;
+}
+
+/**
+ * Difficult terrain along the token centre's straight path: metres inside marked cells and the
+ * stretches crossed, in path order (each zone once, by first entry).
+ */
+export function terrainAlong(
+  from: Point,
+  to: Point,
+  g: GeometryIndex,
+): { meters: number; zones: (TerrainCell & { at: number })[] } {
+  const length = Math.hypot(to.x - from.x, to.y - from.y);
+  if (length === 0 || g.terrainCells.size === 0) return { meters: 0, zones: [] };
+  let inside = 0;
+  const first = new Map<string, TerrainCell & { at: number }>();
+  const col0 = Math.floor(Math.min(from.x, to.x)) - 1,
+    col1 = Math.floor(Math.max(from.x, to.x)) + 1;
+  const row0 = Math.floor(Math.min(from.y, to.y)) - 1,
+    row1 = Math.floor(Math.max(from.y, to.y)) + 1;
+  for (let row = row0; row <= row1; row++)
+    for (let col = col0; col <= col1; col++) {
+      const zone = g.terrainCells.get(`${col}:${row}`);
+      if (!zone) continue;
+      const clip = clipToCell(from, to, col, row);
+      if (!clip) continue;
+      inside += (clip[1] - clip[0]) * length;
+      const known = first.get(zone.id);
+      if (!known || clip[0] < known.at) first.set(zone.id, { ...zone, at: clip[0] });
+    }
+  return {
+    meters: Math.round(inside * 1e6) / 1e6,
+    zones: [...first.values()].sort((x, y) => x.at - y.at),
+  };
 }
 
 /**

@@ -5,7 +5,7 @@ import {
   applyMap,
   moveActor,
   placeActor,
-  RuleDecisionRequired,
+  setDoorLocked,
   setDoorOpen,
   setFootprint,
   startCombat,
@@ -19,7 +19,7 @@ import { fixedDice } from './dice';
  * 20 × 20 room: walls around x 8..14, y 6..14 with a 1-edge door on the west wall (x = 8,
  * y 10..11), a low crate wall inside and a marked mud zone outside.
  */
-function room(doorOpen: boolean): MapDocument {
+function room(doorOpen: boolean, wideDoor = false): MapDocument {
   return {
     ...emptyMap('room', 'Комната', 20, 20),
     walls: [
@@ -39,10 +39,13 @@ function room(doorOpen: boolean): MapDocument {
         id: 'west-door',
         wallId: 'room',
         from: { x: 8, y: 10 },
-        to: { x: 8, y: 11 },
+        to: { x: 8, y: wideDoor ? 12 : 11 },
         open: doorOpen,
         blocksMovement: true,
         blocksVision: true,
+        locked: false,
+        lockModifier: 0,
+        lockOd: 0,
       },
     ],
     obstacles: [
@@ -58,17 +61,17 @@ function room(doorOpen: boolean): MapDocument {
         notes: '',
       },
     ],
-    zones: [{ id: 'mud', col: 2, row: 2, width: 3, height: 3, label: 'Грязь' }],
+    zones: [{ id: 'mud', col: 2, row: 2, width: 3, height: 3, label: 'Грязь', modifier: 0 }],
   };
 }
 let n = 0;
 const go = (b: Battle, mode: MoveMode, x: number, y: number) =>
   moveActor(b, { id: `e${++n}`, actor: 'kelus-drakar', mode, to: { x, y } });
 /** Kelus at (6.5, 10.5) west of the door, Pak far away in the east. */
-function scene(doorOpen: boolean) {
+function scene(doorOpen: boolean, wideDoor = false) {
   const b = createBattle();
   applyMap(b, {
-    map: room(doorOpen),
+    map: room(doorOpen, wideDoor),
     positions: { 'kelus-drakar': { x: 6.5, y: 10.5 }, pak: { x: 17.5, y: 17.5 } },
   });
   return b;
@@ -111,13 +114,16 @@ describe('Combat movement with walls, doors and obstacles', () => {
     );
   });
 
-  it('crossing marked difficult terrain waits for the author and spends nothing', () => {
+  it('difficult terrain costs double: 4 m with 3 m of mud cost 7 m (ruling 11)', () => {
     const b = scene(true);
     placeActor(b, 'kelus-drakar', 1.5, 3.5);
     startCombat(b, fixedDice(''));
-    expect(() => go(b, 'half-move', 5.5, 3.5)).toThrow(RuleDecisionRequired);
+    expect(() => go(b, 'half-move', 5.5, 3.5)).toThrow(
+      /7.00 м \(трудная местность 3.00 м считается вдвое\)/,
+    );
     expect(turnInfo(b).od).toBe(2);
-    expect(b.log.at(-1)).toMatchObject({ detail: { authorDecisionRequired: true } });
+    expect(go(b, 'full-move', 5.5, 3.5).status).toBe('RESOLVED');
+    expect(b.log.at(-1)).toMatchObject({ type: 'move', detail: { cost: 7, difficult: 3 } });
   });
 
   it('a stale preview (scene changed) is refused, never re-routed', () => {
@@ -139,31 +145,57 @@ describe('Combat movement with walls, doors and obstacles', () => {
 });
 
 describe('Doors during setup', () => {
-  it('toggles only before combat and logs each change', () => {
+  it('the GM toggles a door before and during combat and each change is logged', () => {
     const b = scene(false);
     setDoorOpen(b, 'west-door', true);
     expect(b.doors['west-door']).toBe(true);
     expect(b.log.at(-1)).toMatchObject({
       type: 'door',
-      detail: { doorId: 'west-door', open: true },
+      detail: { doorId: 'west-door', open: true, by: null },
     });
     expect(() => setDoorOpen(b, 'west-door', true)).toThrow(/уже открыта/);
     startCombat(b, fixedDice(''));
-    expect(() => setDoorOpen(b, 'west-door', false)).toThrow(/только на этапе расстановки/);
+    setDoorOpen(b, 'west-door', false); // the GM, at any moment (ruling 10)
+    expect(b.doors['west-door']).toBe(false);
+    expect(turnInfo(b).od).toBe(2);
   });
 
-  it('refuses to close a door while a 2 × 1 token stands in the doorway', () => {
-    const b = scene(true);
-    setFootprint(b, 'kelus-drakar', { width: 2, height: 1 });
-    placeActor(b, 'kelus-drakar', 8, 10.5); // covers 7:10 and 8:10, across the open door
+  it('in combat a character opens a door for the Free Action, from any distance (rulings 10, 44)', () => {
+    const b = scene(false);
+    placeActor(b, 'pak', 17.5, 17.5);
+    startCombat(b, fixedDice(''));
+    expect(() => setDoorOpen(b, 'west-door', true, 'pak')).toThrow(/ход другого/);
+    setDoorOpen(b, 'west-door', true, 'kelus-drakar');
+    expect(b.log.at(-1)).toMatchObject({ detail: { by: 'kelus-drakar', freeAction: true } });
+    expect(turnInfo(b).od).toBe(2);
+    // The Free Action is spent: no Free Movement and no second door this turn.
+    expect(() => setDoorOpen(b, 'west-door', false, 'kelus-drakar')).toThrow(/Free Action/);
+    expect(() => go(b, 'free-move', 6.5, 11.5)).toThrow(/Free Action/);
+  });
+
+  it('a locked door does not open for a Free Action; the GM unlocks it', () => {
+    const b = scene(false);
+    setDoorLocked(b, 'west-door', true);
+    startCombat(b, fixedDice(''));
+    expect(() => setDoorOpen(b, 'west-door', true, 'kelus-drakar')).toThrow(/заперта/);
+    setDoorLocked(b, 'west-door', false);
+    setDoorOpen(b, 'west-door', true, 'kelus-drakar');
+    expect(b.doors['west-door']).toBe(true);
+    expect(importReplay(JSON.parse(JSON.stringify(exportReplay(b)))).doors).toEqual(b.doors);
+  });
+
+  it('refuses to close a door while a 2 × 2 token stands in the doorway', () => {
+    const b = scene(true, true);
+    setFootprint(b, 'kelus-drakar', { width: 2, height: 2 });
+    placeActor(b, 'kelus-drakar', 8, 11); // covers 7–8 × 10–11, across the open 2 m door
     expect(() => setDoorOpen(b, 'west-door', false)).toThrow(/стоит в проёме/);
     expect(b.doors['west-door']).toBe(true);
   });
 
   it('a token cannot be placed across a closed door or on an obstacle', () => {
-    const b = scene(false);
-    setFootprint(b, 'kelus-drakar', { width: 2, height: 1 });
-    expect(() => placeActor(b, 'kelus-drakar', 8, 10.5)).toThrow(/поперёк: закрытая дверь/);
+    const b = scene(false, true);
+    setFootprint(b, 'kelus-drakar', { width: 2, height: 2 });
+    expect(() => placeActor(b, 'kelus-drakar', 8, 11)).toThrow(/поперёк: закрытая дверь/);
     setFootprint(b, 'pak', { width: 1, height: 1 });
     expect(() => placeActor(b, 'pak', 11.5, 9.5)).toThrow(/Ящики/);
   });

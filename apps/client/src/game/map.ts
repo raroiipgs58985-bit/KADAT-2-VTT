@@ -85,6 +85,12 @@ export interface Door {
   readonly open: boolean;
   readonly blocksMovement: boolean;
   readonly blocksVision: boolean;
+  /** Locked: cannot be opened by a character's Free Action; the GM sets the lock test. */
+  readonly locked: boolean;
+  /** Modifier of the Безопасность (ИН) test to pick the lock, set by the GM (ruling 17). */
+  readonly lockModifier: number;
+  /** OD one lock-picking attempt costs, set by the GM (ruling 17). */
+  readonly lockOd: number;
 }
 /** Cells with independent movement and vision flags; notes are text only, no calculation. */
 export interface Obstacle {
@@ -99,8 +105,8 @@ export interface Obstacle {
   readonly notes: string;
 }
 /**
- * Difficult terrain marking. Its canonical rule (halved СКР, falls when running) is not
- * connected: movement through it stops for an author decision; geometry preview works.
+ * Difficult terrain («Общая механика» A41): 1 m costs 2 m of movement (ruling 11); Run, Charge
+ * and Sprint across it need an ЛВ test with the terrain modifier, one per stretch (ruling 43).
  */
 export interface TerrainZone {
   readonly id: string;
@@ -109,7 +115,26 @@ export interface TerrainZone {
   readonly width: number;
   readonly height: number;
   readonly label: string;
+  /** ЛВ test modifier of this terrain («Общая механика» A44–A55). */
+  readonly modifier: number;
 }
+/** Terrain examples and their ЛВ test modifiers, «Общая механика» A44–A55. */
+export const TERRAIN_TYPES: readonly { readonly label: string; readonly modifier: number }[] = [
+  { label: 'Дым или туман', modifier: 0 },
+  { label: 'Грязь', modifier: 0 },
+  { label: 'Лужи крови или жидкостей', modifier: 0 },
+  { label: 'Тьма', modifier: -10 },
+  { label: 'Глубокий снег', modifier: -10 },
+  { label: 'Густой подлесок', modifier: -10 },
+  { label: 'Лёд', modifier: -10 },
+  { label: 'Плотная толпа', modifier: -20 },
+  { label: 'Трупы', modifier: -20 },
+  { label: 'Обломки', modifier: -20 },
+  { label: 'Землетрясение', modifier: -20 },
+];
+/** Modifier of a known terrain label, else 0 (used when reading older map files). */
+export const terrainModifier = (label: string) =>
+  TERRAIN_TYPES.find((t) => t.label === label)?.modifier ?? 0;
 export interface MapDocument extends GridSize {
   readonly schemaVersion: typeof MAP_SCHEMA_VERSION;
   readonly id: string;
@@ -304,7 +329,12 @@ function environmentProblems(m: MapDocument): string[] {
       continue;
     }
     if (
-      ![d.open, d.blocksMovement, d.blocksVision].every((f) => typeof f === 'boolean') ||
+      ![d.open, d.blocksMovement, d.blocksVision, d.locked].every((f) => typeof f === 'boolean') ||
+      !Number.isInteger(d.lockModifier) ||
+      Math.abs(d.lockModifier) > 60 ||
+      !Number.isInteger(d.lockOd) ||
+      d.lockOd < 0 ||
+      d.lockOd > 10 ||
       !isVertex(d.from, { cols: Number.MAX_SAFE_INTEGER, rows: Number.MAX_SAFE_INTEGER }) ||
       !isVertex(d.to, { cols: Number.MAX_SAFE_INTEGER, rows: Number.MAX_SAFE_INTEGER })
     ) {
@@ -355,7 +385,7 @@ function environmentProblems(m: MapDocument): string[] {
     if (o.col + o.width > m.cols || o.row + o.height > m.rows) rectsOutside++;
   }
   for (const z of m.zones) {
-    if (rectBad(z)) {
+    if (rectBad(z) || !Number.isInteger(z.modifier) || Math.abs(z.modifier) > 60) {
       problems.push(`Зона ${z.id} повреждена`);
       continue;
     }

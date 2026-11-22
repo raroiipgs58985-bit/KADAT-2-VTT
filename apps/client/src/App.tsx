@@ -644,7 +644,12 @@ export function App() {
                 );
               else
                 editMap((m) =>
-                  addZone(m, { id: commandId('zone'), ...rectOf(a, c), label: 'Трудный ландшафт' }),
+                  addZone(m, {
+                    id: commandId('zone'),
+                    ...rectOf(a, c),
+                    label: 'Трудный ландшафт',
+                    modifier: 0,
+                  }),
                 );
             }}
             onAddWall={(points) =>
@@ -672,6 +677,9 @@ export function App() {
                     open: false,
                     blocksMovement: true,
                     blocksVision: true,
+                    locked: false,
+                    lockModifier: 0,
+                    lockOd: 0,
                   }),
                 'Дверь добавлена (закрыта; флаги — в панели).',
               );

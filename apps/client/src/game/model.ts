@@ -15,8 +15,10 @@ import {
   footprintGeometryProblem,
   initialDoorStates,
   straightPathProblem,
+  terrainAlong,
   type GeometryIndex,
   type PathProblem,
+  type TerrainCell,
 } from './geometry';
 import armorCatalog from './data/canonical-armor.json';
 export const pakArmorProperties = armorCatalog.sheets[0]!.data.find((d) => d.startRow === 32)!
@@ -81,6 +83,8 @@ export interface Battle {
   mapRevision: number;
   /** Current open/closed state of each door (session instance; the map holds the initial). */
   doors: Record<string, boolean>;
+  /** Current lock state of doors changed by the GM; absent — as the map says. */
+  locks: Record<string, boolean>;
   /** Increments whenever the geometry relevant to movement changes (map apply, doors). */
   sceneRevision: number;
   /** Geometry of every applied map, layers shared (see snapshots.ts); replays reference it. */
@@ -101,6 +105,7 @@ export function createBattle(): Battle {
     map: structuredClone(STANDARD_MAP),
     mapRevision: 0,
     doors: {},
+    locks: {},
     sceneRevision: 0,
     snapshots: emptySnapshotStore(),
     hp: { 'kelus-drakar': 26, pak: 33 },
@@ -152,26 +157,72 @@ export function sceneGeometry(b: Battle): GeometryIndex {
 }
 
 export type MovementProblem = { kind: 'position'; reason: string } | PathProblem;
+
+/** A route by clicked points: each straight leg checked, length and cost with terrain. */
+export interface RoutePlan {
+  readonly points: readonly Point[];
+  /** Metres actually walked: the sum of the legs (author ruling 8). */
+  readonly meters: number;
+  /** Metres of the centre's path inside difficult terrain. */
+  readonly difficult: number;
+  /** Movement spent: 1 m of normal ground — 1 m, 1 m of difficult terrain — 2 m (ruling 11). */
+  readonly cost: number;
+  /** Difficult stretches crossed, in route order; each needs its own ЛВ test when running. */
+  readonly zones: readonly TerrainCell[];
+  readonly problem: MovementProblem | null;
+}
 /**
- * The single movement check used by preview, highlighting and execution: the destination
- * (grid, bounds, other tokens, obstacles, walls inside the footprint) and the straight path
- * (walls, closed doors, obstacles, ambiguous corner contact, difficult terrain).
+ * The single movement check used by preview, highlighting and execution: every leg of the
+ * route (walls, closed doors, obstacles, other tokens) and the final position (grid, bounds,
+ * other tokens, obstacles, walls inside the footprint).
  */
+export function planRoute(
+  b: Battle,
+  id: ActorId,
+  points: readonly Point[],
+  g: GeometryIndex = sceneGeometry(b),
+): RoutePlan {
+  const f = b.footprints[id];
+  const others = occupiedCells(b, id);
+  let from = b.positions[id];
+  let meters = 0,
+    difficult = 0,
+    problem: MovementProblem | null = null;
+  const zones: TerrainCell[] = [];
+  // The destination first: a taken or invalid end point is the clearest reason.
+  const end = points.at(-1);
+  if (end) {
+    const position = placementProblem(end, f, others, b.map) ?? footprintGeometryProblem(end, f, g);
+    if (position) problem = { kind: 'position', reason: position };
+  }
+  for (const to of problem ? [] : points) {
+    const leg = Math.hypot(to.x - from.x, to.y - from.y);
+    if (leg === 0) {
+      problem = { kind: 'position', reason: 'Точки маршрута совпадают' };
+      break;
+    }
+    problem = straightPathProblem(from, to, f, g, others);
+    if (problem) break;
+    const terrain = terrainAlong(from, to, g);
+    meters += leg;
+    difficult += terrain.meters;
+    for (const z of terrain.zones) if (!zones.some((x) => x.id === z.id)) zones.push(z);
+    from = to;
+  }
+  return { points, meters, difficult, cost: meters + difficult, zones, problem };
+}
 export function movementProblem(
   b: Battle,
   id: ActorId,
   to: Point,
   g: GeometryIndex = sceneGeometry(b),
 ): MovementProblem | null {
-  const f = b.footprints[id];
-  const position =
-    placementProblem(to, f, occupiedCells(b, id), b.map) ?? footprintGeometryProblem(to, f, g);
-  if (position) return { kind: 'position', reason: position };
-  return straightPathProblem(b.positions[id], to, f, g);
+  return planRoute(b, id, [to], g).problem;
 }
 /**
- * Grid-aligned centres reachable in a straight line within `maxDistance` metres. Only anchors
- * inside the square around the token are visited, so the cost does not grow with map size.
+ * Grid-aligned centres reachable in a straight line for at most `maxDistance` metres of
+ * movement (difficult terrain counts double). Only anchors inside the square around the token
+ * are visited, so the cost does not grow with map size.
  */
 export function destinationsWithin(b: Battle, id: ActorId, maxDistance: number): Point[] {
   const from = b.positions[id];
@@ -187,7 +238,9 @@ export function destinationsWithin(b: Battle, id: ActorId, maxDistance: number):
     for (let col = col0; col <= col1; col++) {
       const c = { x: col + f.width / 2, y: row + f.height / 2 };
       const d = distance(from, c);
-      if (d > 0 && d <= maxDistance + 1e-9 && movementProblem(b, id, c, g) === null) out.push(c);
+      if (d === 0 || d > maxDistance + 1e-9) continue;
+      const plan = planRoute(b, id, [c], g);
+      if (plan.problem === null && plan.cost <= maxDistance + 1e-9) out.push(c);
     }
   return out;
 }

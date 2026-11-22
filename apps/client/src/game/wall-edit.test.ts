@@ -26,6 +26,9 @@ function draft() {
         open: false,
         blocksMovement: true,
         blocksVision: true,
+        locked: false,
+        lockModifier: 0,
+        lockOd: 0,
       },
     ],
   };

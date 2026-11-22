@@ -42,6 +42,9 @@ function map(): MapDocument {
         open: false,
         blocksMovement: true,
         blocksVision: true,
+        locked: false,
+        lockModifier: 0,
+        lockOd: 0,
       },
     ],
     obstacles: [
@@ -68,8 +71,8 @@ function history(): Battle {
     positions: { 'kelus-drakar': { x: 8.5, y: 7.5 }, pak: { x: 13.5, y: 7.5 } },
   });
   setDoorOpen(b, 'd', true);
-  setFootprint(b, 'pak', { width: 2, height: 1 });
-  placeActor(b, 'pak', 14, 7.5);
+  setFootprint(b, 'pak', { width: 2, height: 2 });
+  placeActor(b, 'pak', 15, 8);
   startCombat(b, fixedDice(''));
   expect(() =>
     moveActor(b, { id: 'bad', actor: 'kelus-drakar', mode: 'half-move', to: { x: 4.5, y: 3.5 } }),

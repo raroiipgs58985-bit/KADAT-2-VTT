@@ -35,6 +35,9 @@ export function stage3StandMap(): MapDocument {
         open: false,
         blocksMovement: true,
         blocksVision: true,
+        locked: false,
+        lockModifier: 0,
+        lockOd: 0,
       },
     ],
     obstacles: [
@@ -50,7 +53,7 @@ export function stage3StandMap(): MapDocument {
         notes: 'Низкие: мешают пройти, но не закрывают обзор',
       },
     ],
-    zones: [{ id: 'mud', col: 2, row: 15, width: 4, height: 3, label: 'Грязь' }],
+    zones: [{ id: 'mud', col: 2, row: 15, width: 4, height: 3, label: 'Грязь', modifier: 0 }],
   };
 }
 

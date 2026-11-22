@@ -38,8 +38,8 @@ import { fixedDice } from './dice';
 
 const presets: [string, Footprint][] = [
   ['1 × 1', { width: 1, height: 1 }],
-  ['2 × 1', { width: 2, height: 1 }],
-  ['1 × 2', { width: 1, height: 2 }],
+  ['2 × 2', { width: 2, height: 2 }],
+  ['3 × 3', { width: 3, height: 3 }],
 ];
 const wideMap = { cols: 24, rows: 12 };
 
@@ -189,21 +189,21 @@ describe('Applying a map to the scene', () => {
     expect(b.positions.pak).toEqual({ x: 15.5, y: 10.5 });
   });
 
-  it('a 2-cell token keeps its area and anchor checks on the new map', () => {
+  it('a 2 × 2 token keeps its area and anchor checks on the new map', () => {
     const b = createBattle();
-    setFootprint(b, 'pak', { width: 2, height: 1 });
+    setFootprint(b, 'pak', { width: 2, height: 2 });
     const d = placeToken(
       resize(startEditing(b).present, 24, 12),
       'pak',
-      { x: 23, y: 11.5 },
+      { x: 23, y: 11 },
       b.positions.pak,
     );
     applyMap(b, d);
-    expect(occupiedCells(b, 'kelus-drakar')).toEqual(new Set(['22:11', '23:11']));
+    expect(occupiedCells(b, 'kelus-drakar')).toEqual(new Set(['22:10', '23:10', '22:11', '23:11']));
     const outside = placeToken(
       startEditing(b).present,
       'pak',
-      { x: 24, y: 11.5 },
+      { x: 24, y: 11 },
       b.positions['pak'],
     );
     expect(() => applyMap(b, outside)).toThrow(/границы карты 24 × 12/);

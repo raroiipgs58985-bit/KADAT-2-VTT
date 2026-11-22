@@ -5,9 +5,11 @@ import {
   cancelUnstarted,
   getEngine,
   moveActor,
+  placeFallen,
   nextTurn,
   placeActor,
   setDoorOpen,
+  setDoorLocked,
   setFootprint,
   standUp,
   selectManualOrder,
@@ -29,7 +31,8 @@ type Step =
   | { type: 'manual-turn'; actor: ActorId }
   | { type: 'cancel-unstarted' }
   | { type: 'start-combat'; rolls: DiceRoll[] }
-  | { type: 'move'; command: MoveCommand }
+  | { type: 'move'; command: MoveCommand; rolls?: DiceRoll[] }
+  | { type: 'fall'; actor: ActorId; x: number; y: number }
   | { type: 'stand'; command: { id: string; actor: ActorId } }
   | { type: 'footprint'; actor: ActorId; footprint: Footprint }
   // v0.4: geometry-sensitive commands.
@@ -48,7 +51,8 @@ type Step =
       positions: Record<ActorId, Point>;
       omittedBackground?: BackgroundSummary | null;
     }
-  | { type: 'door'; doorId: string; open: boolean }
+  | { type: 'door'; doorId: string; open: boolean; by?: ActorId | null }
+  | { type: 'door-lock'; doorId: string; locked: boolean }
   // A refused command: it changed nothing, but the journal keeps it.
   | { type: 'journal'; entry: { type: JournalOnly; detail: unknown } };
 
@@ -84,8 +88,8 @@ const LEGACY_FORMAT = 'kadat-client-combat-v0.3';
 /** One size limit for replays, used both when saving and when opening (UTF-8 bytes). */
 export const REPLAY_MAX_BYTES = 16 * 1024 * 1024;
 const utf8Bytes = (text: string) => new TextEncoder().encode(text).length;
-/** Geometry rules version: straight swept path, exact touching rules. */
-export const GEOMETRY_VERSION = 1;
+/** Geometry rules version. 2: clicked routes, corner touch allowed, difficult terrain costs double. */
+export const GEOMETRY_VERSION = 2;
 const BASELINE = 'e98837b92abc74ac501b52c5f2ea2e79b86f96b3';
 
 export interface Replay {
@@ -132,8 +136,14 @@ export function exportReplay(b: Battle): Replay {
         type: 'stand',
         command: (entry.detail as { command: { id: string; actor: ActorId } }).command,
       });
-    if (entry.type === 'move')
-      steps.push({ type: 'move', command: (entry.detail as { command: MoveCommand }).command });
+    if (entry.type === 'move') {
+      const m = entry.detail as { command: MoveCommand; rolls?: DiceRoll[] };
+      steps.push({ type: 'move', command: m.command, rolls: m.rolls ?? [] });
+    }
+    if (entry.type === 'fall-placed') {
+      const f = entry.detail as { actor: ActorId; after: Point };
+      steps.push({ type: 'fall', actor: f.actor, x: f.after.x, y: f.after.y });
+    }
     if (entry.type === 'placement')
       steps.push({
         type: 'placement',
@@ -161,8 +171,12 @@ export function exportReplay(b: Battle): Replay {
     if (isJournalOnly(entry.type))
       steps.push({ type: 'journal', entry: { type: entry.type, detail } });
     if (entry.type === 'door') {
-      const d = entry.detail as { doorId: string; open: boolean };
-      steps.push({ type: 'door', doorId: d.doorId, open: d.open });
+      const d = entry.detail as { doorId: string; open: boolean; by?: ActorId | null };
+      steps.push({ type: 'door', doorId: d.doorId, open: d.open, by: d.by ?? null });
+    }
+    if (entry.type === 'door-lock') {
+      const d = entry.detail as { doorId: string; locked: boolean };
+      steps.push({ type: 'door-lock', doorId: d.doorId, locked: d.locked });
     }
   }
   return structuredClone({
@@ -208,7 +222,8 @@ export function importReplay(value: unknown): Battle {
     if (step.type === 'placement') placeActor(b, step.actor, step.x, step.y);
     else if (step.type === 'manual-turn') selectManualOrder(b, step.actor);
     else if (step.type === 'cancel-unstarted') cancelUnstarted(b);
-    else if (step.type === 'move') moveActor(b, step.command);
+    else if (step.type === 'move') moveActor(b, step.command, dice(step.rolls ?? []));
+    else if (step.type === 'fall') placeFallen(b, step.actor, { x: step.x, y: step.y });
     else if (step.type === 'stand') standUp(b, step.command);
     else if (step.type === 'footprint') setFootprint(b, step.actor, step.footprint);
     else if (step.type === 'map') {
@@ -233,7 +248,8 @@ export function importReplay(value: unknown): Battle {
       if (!isJournalOnly(step.entry?.type) || detail?.committed !== false)
         throw new Error('Шаг журнала replay повреждён');
       append(b, step.entry.type, step.entry.detail);
-    } else if (step.type === 'door') setDoorOpen(b, step.doorId, step.open);
+    } else if (step.type === 'door') setDoorOpen(b, step.doorId, step.open, step.by ?? undefined);
+    else if (step.type === 'door-lock') setDoorLocked(b, step.doorId, step.locked);
     else if (step.type === 'start-combat')
       startCombat(b, dice(step.rolls.slice(getEngine(b).pendingTurn?.prefix.length ?? 0)));
     else if (step.type === 'attack') {

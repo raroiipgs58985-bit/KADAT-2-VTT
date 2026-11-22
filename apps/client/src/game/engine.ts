@@ -28,6 +28,7 @@ import {
   initializeMeleeState,
   resolveBleedingPulse,
   resolveCombatAction,
+  resolveWoundCheck,
   resolveDamageRoll,
   resolveMeleeAttack,
   resolvePostDamage,
@@ -46,7 +47,7 @@ import {
   ids,
   move,
   movementProfiles,
-  movementProblem,
+  planRoute,
   placementProblemFor,
   sceneGeometry,
   tokenConflicts,
@@ -85,6 +86,8 @@ export interface EngineState {
   pendingTurn?: { prefix: DiceRoll[]; reason: string; kind?: 'start' };
   /** Committed movement actions; used only to detect a repeated free move in one turn. */
   moves: { turn: number; actor: ActorId; mode: MoveMode }[];
+  /** A runner failed the ЛВ test on difficult terrain: the GM picks where they fall (ruling 42). */
+  pendingFall?: { actor: ActorId; commandId: string; zone: string };
 }
 export interface AttackCommand {
   id: string;
@@ -946,6 +949,8 @@ export interface MoveCommand {
   actor: ActorId;
   mode: MoveMode;
   to: { x: number; y: number };
+  /** Clicked route points in order, the last one equal to `to` (author ruling 8). */
+  route?: { x: number; y: number }[];
   /** Scene revision the move was previewed on; a stale preview is refused, never re-routed. */
   sceneRevision?: number;
 }
@@ -1002,6 +1007,7 @@ function authorBoundary(state: EngineState, actorId: ActorId, mode: MoveMode): s
 function movementGate(state: EngineState, actorId: ActorId) {
   if (state.pending || state.pendingTurn)
     throw new Error('Сначала завершите сохранённую pending-операцию');
+  if (state.pendingFall) throw new Error('Сначала укажите на карте, где упал персонаж');
   const session = state.wounds.combat.session;
   if (session.phase === 'ready') throw new Error('Бой ещё не начат: нажмите «Начать бой»');
   if (session.phase !== 'turn-active' || session.activeActor?.actorId !== actorId)
@@ -1044,34 +1050,87 @@ export function movementOptions(b: Battle, actorId: ActorId): MoveOption[] {
   });
 }
 /** Atomic movement action: either the Core resolution and the token move both commit, or nothing. */
-export function moveActor(b: Battle, command: MoveCommand) {
+const RUNNING_MODES: readonly MoveMode[] = ['run', 'sprint'];
+/**
+ * Atomic movement action along a straight line or a clicked route: either the Core resolution
+ * and the token move both commit, or nothing. Difficult terrain costs double (ruling 11); when
+ * running, each difficult stretch needs an ЛВ test with its modifier («Общая механика» A41,
+ * rulings 11 and 43). A failed test ends the move: OD are spent, and the GM places the fallen
+ * character (ruling 42) with `placeFallen`.
+ */
+export function moveActor(b: Battle, command: MoveCommand, source: DiceSource = noDice) {
   const state = getEngine(b);
+  const used: DiceRoll[] = [];
+  const tape: DiceSource = {
+    roll(sides) {
+      const value = source.roll(sides);
+      used.push({ sides, value });
+      return value;
+    },
+  };
   try {
     if (!ids.includes(command.actor)) throw new Error('Неизвестный персонаж');
     const mode = moveModes.find((m) => m.mode === command.mode);
     if (!mode) throw new Error('Неизвестный режим движения');
     if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
     const { x, y } = command.to;
+    const points = command.route?.length ? command.route : [command.to];
+    const last = points.at(-1)!;
+    if (last.x !== x || last.y !== y)
+      throw new Error('Последняя точка маршрута не совпадает с точкой назначения');
     movementGate(state, command.actor);
     if (command.sceneRevision !== undefined && command.sceneRevision !== b.sceneRevision)
       throw new Error('Сцена изменилась после предпросмотра: выберите точку назначения заново');
     const authorBlock = authorBoundary(state, command.actor, command.mode);
     if (authorBlock) throw new RuleDecisionRequired(authorBlock);
-    const geometry = movementProblem(b, command.actor, { x, y });
-    if (geometry?.kind === 'position')
-      throw new Error(`Точка назначения недопустима: ${geometry.reason}`);
     const from = b.positions[command.actor];
-    const distance = Math.hypot(x - from.x, y - from.y);
-    if (distance === 0) throw new Error('Точка назначения совпадает с текущей позицией');
+    if (points.length === 1 && x === from.x && y === from.y)
+      throw new Error('Точка назначения совпадает с текущей позицией');
+    const plan = planRoute(b, command.actor, points);
+    if (plan.problem?.kind === 'position')
+      throw new Error(`Точка назначения недопустима: ${plan.problem.reason}`);
     const resolved = resolveMove(state, command.id, command.actor, command.mode);
     const maxDistance = resolved.result.distance;
     // Too far is a plain refusal: no rule question arises for a point out of reach.
-    if (distance > maxDistance + 1e-9)
+    if (plan.cost > maxDistance + 1e-9)
       throw new Error(
-        `Дистанция ${distance.toFixed(2)} м больше допустимой ${maxDistance} м («${mode.label}»)`,
+        `${points.length > 1 ? 'Маршрут' : 'Дистанция'} ${plan.cost.toFixed(2)} м` +
+          (plan.difficult > 0
+            ? ` (трудная местность ${plan.difficult.toFixed(2)} м считается вдвое)`
+            : '') +
+          ` больше допустимой ${maxDistance} м («${mode.label}»)`,
       );
-    if (geometry?.kind === 'blocked') throw new Error(geometry.reason);
-    if (geometry) throw new RuleDecisionRequired(geometry.reason);
+    if (plan.problem) throw new Error(plan.problem.reason);
+    const terrainTests: { zone: string; label: string; modifier: number; check: unknown }[] = [];
+    let fell: (typeof plan.zones)[number] | undefined;
+    if (RUNNING_MODES.includes(command.mode))
+      for (const zone of plan.zones) {
+        const combat = state.wounds.combat;
+        const checked = resolveWoundCheck(
+          state.wounds,
+          'ЛВ',
+          context(combat, command.actor),
+          tape,
+          {
+            id: `terrain:${zone.id}`,
+            value: zone.modifier,
+            provenance: {
+              source: { kind: 'canonical-sheet', id: 'Механика к100 / Общая механика A41–A55' },
+              reason: `Трудный ландшафт «${zone.label}» при беге: тест ЛВ ${zone.modifier >= 0 ? '+' : ''}${zone.modifier}`,
+            },
+          },
+        );
+        terrainTests.push({
+          zone: zone.id,
+          label: zone.label,
+          modifier: zone.modifier,
+          check: checked.result,
+        });
+        if (checked.result.outcome !== 'success') {
+          fell = zone;
+          break;
+        }
+      }
     const next = structuredClone(state);
     next.wounds = { ...next.wounds, combat: resolved.state };
     next.committed.push(command.id);
@@ -1080,22 +1139,31 @@ export function moveActor(b: Battle, command: MoveCommand) {
       actor: command.actor,
       mode: command.mode,
     });
-    b.positions[command.actor] = { x, y };
+    if (fell) next.pendingFall = { actor: command.actor, commandId: command.id, zone: fell.id };
+    else b.positions[command.actor] = { x, y };
     sync(b, next);
     append(b, 'move', {
       command,
       from,
-      to: { x, y },
-      cells: cellsOf({ x, y }, b.footprints[command.actor]),
-      distance,
+      to: fell ? null : { x, y },
+      route: points,
+      cells: fell ? [] : cellsOf({ x, y }, b.footprints[command.actor]),
+      distance: plan.meters,
+      difficult: plan.difficult,
+      cost: plan.cost,
       maxDistance,
+      terrainTests,
+      rolls: used,
+      fell: fell ? { zone: fell.id, label: fell.label } : null,
       odBefore: resolved.execution.odBefore,
       odAfter: resolved.execution.odAfter,
       fatigueAdded: resolved.result.fatigueAdded,
       coreLogs: resolved.logs,
       committed: true,
     });
-    return { status: 'RESOLVED' as const, distance, maxDistance };
+    return fell
+      ? { status: 'FELL' as const, distance: plan.meters, maxDistance, zone: fell.label }
+      : { status: 'RESOLVED' as const, distance: plan.meters, maxDistance };
   } catch (error) {
     append(b, 'move-rejected', {
       command,
@@ -1105,6 +1173,38 @@ export function moveActor(b: Battle, command: MoveCommand) {
     });
     throw error;
   }
+}
+/**
+ * The GM places a character who fell on difficult terrain (author ruling 42): any valid free
+ * position; the character ends up lying (prone).
+ */
+export function placeFallen(b: Battle, actor: ActorId, at: { x: number; y: number }) {
+  const state = getEngine(b);
+  if (state.pendingFall?.actor !== actor) throw new Error('Этот персонаж не падал');
+  const problem = placementProblemFor(b, actor, at);
+  if (problem) throw new Error(problem);
+  const next = structuredClone(state);
+  const runtime = next.wounds.combat.actors[actor]!;
+  next.wounds = {
+    ...next.wounds,
+    combat: {
+      ...next.wounds.combat,
+      actors: { ...next.wounds.combat.actors, [actor]: { ...runtime, posture: 'prone' } },
+    },
+  };
+  const fall = next.pendingFall!;
+  delete next.pendingFall;
+  const before = b.positions[actor];
+  b.positions[actor] = { x: at.x, y: at.y };
+  sync(b, next);
+  append(b, 'fall-placed', {
+    actor,
+    commandId: fall.commandId,
+    zone: fall.zone,
+    before,
+    after: b.positions[actor],
+    posture: 'prone',
+  });
 }
 /** Starts the first turn of the manually ordered combat through the accepted turn hooks. */
 export function startCombat(b: Battle, source: DiceSource) {
@@ -1357,6 +1457,7 @@ export function applyMap(
   b.map = map;
   b.mapRevision += 1;
   b.doors = initialDoorStates(map);
+  b.locks = {};
   b.sceneRevision += 1;
   for (const r of repositioned) b.positions[r.actor] = r.to;
   append(b, 'map-applied', {
@@ -1388,13 +1489,37 @@ export function applyMap(
  * Opens or closes a door during setup only (changing doors in combat waits for the author,
  * TZ question 3). Closing is refused while a token's footprint spans the doorway.
  */
-export function setDoorOpen(b: Battle, doorId: string, open: boolean) {
-  if (combatStarted(b))
-    throw new Error('Двери переключаются только на этапе расстановки, до начала боя.');
+export const doorLocked = (b: Battle, doorId: string) =>
+  b.locks[doorId] ?? b.map.doors.find((d) => d.id === doorId)?.locked ?? false;
+/**
+ * Open or close a door. `by` — a character in combat spends the turn's Free Action, from any
+ * distance (author rulings 10 and 44); a locked door does not open this way. Without `by` the
+ * GM changes the door at any moment at no cost (ruling 10).
+ */
+export function setDoorOpen(b: Battle, doorId: string, open: boolean, by?: ActorId) {
   const door = b.map.doors.find((d) => d.id === doorId);
   if (!door) throw new Error('Такой двери нет на карте');
   const current = b.doors[doorId] ?? door.open;
   if (current === open) throw new Error(open ? 'Дверь уже открыта' : 'Дверь уже закрыта');
+  let freeAction: ReturnType<typeof resolveCombatAction> | null = null;
+  if (by) {
+    if (!combatStarted(b)) throw new Error('До начала боя двери переключает ведущий');
+    const state = getEngine(b);
+    movementGate(state, by);
+    if (open && doorLocked(b, doorId))
+      throw new Error('Дверь заперта: её отпирает ведущий или взлом');
+    const combat = state.wounds.combat;
+    freeAction = resolveCombatAction(
+      combat,
+      {
+        id: `door:${doorId}:${b.log.length + 1}`,
+        type: 'free-action',
+        actor: ref(by),
+        context: context(combat, by),
+      },
+      noDice,
+    );
+  }
   if (!open) {
     const g = buildGeometry(b.map, { ...b.doors, [doorId]: false });
     for (const id of ids) {
@@ -1403,15 +1528,35 @@ export function setDoorOpen(b: Battle, doorId: string, open: boolean) {
         throw new Error(`Нельзя закрыть дверь: ${actor(id).name} стоит в проёме (${problem})`);
     }
   }
+  if (freeAction) {
+    const next = structuredClone(getEngine(b));
+    next.wounds = { ...next.wounds, combat: freeAction.state };
+    sync(b, next);
+  }
   b.doors = { ...b.doors, [doorId]: open };
   b.sceneRevision += 1;
   const line = segmentLine(door.from, door.to);
   append(b, 'door', {
     doorId,
     open,
+    by: by ?? null,
+    freeAction: Boolean(freeAction),
+    inCombat: combatStarted(b),
     from: door.from,
     to: door.to,
     edges: line ? line.to - line.from : 0,
   });
+  return { status: 'RESOLVED' as const };
+}
+/** The GM locks or unlocks a door at any moment (ruling 17: the GM sets the lock). */
+export function setDoorLocked(b: Battle, doorId: string, locked: boolean) {
+  const door = b.map.doors.find((d) => d.id === doorId);
+  if (!door) throw new Error('Такой двери нет на карте');
+  if (doorLocked(b, doorId) === locked)
+    throw new Error(locked ? 'Дверь уже заперта' : 'Дверь уже не заперта');
+  if (locked && (b.doors[doorId] ?? door.open))
+    throw new Error('Открытую дверь нельзя запереть: сначала закройте её');
+  b.locks = { ...b.locks, [doorId]: locked };
+  append(b, 'door-lock', { doorId, locked });
   return { status: 'RESOLVED' as const };
 }

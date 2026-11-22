@@ -99,6 +99,9 @@ describe('Large map with several edits (TZ load check)', () => {
           open: true,
           blocksMovement: true,
           blocksVision: true,
+          locked: false,
+          lockModifier: 0,
+          lockOd: 0,
         }),
       (m) =>
         addObstacle(m, {

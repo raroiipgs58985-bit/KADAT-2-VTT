@@ -72,8 +72,28 @@ export function describeEntry(entry: LogEntry): JournalLine {
       return {
         ...base,
         title: d.open ? 'Дверь открыта' : 'Дверь закрыта',
-        summary: `Проём (${(d.from as { x: number }).x}; ${(d.from as { y: number }).y}) — (${(d.to as { x: number }).x}; ${(d.to as { y: number }).y}), подготовка сцены.`,
+        summary: `Проём (${(d.from as { x: number }).x}; ${(d.from as { y: number }).y}) — (${(d.to as { x: number }).x}; ${(d.to as { y: number }).y}), ${
+          d.by
+            ? `${name(d.by as ActorId)}, Свободное действие.`
+            : d.inCombat
+              ? 'решение ведущего.'
+              : 'подготовка сцены.'
+        }`,
         tone: 'info',
+      };
+    case 'door-lock':
+      return {
+        ...base,
+        title: d.locked ? 'Дверь заперта' : 'Дверь отперта',
+        summary: 'Решение ведущего.',
+        tone: 'info',
+      };
+    case 'fall-placed':
+      return {
+        ...base,
+        title: `${name(d.actor as ActorId)} упал`,
+        summary: 'Ведущий указал место падения; персонаж лежит.',
+        tone: 'warning',
       };
     case 'footprint': {
       const f = d.footprint as { width: number; height: number };
@@ -110,9 +130,25 @@ export function describeEntry(entry: LogEntry): JournalLine {
       const label = moveModes.find((m) => m.mode === c.mode)?.label ?? c.mode;
       return {
         ...base,
-        title: `${name(c.actor)}: ${label}`,
-        summary: `${metres(d.distance as number)} из ${metres(d.maxDistance as number)} · ОД ${d.odBefore} → ${d.odAfter}`,
-        tone: 'success',
+        title: `${name(c.actor)}: ${label}${(c.route?.length ?? 0) > 1 ? ' по маршруту' : ''}`,
+        summary:
+          `${metres(d.distance as number)}` +
+          ((d.difficult as number) > 0
+            ? ` (трудная местность ${metres(d.difficult as number)}, стоит ${metres(d.cost as number)})`
+            : '') +
+          ` из ${metres(d.maxDistance as number)} · ОД ${d.odBefore} → ${d.odAfter}` +
+          (
+            (d.terrainTests as
+              | { label: string; check: { outcome: string; rawRoll: number; target: number } }[]
+              | undefined) ?? []
+          )
+            .map(
+              (t) =>
+                ` · тест ЛВ «${t.label}»: ${t.check.rawRoll} против ${t.check.target} — ${t.check.outcome === 'success' ? 'успех' : 'провал'}`,
+            )
+            .join('') +
+          (d.fell ? ` · упал: ведущий укажет место на карте` : ''),
+        tone: d.fell ? 'warning' : 'success',
       };
     }
     case 'posture':

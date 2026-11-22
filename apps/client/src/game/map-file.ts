@@ -1,4 +1,5 @@
 import {
+  terrainModifier,
   MAP_SCHEMA_VERSION,
   READABLE_MAP_SCHEMAS,
   RASTER_LIMITS,
@@ -35,7 +36,18 @@ const MAP_KEYS_V1 = [
 const MAP_KEYS = [...MAP_KEYS_V1, 'walls', 'doors', 'obstacles', 'zones'] as const;
 const WALL_KEYS = ['id', 'points'] as const;
 const VERTEX_KEYS = ['x', 'y'] as const;
-const DOOR_KEYS = ['id', 'wallId', 'from', 'to', 'open', 'blocksMovement', 'blocksVision'] as const;
+const DOOR_KEYS = [
+  'id',
+  'wallId',
+  'from',
+  'to',
+  'open',
+  'blocksMovement',
+  'blocksVision',
+  'locked',
+  'lockModifier',
+  'lockOd',
+] as const;
 const OBSTACLE_KEYS = [
   'id',
   'col',
@@ -47,7 +59,7 @@ const OBSTACLE_KEYS = [
   'blocksVision',
   'notes',
 ] as const;
-const ZONE_KEYS = ['id', 'col', 'row', 'width', 'height', 'label'] as const;
+const ZONE_KEYS = ['id', 'col', 'row', 'width', 'height', 'label', 'modifier'] as const;
 const BACKGROUND_KEYS = [
   'mime',
   'data',
@@ -145,6 +157,15 @@ export function parseMapFile(text: string): MapDocument {
           zones: [],
         }
       : source;
+  // Files saved before locks and terrain modifiers: fill the new fields with their defaults.
+  if (Array.isArray(map.doors))
+    map.doors = (map.doors as unknown[]).map((d) =>
+      isObject(d) && !('locked' in d) ? { ...d, locked: false, lockModifier: 0, lockOd: 0 } : d,
+    );
+  if (Array.isArray(map.zones))
+    map.zones = (map.zones as unknown[]).map((z) =>
+      isObject(z) && !('modifier' in z) ? { ...z, modifier: terrainModifier(String(z.label)) } : z,
+    );
   for (const [key, keys] of [
     ['walls', WALL_KEYS],
     ['doors', DOOR_KEYS],
