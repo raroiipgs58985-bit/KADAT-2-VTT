@@ -23,3 +23,4 @@ ADR (Architecture Decision Records) — записи об архитектурн
 - [0001 — ESM module format](0001-esm-module-format.md) — Accepted.
 - [0002 — Canonical Data Versioning Architecture](0002-canonical-data-versioning.md) — Accepted.
 - [0003 — Client game layer and Rules Engine source bundling](0003-client-game-layer.md) — Proposed.
+- [0004 — Own VTT for KADAT; reuse of external code under compatible licences](0004-own-vtt-and-code-reuse.md) — Accepted.
