@@ -64,6 +64,10 @@ export interface WeaponInstance {
   readonly modifications: readonly WeaponProfileContribution[];
   readonly loadedContainerId: string | null;
   readonly jammed: boolean;
+  /** Heavy weapon set on a support («Бой» A55); any movement of the owner removes it (ruling 41). */
+  readonly braced?: boolean;
+  /** Reload longer than the OD left this turn continues next turn. */
+  readonly reloadProgress?: { readonly containerId: string; readonly odSpent: number };
   readonly thermal?: { readonly state: 'overheated' | 'cooling'; readonly source: SourceReference };
 }
 

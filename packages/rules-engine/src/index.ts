@@ -100,3 +100,12 @@ export {
 } from './suppression-lifecycle.js';
 export { opposedMeleeCheck } from './melee-opposed.js';
 export { FREE_ACTION_TYPES, usesFreeAction } from './action-resources.js';
+export {
+  braceWeapon,
+  clearBraces,
+  reloadWeapon,
+  resolveOverpenetration,
+  type BraceWeaponRequest,
+  type ReloadRequest,
+  type ReloadResult,
+} from './weapon-actions.js';

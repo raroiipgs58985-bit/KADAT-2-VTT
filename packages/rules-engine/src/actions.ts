@@ -19,6 +19,7 @@ import {
 } from './action-resources.js';
 import { integer } from './validation.js';
 import { resolveModifiers } from './context.js';
+import { clearBraces } from './weapon-actions.js';
 
 export function resolveCombatAction(
   state: CombatActionState,
@@ -114,6 +115,8 @@ export function resolveCombatAction(
     posture,
     fatigue: actor.fatigue + fatigueAdded,
   });
+  if (['free-move', 'half-move', 'full-move', 'run', 'sprint'].includes(request.type))
+    next = clearBraces(next, request.actor.actorId);
   const logs = [actionLog(state, spent.execution)];
   if (request.type === 'quick-aim' || request.type === 'careful-aim') {
     next = updateActor(next, {

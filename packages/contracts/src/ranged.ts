@@ -28,6 +28,23 @@ export interface RangedAttackRequest extends ActionRequest {
   readonly calledLocation?: CalledLocation;
   readonly dodgeable: boolean;
   readonly dodge?: { readonly id: string; readonly context: ResolutionContext };
+  /** Basic (ОС) weapon held in one hand: −20 («Бой» A31). */
+  readonly oneHanded?: boolean;
+  /**
+   * Tactical advance («Бой» A62): 2 ОД, movement in a mode other than Run/Sprint plus the shot;
+   * НС +0 step (Полудвижение), −10 fast step (Полное), −20 charge (Натиск, СКР × 3).
+   */
+  readonly tacticalAdvance?: { readonly movementMode: 'half-move' | 'full-move' | 'charge' };
+  /**
+   * Wide arc («Бой» A61): burst with rate −2 (ammo unchanged), dodge −20, 45° sector. One test
+   * per target (ruling 39): the first target pays OD and ammo; each next one names `primaryId`.
+   */
+  readonly wideArc?: { readonly primaryId?: string };
+  /**
+   * Two weapons («Бой» H52–L56): one attack action, one roll per weapon (ruling 40); −30 without
+   * the talent «Парное оружие (Стрелковое)». The second weapon's shot names `primaryId`.
+   */
+  readonly dualWield?: { readonly primaryId?: string };
 }
 
 export interface HitLocationResult {
@@ -84,4 +101,6 @@ export interface RangedAttackResult {
   readonly firstLocation: CalledLocation | null;
   readonly reversedRoll: number | null;
   readonly hits: readonly HitRecord[];
+  /** Metres moved by a tactical advance before the shot. */
+  readonly movementDistance?: number;
 }

@@ -30,6 +30,8 @@ export type CombatActionType =
   | 'pressure'
   | 'breakthrough'
   | 'free-action'
+  | 'reload'
+  | 'brace-weapon'
   | GrappleAction;
 
 export interface ActionDefinition {

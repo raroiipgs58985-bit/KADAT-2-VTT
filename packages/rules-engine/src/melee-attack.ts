@@ -234,7 +234,14 @@ export function prepareMeleeAttack(state: CombatActionState, request: MeleeAttac
       cost = 2;
     }
   } else throw new Error('Unsupported melee action origin');
-  const canonicalAction = meleeDefinition('melee-attack', cost, true);
+  const followup = request.dualWield?.primaryId;
+  if (followup) {
+    if (window !== 'own-turn' || !state.session.turn?.flags.includes(`attack:${followup}`))
+      throw new Error('Follow-up blow requires its primary attack in this turn');
+    if (request.base === 'charge') throw new Error('Charge cannot be a follow-up blow');
+    cost = 0;
+  }
+  const canonicalAction = meleeDefinition('melee-attack', cost, !followup);
   const action = {
     ...canonicalAction,
     prerequisites: [
@@ -258,6 +265,10 @@ export function prepareMeleeAttack(state: CombatActionState, request: MeleeAttac
     meleeModifier('melee:base', baseModifier),
     meleeModifier('melee:technique', meleeTechniques[request.technique].nr),
     meleeModifier('melee:grip', composition.nrModifier),
+    ...(request.dualWield &&
+    !(state.actors[request.actor.actorId]!.talents ?? []).includes('Парное оружие (Рукопашное)')
+      ? [meleeModifier('melee:two-weapons', -30)]
+      : []),
     ...(opportunity ? [meleeModifier('melee:counterattack', opportunity.modifier)] : []),
     ...(request.calledLocation
       ? [meleeModifier('melee:called', calledModifiers[request.calledLocation])]

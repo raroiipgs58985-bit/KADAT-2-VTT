@@ -23,6 +23,15 @@ import { prepareDodge, resolveDodge } from './dodge.js';
 import { calledModifiers, resolveHitLocations, reverseAttackRoll } from './hit-locations.js';
 import { resolveRange } from './range.js';
 import { validateAmmunition } from './weapons.js';
+import { effectiveMovement } from './actions.js';
+
+const isBasic = (weaponClass: string) => ['ОС', 'BASIC'].includes(weaponClass);
+const isHeavy = (weaponClass: string) => ['ТО', 'HEAVY'].includes(weaponClass);
+/** The follow-up shot of the same attack action (second weapon or next wide-arc target). */
+const followupOf = (request: RangedAttackRequest) =>
+  request.wideArc?.primaryId ?? request.dualWield?.primaryId;
+const advanceModifier = { 'half-move': 0, 'full-move': -10, charge: -20 } as const;
+const advanceMultiplier = { 'half-move': 1, 'full-move': 2, charge: 3 } as const;
 
 export interface OverwatchEvent {
   readonly actionId: string;
@@ -61,6 +70,11 @@ export function validateOverwatchTrigger(
     throw new Error('Overwatch selected attack mismatch');
 }
 
+/** Wide arc: the rate of fire counts 2 lower for hits; ammo spent stays the same. */
+function hitCap(request: RangedAttackRequest): number {
+  return request.wideArc ? Math.max(0, request.shotsRequested - 2) : request.shotsRequested;
+}
+
 export function prepareRangedAttack(
   state: CombatActionState,
   request: RangedAttackRequest,
@@ -85,7 +99,32 @@ export function prepareRangedAttack(
     ? state.containers[weapon.loadedContainerId]
     : undefined;
   if (!container) throw new Error('No loaded ammunition container');
-  const effective = validateAmmunition(weapon, container, request.mode, request.shotsRequested);
+  const followup = followupOf(request);
+  if (followup) {
+    if (!state.session.turn?.flags.includes(`attack:${followup}`))
+      throw new Error('Follow-up shot requires its primary attack in this turn');
+    if (request.tacticalAdvance) throw new Error('Tactical advance cannot be a follow-up shot');
+  }
+  if (request.wideArc && request.dualWield)
+    throw new Error('Wide arc and two weapons do not combine');
+  // A wide-arc follow-up reuses the burst already paid for: ammo is spent once.
+  const effective = validateAmmunition(
+    weapon,
+    request.wideArc?.primaryId
+      ? { ...container, currentRounds: container.currentRounds + request.shotsRequested }
+      : container,
+    request.mode,
+    request.shotsRequested,
+  );
+  const weaponClass = effective.profile.weaponClass;
+  if (isHeavy(weaponClass) && !weapon.braced && request.mode !== 'single')
+    throw new Error('Unbraced heavy weapon cannot fire bursts');
+  if (request.wideArc) {
+    if (request.mode === 'single') throw new Error('Wide arc requires a burst');
+    const maxShots = effective.profile.modes.find((m) => m.mode === request.mode)?.maxShots ?? 0;
+    if (maxShots <= 3 && effective.profile.classification !== 'energy-beam')
+      throw new Error('Wide arc requires a rate of fire above 3');
+  }
   if (effective.profile.malfunction !== 'generic-jam')
     throw new Error('Item-specific malfunction requires authored property handling');
   const called = request.type === 'called-attack';
@@ -105,10 +144,22 @@ export function prepareRangedAttack(
       : request.mode === 'full-auto' && effective.profile.classification === 'kinetic'
         ? -10
         : 0;
+  const dualTalent = (actor.talents ?? []).includes('Парное оружие (Стрелковое)');
   const modifiers = [
     ...request.context.modifiers,
     ruleModifier('ranged:range', range.modifier),
     ruleModifier('ranged:mode', modeModifier),
+    ...(request.oneHanded && isBasic(weaponClass) ? [ruleModifier('ranged:one-handed', -20)] : []),
+    ...(isHeavy(weaponClass) && !weapon.braced ? [ruleModifier('ranged:unbraced-heavy', -30)] : []),
+    ...(request.tacticalAdvance
+      ? [
+          ruleModifier(
+            'ranged:tactical-advance',
+            advanceModifier[request.tacticalAdvance.movementMode],
+          ),
+        ]
+      : []),
+    ...(request.dualWield && !dualTalent ? [ruleModifier('ranged:two-weapons', -30)] : []),
     ...(actor.aim ? [ruleModifier('ranged:aim', actor.aim.modifier)] : []),
     ...(called && request.calledLocation
       ? [ruleModifier('ranged:called', calledModifiers[request.calledLocation])]
@@ -188,7 +239,25 @@ export function prepareRangedAttack(
     state.session.activeActor?.actorId === request.actor.actorId;
   const window: ActionWindow = event ? 'overwatch' : own ? 'own-turn' : 'wait';
   if (event) validateOverwatchTrigger(state, request, event);
-  const action = definition(request.type, event ? 0 : called ? 2 : 1, event ? 1 : 0, true);
+  if (request.tacticalAdvance && (called || event)) throw new Error('Invalid tactical advance');
+  const speed = effectiveMovement(actor);
+  if (
+    request.tacticalAdvance &&
+    speed.crawling &&
+    request.tacticalAdvance.movementMode === 'charge'
+  )
+    throw new Error('Charge is unavailable while crawling');
+  const movementDistance = request.tacticalAdvance
+    ? speed.value * advanceMultiplier[request.tacticalAdvance.movementMode]
+    : undefined;
+  const action = followup
+    ? definition(request.type, 0, 0, false)
+    : definition(
+        request.type,
+        event ? 0 : request.tacticalAdvance ? 2 : called ? 2 : 1,
+        event ? 1 : 0,
+        true,
+      );
   validateResources(state, request, action, context, window);
   const characteristic = resolveCharacteristic('НС', actor.characteristics.НС, context);
   const dodgeRequest: ActionRequest | null = request.dodge
@@ -197,7 +266,15 @@ export function prepareRangedAttack(
         type: 'dodge',
         actor: request.target,
         target: request.actor,
-        context: request.dodge.context,
+        context: request.wideArc
+          ? {
+              ...request.dodge.context,
+              modifiers: [
+                ...request.dodge.context.modifiers,
+                ruleModifier('ranged:wide-arc-dodge', -20),
+              ],
+            }
+          : request.dodge.context,
       }
     : null;
   if (dodgeRequest) {
@@ -216,6 +293,7 @@ export function prepareRangedAttack(
     action,
     characteristic,
     dodgeRequest,
+    movementDistance,
   };
 }
 
@@ -242,8 +320,8 @@ export function resolveRangedAttack(
       : request.mode === 'single'
         ? 1
         : request.mode === 'short-burst'
-          ? Math.min(request.shotsRequested, 1 + Math.floor(check.result.totalDegrees / 2))
-          : Math.min(request.shotsRequested, check.result.totalDegrees);
+          ? Math.min(hitCap(request), 1 + Math.floor(check.result.totalDegrees / 2))
+          : Math.min(hitCap(request), check.result.totalDegrees);
   const spent = spendResources(state, request, prepared.action, prepared.context, prepared.window);
   let next = spent.state;
   const logs = [prepared.characteristic.log, check.log];
@@ -289,10 +367,16 @@ export function resolveRangedAttack(
     context: prepared.context,
     provenance: prepared.effective.provenance,
   }));
-  const nextWeapon = { ...prepared.weapon, jammed: malfunction };
+  const ammoSpent = request.wideArc?.primaryId ? 0 : request.shotsRequested;
+  const nextWeapon = {
+    ...prepared.weapon,
+    jammed: malfunction,
+    // Moving during a tactical advance takes a heavy weapon off its support (ruling 41).
+    ...(request.tacticalAdvance ? { braced: false } : {}),
+  };
   const nextContainer = {
     ...prepared.container,
-    currentRounds: prepared.container.currentRounds - request.shotsRequested,
+    currentRounds: prepared.container.currentRounds - ammoSpent,
   };
   next = {
     ...next,
@@ -341,7 +425,7 @@ export function resolveRangedAttack(
     aim: prepared.actor.aim ?? null,
     shotsRequested: request.shotsRequested,
     shotsFired: request.shotsRequested,
-    ammoSpent: request.shotsRequested,
+    ammoSpent,
     malfunction,
     jammed: nextWeapon.jammed,
     hitsGenerated,
@@ -354,6 +438,9 @@ export function resolveRangedAttack(
         ? reverseAttackRoll(check.result.rawRoll)
         : null,
     hits,
+    ...(prepared.movementDistance !== undefined
+      ? { movementDistance: prepared.movementDistance }
+      : {}),
   };
   logs.push({
     ...actionLog(state, execution),

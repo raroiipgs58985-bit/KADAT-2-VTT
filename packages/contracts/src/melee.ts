@@ -185,6 +185,11 @@ export interface MeleeAttackRequest extends ActionRequest {
   readonly calledLocation?: CalledLocation;
   readonly trigger?: MeleeTrigger;
   readonly opportunityId?: string;
+  /**
+   * Two weapons («Бой» H52–L56): one attack action, one roll per weapon (ruling 40); −30 without
+   * the talent «Парное оружие (Рукопашное)». The second weapon's blow names `primaryId`.
+   */
+  readonly dualWield?: { readonly primaryId?: string };
 }
 
 export interface ParryRequest extends ActionRequest {
