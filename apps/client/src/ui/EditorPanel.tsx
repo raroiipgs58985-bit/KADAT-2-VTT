@@ -3,12 +3,14 @@ import {
   floorPalette,
   MAP_LIMITS,
   RASTER_LIMITS,
+  TERRAIN_TYPES,
   type Decoration,
   type Door,
   type FloorColorId,
   type MapBackground,
   type MapDocument,
   type Obstacle,
+  type TerrainZone,
 } from '../game/map';
 import { MAP_FILE_EXTENSION } from '../game/map-file';
 import type { EditorHistory } from '../game/map-editor';
@@ -31,7 +33,10 @@ export const toolList: { id: EditorTool; label: string; key: string }[] = [
   { id: 'zone', label: 'Трудный ландшафт', key: 'T' },
 ];
 
-type DoorPatch = Partial<Pick<Door, 'open' | 'blocksMovement' | 'blocksVision'>>;
+type DoorPatch = Partial<
+  Pick<Door, 'open' | 'blocksMovement' | 'blocksVision' | 'locked' | 'lockModifier' | 'lockOd'>
+>;
+type ZonePatch = Partial<Pick<TerrainZone, 'label' | 'modifier'>>;
 type ObstaclePatch = Partial<Pick<Obstacle, 'label' | 'blocksMovement' | 'blocksVision' | 'notes'>>;
 
 /** Text input committing one undo step on blur or Enter. */
@@ -78,7 +83,7 @@ function ObjectProperties(props: {
   map: MapDocument;
   onUpdateDoor: (id: string, patch: DoorPatch) => void;
   onUpdateObstacle: (id: string, patch: ObstaclePatch) => void;
-  onUpdateZone: (id: string, label: string) => void;
+  onUpdateZone: (id: string, patch: ZonePatch) => void;
   onDelete: (object: SelectedObject) => void;
 }) {
   const { object, map } = props;
@@ -138,6 +143,33 @@ function ObjectProperties(props: {
           />
           Закрытая блокирует видимость
         </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={door.locked}
+            onChange={(e) => props.onUpdateDoor(door.id, { locked: e.target.checked })}
+          />
+          Заперта (персонаж не откроет её Свободным действием)
+        </label>
+        {door.locked && (
+          <div className="row">
+            <NumberField
+              label="Модификатор взлома"
+              value={door.lockModifier}
+              step={10}
+              min={-60}
+              max={60}
+              onCommit={(v) => props.onUpdateDoor(door.id, { lockModifier: v })}
+            />
+            <NumberField
+              label="ОД на попытку"
+              value={door.lockOd}
+              min={0}
+              max={10}
+              onCommit={(v) => props.onUpdateDoor(door.id, { lockOd: v })}
+            />
+          </div>
+        )}
         <button type="button" onClick={() => props.onDelete(object)}>
           Удалить дверь
         </button>
@@ -189,15 +221,42 @@ function ObjectProperties(props: {
     if (!z) return null;
     return (
       <div className="stack" data-testid="object-props">
+        <label>
+          Вид местности («Общая механика»)
+          <select
+            aria-label="Вид местности"
+            value={TERRAIN_TYPES.some((t) => t.label === z.label) ? z.label : ''}
+            onChange={(e) => {
+              const t = TERRAIN_TYPES.find((x) => x.label === e.target.value);
+              if (t) props.onUpdateZone(z.id, { label: t.label, modifier: t.modifier });
+            }}
+          >
+            <option value="">— своя —</option>
+            {TERRAIN_TYPES.map((t) => (
+              <option key={t.label} value={t.label}>
+                {t.label} ({t.modifier >= 0 ? '+' : ''}
+                {t.modifier})
+              </option>
+            ))}
+          </select>
+        </label>
         <TextField
           label="Подпись зоны"
           value={z.label}
           max={MAP_LIMITS.maxLabelLength}
-          onCommit={(label) => props.onUpdateZone(z.id, label)}
+          onCommit={(label) => props.onUpdateZone(z.id, { label })}
         />
-        <p className="note-author">
-          Правило трудного ландшафта не подключено: движение через зону ждёт решения автора,
-          предпросмотр геометрии работает.
+        <NumberField
+          label="Модификатор теста ЛВ при беге"
+          value={z.modifier}
+          step={10}
+          min={-60}
+          max={60}
+          onCommit={(modifier) => props.onUpdateZone(z.id, { modifier })}
+        />
+        <p className="muted small">
+          Метр по зоне стоит 2 м движения. При Беге, Натиске и Спринте — тест ЛВ с этим
+          модификатором; провал — падение, место укажет ведущий.
         </p>
         <button type="button" onClick={() => props.onDelete(object)}>
           Удалить зону
@@ -292,7 +351,7 @@ export function EditorPanel(props: {
   onNewObstacle: (value: { label: string; blocksMovement: boolean; blocksVision: boolean }) => void;
   onUpdateDoor: (id: string, patch: DoorPatch) => void;
   onUpdateObstacle: (id: string, patch: ObstaclePatch) => void;
-  onUpdateZone: (id: string, label: string) => void;
+  onUpdateZone: (id: string, patch: ZonePatch) => void;
   onDeleteObject: (object: SelectedObject) => void;
 }) {
   const [calibrationMeters, setCalibrationMeters] = useState('');

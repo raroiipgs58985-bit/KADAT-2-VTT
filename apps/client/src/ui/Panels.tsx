@@ -131,6 +131,12 @@ export function MovePanel(props: {
   onStand: () => void;
   footprint: { width: number; height: number };
   mapSize: { cols: number; rows: number };
+  /** Route by clicked points (author ruling 8). */
+  route: { x: number; y: number }[] | null;
+  routePlan: { meters: number; difficult: number; cost: number; reason: string | null } | null;
+  onRouteMode: (on: boolean) => void;
+  onRouteUndo: () => void;
+  onRouteGo: () => void;
 }) {
   const [x, setX] = useState('');
   const [y, setY] = useState('');
@@ -169,6 +175,49 @@ export function MovePanel(props: {
           </li>
         ))}
       </ul>
+      {chosen && (
+        <div className="route-box" data-testid="route-box">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={props.route !== null}
+              onChange={(e) => props.onRouteMode(e.target.checked)}
+            />
+            Маршрут по точкам: щёлкайте по карте, затем «Идти»
+          </label>
+          {props.route !== null && (
+            <>
+              <p className="small" data-testid="route-summary">
+                {props.route.length === 0
+                  ? 'Точек нет: щёлкните первую точку на карте.'
+                  : `Точек: ${props.route.length} · путь ${props.routePlan!.meters.toFixed(2)} м` +
+                    (props.routePlan!.difficult > 0
+                      ? ` · трудная местность ${props.routePlan!.difficult.toFixed(2)} м (вдвое)`
+                      : '') +
+                    ` · стоит ${props.routePlan!.cost.toFixed(2)} из ${chosen.maxDistance} м`}
+              </p>
+              {props.routePlan?.reason && (
+                <p className="reason note-warning small">{props.routePlan.reason}</p>
+              )}
+              <div className="row">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={
+                    !props.canAct || !props.route.length || props.routePlan?.reason !== null
+                  }
+                  onClick={props.onRouteGo}
+                >
+                  Идти
+                </button>
+                <button type="button" disabled={!props.route.length} onClick={props.onRouteUndo}>
+                  Убрать точку
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
       {props.posture !== 'standing' && (
         <button type="button" onClick={props.onStand} disabled={!props.canAct}>
           Встать (1 ОД) — персонаж {props.posture === 'prone' ? 'лежит' : 'на колене'}
@@ -412,5 +461,59 @@ export function CombatLog({ battle }: { battle: Battle }) {
         })}
       </ol>
     </section>
+  );
+}
+
+/** Doors of the scene: a character opens or closes one for the Free Action from any distance
+ * (rulings 10, 44); the GM changes doors and locks at any moment, at no cost. */
+export function DoorsPanel(props: {
+  doors: { id: string; label: string; open: boolean; locked: boolean }[];
+  combat: boolean;
+  activeName: string;
+  canAct: boolean;
+  onCharacter: (id: string, open: boolean) => void;
+  onGm: (id: string, open: boolean) => void;
+  onLock: (id: string, locked: boolean) => void;
+}) {
+  if (!props.doors.length) return null;
+  return (
+    <details className="panel doors" data-testid="doors-panel">
+      <summary>Двери: {props.doors.length}</summary>
+      <ul className="door-list">
+        {props.doors.map((d) => (
+          <li key={d.id} data-door-row={d.id}>
+            <div>
+              <strong>{d.label}</strong>{' '}
+              <span className="muted small">
+                {d.open ? 'открыта' : 'закрыта'}
+                {d.locked ? ', заперта' : ''}
+              </span>
+            </div>
+            <div className="row">
+              {props.combat && (
+                <button
+                  type="button"
+                  disabled={!props.canAct || (!d.open && d.locked)}
+                  title="Свободное действие персонажа, с любого места"
+                  onClick={() => props.onCharacter(d.id, !d.open)}
+                >
+                  {props.activeName}: {d.open ? 'закрыть' : 'открыть'} (СД)
+                </button>
+              )}
+              <button type="button" onClick={() => props.onGm(d.id, !d.open)}>
+                Ведущий: {d.open ? 'закрыть' : 'открыть'}
+              </button>
+              <button
+                type="button"
+                disabled={d.open && !d.locked}
+                onClick={() => props.onLock(d.id, !d.locked)}
+              >
+                {d.locked ? 'Отпереть' : 'Запереть'}
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

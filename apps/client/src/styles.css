@@ -1137,3 +1137,43 @@ kbd {
 .app:not(.show-details) .detail {
   display: none !important;
 }
+
+/* Clicked route (step 2): committed points and legs. */
+.route {
+  pointer-events: none;
+}
+.route polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.08;
+  stroke-linejoin: round;
+}
+.route circle {
+  fill: var(--accent);
+}
+.fall-hint {
+  fill: var(--warning, #e0a040);
+  font-size: 0.45px;
+  font-weight: 700;
+  pointer-events: none;
+}
+.note-warning {
+  border-left: 3px solid var(--accent);
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 6px;
+}
+.route-box {
+  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  padding-top: 8px;
+}
+.door-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.door-list .row {
+  flex-wrap: wrap;
+}

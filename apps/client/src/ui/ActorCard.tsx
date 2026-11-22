@@ -113,7 +113,7 @@ export function ActorCard({
         <h3>Токен на карте</h3>
         <dl className="facts">
           <div>
-            <dt>Занимает клеток (площадь, задаёт ведущий)</dt>
+            <dt>Площадь токена по Размеру</dt>
             <dd>
               {setup ? (
                 <select
@@ -136,8 +136,7 @@ export function ActorCard({
           </div>
         </dl>
         <p className="muted small detail">
-          Канонический {field('Особенности:')?.formattedValue ?? 'Размер'} — отдельная черта
-          профиля; связь Размера с числом клеток таблицами не задана.
+          Размер 0 и меньше — 1 × 1, Размер 1 — 2 × 2, Размер 2 — 3 × 3 (решение автора 12).
         </p>
       </section>
 

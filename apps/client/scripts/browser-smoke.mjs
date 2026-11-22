@@ -890,10 +890,10 @@ check((await toast()).includes('заняты'), 'overlapping drop rejected');
 const kelus0 = await tokenPosition('kelus-drakar');
 check(kelus0.x === 5.5 && kelus0.y === 10.5, 'Kelus stays in his cell');
 
-// 1c. Pak takes a 2-cell area (GM setting, setup only).
+// 1c. Pak takes the 2 × 2 area of Размер 1 (setup only, author ruling 12).
 await page.getByRole('tab', { name: 'Пак' }).click();
-await page.getByLabel('Площадь токена').selectOption('2x1');
-check((await occupiedCells('pak')) === 2, 'size-2 token occupies two cells');
+await page.getByLabel('Площадь токена').selectOption('2x2');
+check((await occupiedCells('pak')) === 4, 'Размер 1 token occupies 2 × 2 cells');
 await page.getByRole('tab', { name: 'Келус' }).click();
 
 // 2. Start combat.
@@ -997,10 +997,46 @@ check(journal >= 7, `journal lists ${journal} entries`);
   await page.locator('.mode').nth(1).click(); // deselect
   await page.locator('.mode').nth(2).click(); // full move
   await click(4.5, 15.5);
-  check(await toastWith('Ждёт решения автора'), 'stand: mud waits for the author');
-  check((await od()) === 2, 'stand: mud refusal spends no OD');
-  check((await tokenPosition('kelus-drakar')).x === 6.5, 'stand: Kelus stays in place');
+  check(
+    (await tokenPosition('kelus-drakar')).y === 15.5 &&
+      (await page.textContent('.log-line')).includes('трудная местность'),
+    'stand: walking into mud costs double and is allowed (ruling 11)',
+  );
+  check((await od()) === 0, 'stand: full move spent both OD');
   await page.screenshot({ path: `${out}/04b-stage3-stand.png` });
+
+  // Step 2: Pak walks a clicked route and opens the door for his Free Action.
+  await page.getByRole('button', { name: 'Передать ход' }).click();
+  await page.getByRole('tab', { name: 'Пак' }).click();
+  await page.getByRole('tab', { name: 'Движение' }).click();
+  await page.locator('.mode').nth(1).click(); // half move, 4 m
+  await page.getByLabel(/Маршрут по точкам/).check();
+  await click(16.5, 12.5);
+  await click(18.5, 12.5);
+  check(
+    (await page.textContent('[data-testid="route-summary"]')).includes('путь 4.00 м'),
+    'route: two clicked points, 4 m shown',
+  );
+  check(
+    (await page.locator('[data-testid="route"] circle').count()) === 2,
+    'route drawn on the map',
+  );
+  await page.getByRole('button', { name: 'Идти' }).click();
+  const pakAt = await tokenPosition('pak');
+  check(pakAt.x === 18.5 && pakAt.y === 12.5, 'route: Pak walked to the last point');
+  check((await od()) === 1, 'route: Полудвижение spent 1 OD');
+  await page.locator('[data-testid="doors-panel"] summary').click();
+  await page.getByRole('button', { name: 'Пак: открыть (СД)' }).click();
+  check(
+    (await page.locator('[data-door]').getAttribute('data-open')) === 'true',
+    'doors: Pak opened the door for the Free Action from afar',
+  );
+  check((await od()) === 1, 'doors: the Free Action costs no OD');
+  await page.getByRole('button', { name: 'Ведущий: закрыть' }).click();
+  check(
+    (await page.locator('[data-door]').getAttribute('data-open')) === 'false',
+    'doors: the GM closes it at any moment',
+  );
   await page.getByRole('tab', { name: 'Атака' }).click();
   check(
     (await page.textContent('.actions')).includes('линия атаки проходит через'),

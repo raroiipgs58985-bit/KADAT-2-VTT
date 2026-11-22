@@ -5,6 +5,10 @@ import {
   attack,
   cancelUnstarted,
   moveActor,
+  getEngine,
+  placeFallen,
+  setDoorLocked,
+  doorLocked,
   movementOptions,
   nextTurn,
   placeActor,
@@ -18,7 +22,7 @@ import {
   type MoveMode,
 } from './game/engine';
 import type { JournalTone } from './game/journal';
-import { createBattle, ids, weapons, type ActorId } from './game/model';
+import { actor, createBattle, ids, planRoute, weapons, type ActorId } from './game/model';
 import type { FloorColorId } from './game/map';
 import type { Point } from './game/grid';
 import {
@@ -80,6 +84,7 @@ import {
 import { EditorPanel, toolList } from './ui/EditorPanel';
 import { ActorCard } from './ui/ActorCard';
 import {
+  DoorsPanel,
   AttackPanel,
   CombatLog,
   DicePanel,
@@ -122,7 +127,13 @@ export function App() {
   const info = useMemo(() => turnInfo(battle), [battle, version]);
   const [selected, setSelected] = useState<ActorId>(info.active);
   const [tab, setTab] = useState<'move' | 'attack'>('move');
-  const [moveMode, setMoveMode] = useState<MoveMode | null>(null);
+  const [moveMode, setMoveModeRaw] = useState<MoveMode | null>(null);
+  /** Clicked route points (author ruling 8); null — a click moves at once. */
+  const [route, setRoute] = useState<Point[] | null>(null);
+  const setMoveMode = (m: MoveMode | null) => {
+    setMoveModeRaw(m);
+    setRoute(null);
+  };
   const [form, setForm] = useState<AttackForm>(() => defaultAttack(info.active));
   const [dice, setDice] = useState<DiceSettings>({
     mode: 'random',
@@ -330,8 +341,11 @@ export function App() {
           modeLabel: chosen.label,
           maxDistance: chosen.maxDistance,
           sceneRevision: previewRevision,
+          route,
         }
       : null;
+  const routePlan = moveIntent && route && route.length ? planRoute(battle, selected, route) : null;
+  const fallActor = getEngine(battle).pendingFall?.actor ?? null;
 
   const source = () =>
     dice.mode === 'fixed'
@@ -348,19 +362,31 @@ export function App() {
       setToast(commandFeedback(before, combatStore.getSnapshot().battle.log, error));
     }
   };
-  const onMove = (id: ActorId, x: number, y: number, revision: number = previewRevision) => {
+  const onMove = (
+    id: ActorId,
+    x: number,
+    y: number,
+    revision: number = previewRevision,
+    points?: Point[],
+  ) => {
     if (!moveMode) {
       setToast({ text: 'Сначала выберите режим движения.', tone: 'warning' });
       return;
     }
     run((b) =>
-      moveActor(b, {
-        id: commandId('move'),
-        actor: id,
-        mode: moveMode,
-        to: { x, y },
-        sceneRevision: revision,
-      }),
+      moveActor(
+        b,
+        {
+          id: commandId('move'),
+          actor: id,
+          mode: moveMode,
+          to: { x, y },
+          ...(points ? { route: points } : {}),
+          sceneRevision: revision,
+        },
+        // Running across difficult terrain rolls ЛВ tests (rulings 11, 43).
+        source(),
+      ),
     );
     setMoveMode(null);
   };
@@ -613,6 +639,9 @@ export function App() {
             floorColour={colour}
             onSelect={setSelected}
             onMove={onMove}
+            onRoutePoint={(p) => setRoute((r) => [...(r ?? []), p])}
+            fallActor={mode === 'combat' ? fallActor : null}
+            onPlaceFall={(id, p) => run((b) => placeFallen(b, id, p))}
             onPlace={(id, x, y) => run((b) => placeActor(b, id, x, y))}
             onDraftPlace={(id, x, y) =>
               edit((d) => placeToken(d, id, { x, y }, battle.positions[id]))
@@ -749,7 +778,7 @@ export function App() {
               onNewObstacle={setNewObstacle}
               onUpdateDoor={(id, patch) => editMap((m) => updateDoor(m, id, patch))}
               onUpdateObstacle={(id, patch) => editMap((m) => updateObstacle(m, id, patch))}
-              onUpdateZone={(id, label) => editMap((m) => updateZone(m, id, label))}
+              onUpdateZone={(id, patch) => editMap((m) => updateZone(m, id, patch))}
               onDeleteObject={(o) => {
                 if (o.kind === 'wall') editMap((m) => removeWall(m, o.id));
                 else if (o.kind === 'door') editMap((m) => removeDoor(m, o.id));
@@ -805,6 +834,12 @@ export function App() {
                   Бой не начат: расставьте токены и нажмите «Начать бой».
                 </p>
               )}
+              {fallActor && (
+                <p className="note-warning" data-testid="fall-note">
+                  {actor(fallActor).name} упал на трудной местности. Щёлкните на карте клетку, где
+                  он лежит.
+                </p>
+              )}
               {info.started && selected !== info.active && (
                 <p className="muted small">
                   Выбран персонаж не в свой ход — действия доступны только активному участнику.
@@ -821,6 +856,28 @@ export function App() {
                   posture={actorStatus(battle, selected).posture}
                   footprint={battle.footprints[selected]}
                   mapSize={battle.map}
+                  route={route}
+                  routePlan={
+                    routePlan
+                      ? {
+                          meters: routePlan.meters,
+                          difficult: routePlan.difficult,
+                          cost: routePlan.cost,
+                          reason: routePlan.problem
+                            ? routePlan.problem.reason
+                            : chosen && routePlan.cost > (chosen.maxDistance ?? 0) + 1e-9
+                              ? 'Не хватает дистанции для этого режима'
+                              : null,
+                        }
+                      : null
+                  }
+                  onRouteMode={(on) => setRoute(on ? [] : null)}
+                  onRouteUndo={() => setRoute((r) => (r ? r.slice(0, -1) : r))}
+                  onRouteGo={() => {
+                    if (!route?.length) return;
+                    const last = route.at(-1)!;
+                    onMove(selected, last.x, last.y, previewRevision, route);
+                  }}
                   onStand={() =>
                     run((b) => standUp(b, { id: commandId('stand'), actor: selected }))
                   }
@@ -853,6 +910,22 @@ export function App() {
                 />
               )}
             </section>
+          )}
+          {!editing && (
+            <DoorsPanel
+              doors={battle.map.doors.map((d, i) => ({
+                id: d.id,
+                label: `Дверь ${i + 1} (${d.from.x}; ${d.from.y})`,
+                open: battle.doors[d.id] ?? d.open,
+                locked: doorLocked(battle, d.id),
+              }))}
+              combat={info.started}
+              activeName={actor(info.active).name}
+              canAct={info.turnActive && !busy && !fallActor}
+              onCharacter={(id, open) => run((b) => setDoorOpen(b, id, open, info.active))}
+              onGm={(id, open) => run((b) => setDoorOpen(b, id, open))}
+              onLock={(id, locked) => run((b) => setDoorLocked(b, id, locked))}
+            />
           )}
           {!editing && details && <DicePanel dice={dice} onChange={setDice} />}
           <CombatLog battle={battle} />

@@ -394,9 +394,13 @@ export const addZone = (m: MapDocument, z: TerrainZone): MapDocument => ({
   ...m,
   zones: [...m.zones, z],
 });
-export const updateZone = (m: MapDocument, id: string, label: string): MapDocument => ({
+export const updateZone = (
+  m: MapDocument,
+  id: string,
+  patch: Partial<Pick<TerrainZone, 'label' | 'modifier'>>,
+): MapDocument => ({
   ...m,
-  zones: m.zones.map((x) => (x.id === id ? { ...x, label } : x)),
+  zones: m.zones.map((x) => (x.id === id ? { ...x, ...patch } : x)),
 });
 export const removeZone = (m: MapDocument, id: string): MapDocument => ({
   ...m,

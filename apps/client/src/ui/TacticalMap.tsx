@@ -13,7 +13,7 @@ import {
   actor,
   destinationsWithin,
   ids,
-  movementProblem,
+  planRoute,
   placementProblemFor,
   type ActorId,
   type Battle,
@@ -49,6 +49,8 @@ export interface MoveIntent {
   maxDistance: number;
   /** Scene revision the highlight and hint were computed on. */
   sceneRevision: number;
+  /** Route mode: clicks add points instead of moving at once (author ruling 8). */
+  route: Point[] | null;
 }
 interface Props {
   battle: Battle;
@@ -69,6 +71,11 @@ interface Props {
   floorColour: FloorColorId;
   onSelect: (id: ActorId) => void;
   onMove: (id: ActorId, x: number, y: number, previewRevision?: number) => void;
+  /** Route mode: a clicked point is appended to the route. */
+  onRoutePoint: (p: Point) => void;
+  /** A runner fell: the GM clicks where they lie (author ruling 42). */
+  fallActor: ActorId | null;
+  onPlaceFall: (id: ActorId, p: Point) => void;
   onPlace: (id: ActorId, x: number, y: number) => void;
   onDraftPlace: (id: ActorId, x: number, y: number) => void;
   onPaint: (cells: Cell[], colour: FloorColorId | null) => void;
@@ -228,9 +235,13 @@ export function TacticalMap(props: Props) {
 
   // Cell-aligned destinations within the Core distance for the moving token's area.
   const destinations = useMemo(
-    () => (moveIntent ? destinationsWithin(battle, moveIntent.actor, moveIntent.maxDistance) : []),
+    () =>
+      // In route mode the straight-line reach from the start would mislead: no highlight.
+      moveIntent && !moveIntent.route
+        ? destinationsWithin(battle, moveIntent.actor, moveIntent.maxDistance)
+        : [],
     // `battle` is mutated in place; `version` makes the highlight follow every change.
-    [battle, version, moveIntent?.actor, moveIntent?.maxDistance],
+    [battle, version, moveIntent?.actor, moveIntent?.maxDistance, moveIntent?.route === null],
   );
   const destinationKeys = useMemo(
     () => new Set(destinations.map((d) => `${d.x}:${d.y}`)),
@@ -295,7 +306,8 @@ export function TacticalMap(props: Props) {
   };
   const onBackgroundDown = (e: ReactPointerEvent) => {
     const p = toMap(e.clientX, e.clientY);
-    if (mode === 'placement') {
+    // The GM toggles a door by a click in setup and at any moment in combat (ruling 10).
+    if (mode === 'placement' || (mode === 'combat' && !moveIntent && !props.fallActor)) {
       const door = (e.target as Element).closest('[data-door]');
       if (door) {
         props.onToggleDoor(door.getAttribute('data-door')!);
@@ -375,7 +387,7 @@ export function TacticalMap(props: Props) {
         });
       return;
     }
-    if (moveIntent) return; // A click chooses the destination (handled on pointer up).
+    if (moveIntent || props.fallActor) return; // A click chooses a point (on pointer up).
     if (zoom === MIN_ZOOM) return;
     svg.current!.setPointerCapture(e.pointerId);
     setDrag({ kind: 'pan', pointer: e.pointerId, start: { x: e.clientX, y: e.clientY }, center });
@@ -456,11 +468,17 @@ export function TacticalMap(props: Props) {
       setDrag(null);
       return;
     }
+    if (props.fallActor) {
+      const p = toMap(e.clientX, e.clientY);
+      if (inMap(p)) props.onPlaceFall(props.fallActor, snapFor(props.fallActor, p));
+      return;
+    }
     if (moveIntent && (e.target as Element).closest('[data-actor]') === null) {
       const p = toMap(e.clientX, e.clientY);
       if (!inMap(p)) return;
       const target = snapFor(moveIntent.actor, p);
-      props.onMove(moveIntent.actor, target.x, target.y, moveIntent.sceneRevision);
+      if (moveIntent.route) props.onRoutePoint(target);
+      else props.onMove(moveIntent.actor, target.x, target.y, moveIntent.sceneRevision);
     }
   };
 
@@ -472,20 +490,30 @@ export function TacticalMap(props: Props) {
       : moveIntent && hover && !drag && inMap(hover)
         ? snapFor(moveIntent.actor, hover)
         : null;
-  const ghostFrom = ghostActor ? positions[ghostActor] : null;
-  const ghostDistance = ghost && ghostFrom ? distance(ghost, ghostFrom) : 0;
+  const routeSoFar = moveIntent?.route ?? null;
+  const ghostFrom = ghostActor ? (routeSoFar?.at(-1) ?? positions[ghostActor]) : null;
+  const ghostPlan =
+    ghost && ghostActor && moveIntent && mode === 'combat'
+      ? planRoute(battle, ghostActor, [...(routeSoFar ?? []), ghost])
+      : null;
+  const ghostDistance = ghostPlan
+    ? ghostPlan.cost
+    : ghost && ghostFrom
+      ? distance(ghost, ghostFrom)
+      : 0;
   // The same movement check as execution, worded by outcome for the GM.
   const ghostProblem = (() => {
     if (!ghost || !ghostActor || mode === 'editor') return null;
     if (mode === 'placement') return placementProblemFor(battle, ghostActor, ghost);
-    if (!moveIntent || destinationKeys.has(`${ghost.x}:${ghost.y}`)) return null;
-    if (ghostDistance === 0) return 'текущая позиция';
-    const problem = movementProblem(battle, ghostActor, ghost);
+    if (!moveIntent || !ghostPlan) return null;
+    if (!routeSoFar && destinationKeys.has(`${ghost.x}:${ghost.y}`)) return null;
+    if (ghostFrom && ghost.x === ghostFrom.x && ghost.y === ghostFrom.y) return 'текущая позиция';
+    const problem = ghostPlan.problem;
     if (problem?.kind === 'position') return `некуда поставить: ${problem.reason}`;
-    // Same order as execution: out of reach first, then path barriers and rule questions.
-    if (ghostDistance > moveIntent.maxDistance + 1e-9) return 'вне бюджета Core';
-    if (problem?.kind === 'blocked') return `нет пути: ${problem.blocker.label}`;
-    return problem ? 'нужно решение автора' : null;
+    // Same order as execution: out of reach first, then path barriers.
+    if (ghostPlan.cost > moveIntent.maxDistance + 1e-9) return 'не хватает дистанции';
+    if (problem) return `нет пути: ${problem.blocker.label}`;
+    return null;
   })();
   const showGhost =
     ghost && ghostActor && ghostFrom && (ghost.x !== ghostFrom.x || ghost.y !== ghostFrom.y);
@@ -567,9 +595,13 @@ export function TacticalMap(props: Props) {
                             : 'Кисть: проведите по клеткам; Escape — отмена'
       : mode === 'placement'
         ? 'Расстановка: перетаскивайте токены по клеткам; щелчок по двери открывает или закрывает её'
-        : moveIntent
-          ? `«${moveIntent.modeLabel}»: щёлкните подсвеченную клетку или перетащите токен`
-          : 'Щёлкните токен, чтобы выбрать персонажа';
+        : props.fallActor
+          ? 'Персонаж упал: щёлкните клетку, где он лежит'
+          : moveIntent?.route
+            ? `«${moveIntent.modeLabel}», маршрут: щёлкайте точки по порядку, затем «Идти»`
+            : moveIntent
+              ? `«${moveIntent.modeLabel}»: щёлкните подсвеченную клетку или перетащите токен`
+              : 'Щёлкните токен, чтобы выбрать персонажа';
 
   return (
     <div className="map-shell">
@@ -818,7 +850,7 @@ export function TacticalMap(props: Props) {
             return (
               <g
                 key={d.id}
-                className={`door ${open ? 'open' : 'closed'} ${isSelected('door', d.id) ? 'selected' : ''} ${mode === 'placement' ? 'toggle' : ''}`}
+                className={`door ${open ? 'open' : 'closed'} ${isSelected('door', d.id) ? 'selected' : ''} ${mode !== 'editor' ? 'toggle' : ''}`}
                 data-door={d.id}
                 data-open={open}
                 data-object-kind="door"
@@ -923,6 +955,28 @@ export function TacticalMap(props: Props) {
           </g>
         )}
 
+        {moveIntent && routeSoFar && routeSoFar.length > 0 && (
+          <g className="route" data-testid="route">
+            <polyline
+              points={[positions[moveIntent.actor], ...routeSoFar]
+                .map((p) => `${p.x},${p.y}`)
+                .join(' ')}
+            />
+            {routeSoFar.map((p, i) => (
+              <circle key={i} cx={p.x} cy={p.y} r={0.18} />
+            ))}
+          </g>
+        )}
+        {props.fallActor && (
+          <text
+            className="fall-hint"
+            x={positions[props.fallActor].x}
+            y={positions[props.fallActor].y - 0.8}
+            textAnchor="middle"
+          >
+            Щёлкните, где упал
+          </text>
+        )}
         {showGhost && ghost && ghostActor && ghostFrom && (
           <g className={`ghost ${ghostProblem ? 'invalid' : 'valid'}`} data-testid="ghost">
             <line x1={ghostFrom.x} y1={ghostFrom.y} x2={ghost.x} y2={ghost.y} />
@@ -939,6 +993,7 @@ export function TacticalMap(props: Props) {
               y={ghost.y - battle.footprints[ghostActor].height / 2 - 0.25}
               textAnchor="middle"
             >
+              {ghostPlan && ghostPlan.difficult > 0 ? 'стоит ' : ''}
               {fmt(ghostDistance)}
               {moveIntent ? ` / ${fmt(moveIntent.maxDistance)}` : ''} м
               {ghostProblem ? ` — ${ghostProblem}` : ''}
