@@ -109,3 +109,9 @@ export {
   type ReloadRequest,
   type ReloadResult,
 } from './weapon-actions.js';
+export {
+  MELEE_CONDITIONS,
+  RANGED_CONDITIONS,
+  conditionModifiers,
+  type CombatCondition,
+} from './combat-conditions.js';

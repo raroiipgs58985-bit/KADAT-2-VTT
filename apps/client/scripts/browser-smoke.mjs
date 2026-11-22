@@ -908,8 +908,9 @@ check(
 const modes = await page.locator('.move-modes li').allTextContents();
 check(modes[1].includes('4 м') && modes[2].includes('8 м'), 'Core distances 4 m / 8 m shown');
 check(
-  (await page.locator('.move-modes li').nth(3).textContent()).includes('Ждёт подтверждения автора'),
-  'Run is blocked pending the author',
+  (await page.locator('.move-modes li').nth(3).textContent()).includes('24 м') &&
+    (await page.locator('.move-modes li').nth(4).textContent()).includes('48 м'),
+  'Run 24 m and Sprint 48 m enabled (author ruling 1)',
 );
 
 // 4. Choose Полудвижение and click a highlighted cell (the click point snaps to its centre).

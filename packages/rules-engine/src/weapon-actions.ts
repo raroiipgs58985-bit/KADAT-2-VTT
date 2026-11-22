@@ -106,9 +106,16 @@ export function reloadWeapon(
   const context = scopedContext(state, request.actor, request.context, [], ['action:reload']);
   const spent = spendResources(state, request, definition('reload', spend), context, 'own-turn');
   const done = progress + spend >= required;
-  const nextWeapon: WeaponInstance = done
-    ? (({ reloadProgress: _p, ...rest }) => ({ ...rest, loadedContainerId: container.id }))(weapon)
-    : { ...weapon, reloadProgress: { containerId: container.id, odSpent: progress + spend } };
+  let nextWeapon: WeaponInstance;
+  if (done) {
+    const loaded = { ...weapon, loadedContainerId: container.id };
+    delete (loaded as { reloadProgress?: unknown }).reloadProgress;
+    nextWeapon = loaded;
+  } else
+    nextWeapon = {
+      ...weapon,
+      reloadProgress: { containerId: container.id, odSpent: progress + spend },
+    };
   const next = { ...spent.state, weapons: { ...spent.state.weapons, [weapon.id]: nextWeapon } };
   const execution = {
     ...spent.execution,
