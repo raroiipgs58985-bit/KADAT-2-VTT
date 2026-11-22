@@ -50,7 +50,7 @@ export function planFatigueGain(
       },
     },
   };
-  let blocked = false;
+  const blocked = false;
   if (gain.appliedFatigueGain > 0 && gain.fatigueAfter > bVN + bSV) {
     const roll = rollDie(10, source),
       amount = roll.value - bSV;

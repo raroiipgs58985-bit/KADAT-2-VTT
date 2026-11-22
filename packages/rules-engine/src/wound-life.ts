@@ -18,8 +18,8 @@ export function planDeath(
   destroyed: 'HEAD' | 'TORSO' | null,
 ) {
   integer(bVN, 'Agony bVN', 0);
-  let next = state,
-    blocked = false;
+  let next = state;
+  const blocked = false;
   const wound = state.actors[actor.actorId]!,
     round = state.combat.session.roundNumber;
   if (wound.life.status === 'DEAD') return { state, blocked: false };

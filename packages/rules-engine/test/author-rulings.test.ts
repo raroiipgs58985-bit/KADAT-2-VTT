@@ -12,7 +12,8 @@ import {
 } from '../src/index.js';
 import { action, b1State, dice } from './b1-fixtures.js';
 import { meleeState } from './b2-fixtures.js';
-import { context } from './fixtures.js';
+import { context, provenance } from './fixtures.js';
+import { woundEffect } from '../src/wound-state.js';
 
 const ctx = (actorId: string) => context({ actor: { actorId } });
 const withActor = (
@@ -23,21 +24,8 @@ const withActor = (
   ...state,
   actors: { ...state.actors, [id]: { ...state.actors[id]!, ...patch } },
 });
-const movementEffect = (value: number, actorId = 'A'): EffectInstance => ({
-  id: `wound:${value}`,
-  source: { kind: 'test', id: 'wound' },
-  targetActor: { actorId },
-  provenance: { source: { kind: 'test', id: 'wound' }, reason: 'test' },
-  definition: {
-    id: `wound:${value}`,
-    target: { kind: 'combat-modifier', key: 'movement' },
-    operation: 'add',
-    value,
-    stage: 'temporary',
-    source: { kind: 'test', id: 'wound' },
-    provenance: { source: { kind: 'test', id: 'wound' }, reason: 'test' },
-  } as EffectInstance['definition'],
-});
+const movementEffect = (value: number, actorId = 'A'): EffectInstance =>
+  woundEffect(`wound:${value}`, { actorId }, 'movement', value, provenance);
 
 describe('Super-characteristic — «Общая механика» C5, ruling 18', () => {
   test('+1 degree only for each full 2: Super 1 → 0, Super 3 → +1', () => {
