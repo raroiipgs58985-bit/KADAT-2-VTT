@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import type { ConditionInstance } from '@kadat/contracts';
 import {
   applyStunned,
@@ -239,19 +239,35 @@ describe('CombatSession, rounds and Stunned', () => {
     expect(startTurn(rebuilt.result).result.activeActor?.actorId).toBe('Newcomer');
   });
 
-  test('equal initiative totals retain explicit input order without a invented tie-break rule', () => {
+  test('equal initiative: the tied reroll 1к10, still tied reroll again (author ruling 23)', () => {
+    // All four roll 5. Tie rolls: Kelus 3, Servitor 8, Apricot 3, Alyosha 1;
+    // Kelus and Apricot tie again on 3 and reroll: Kelus 2, Apricot 9.
     const tied = createCombatSession(
       'id',
       'release',
       participants(),
-      createSequenceDice([5, 5, 5, 5].map((value) => ({ sides: 10, value }))),
+      createSequenceDice([5, 5, 5, 5, 3, 8, 3, 1, 2, 9].map((value) => ({ sides: 10, value }))),
     );
     expect(tied.result.initiativeOrder.map((entry) => entry.actor.actorId)).toEqual([
-      'Kelus',
       'Servitor',
       'Apricot',
+      'Kelus',
       'Alyosha',
     ]);
+    expect(tied.result.initiativeOrder[1]!.tieRolls!.map((r) => r.value)).toEqual([3, 9]);
+  });
+
+  test('no tie — no extra die is consumed', () => {
+    const roll = vi.fn();
+    const dice = createSequenceDice([10, 6, 3, 1].map((value) => ({ sides: 10, value })));
+    const order = createCombatSession('id', 'release', participants(), {
+      roll: (sides) => {
+        roll();
+        return dice.roll(sides);
+      },
+    });
+    expect(roll).toHaveBeenCalledTimes(4);
+    expect(order.result.initiativeOrder.every((e) => e.tieRolls === undefined)).toBe(true);
   });
 
   test('invalid round/turn transitions are rejected', () => {

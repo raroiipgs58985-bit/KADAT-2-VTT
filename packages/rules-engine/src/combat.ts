@@ -73,8 +73,7 @@ function initiative(
   source: DiceSource,
 ): readonly InitiativeEntry[] {
   validateParticipants(participants);
-  // Equal totals preserve caller order. No unapproved gameplay tie-break is introduced.
-  return participants
+  const rolled: InitiativeEntry[] = participants
     .map((participant) => {
       const roll = rollDie(10, source);
       return {
@@ -86,6 +85,38 @@ function initiative(
       };
     })
     .sort((a, b) => b.initiative - a.initiative);
+  return breakTies(rolled, source);
+}
+
+/**
+ * Equal initiative: the tied participants reroll 1к10 among themselves, higher goes first;
+ * rerolls repeat for those still tied (author ruling 23). Without ties no die is consumed.
+ */
+function breakTies(entries: InitiativeEntry[], source: DiceSource): InitiativeEntry[] {
+  const out: InitiativeEntry[] = [];
+  for (let i = 0; i < entries.length;) {
+    let j = i + 1;
+    while (j < entries.length && entries[j]!.initiative === entries[i]!.initiative) j++;
+    out.push(...(j - i > 1 ? orderTied(entries.slice(i, j), source) : [entries[i]!]));
+    i = j;
+  }
+  return out;
+}
+function orderTied(group: InitiativeEntry[], source: DiceSource): InitiativeEntry[] {
+  const rolled = group.map((entry) => {
+    const roll = rollDie(10, source);
+    return { entry: { ...entry, tieRolls: [...(entry.tieRolls ?? []), roll] }, value: roll.value };
+  });
+  rolled.sort((a, b) => b.value - a.value);
+  const out: InitiativeEntry[] = [];
+  for (let i = 0; i < rolled.length;) {
+    let j = i + 1;
+    while (j < rolled.length && rolled[j]!.value === rolled[i]!.value) j++;
+    const same = rolled.slice(i, j).map((r) => r.entry);
+    out.push(...(same.length > 1 ? orderTied(same, source) : same));
+    i = j;
+  }
+  return out;
 }
 
 export function createCombatSession(

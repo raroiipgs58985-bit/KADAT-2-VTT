@@ -7,17 +7,18 @@ export const rulings = {
   hotshotBlockCapacity: 250,
   pakDamageIncludesStrengthAndChain: true,
   chainArmorLoss: 'effective-penetration',
-  chainTiming: null as 'before' | 'after' | null,
+  /** «Цепное»: ОБ снимается сразу, урон этого удара — по уменьшенной броне (решение 16). */
+  chainTiming: 'before' as 'before' | 'after' | null,
   /**
    * Бег/Спринт. Механика / Бой: Бег СКР×6, Спринт СКР×12 (as the accepted Core does).
    * Общая механика / Движение в режиме боя lists ½ / ×1 / ×2 / Натиск ×3 / Бег ×6, so profile
    * cells such as 4/8/12/24 read as Полу / Полное / Натиск / Бег and agree. The earlier
-   * reading of a conflict was mistaken; both modes stay off until the author confirms.
+   * reading of a conflict was mistaken. Confirmed by the author (ruling 1).
    */
-  runSprintDistances: null as 'mechanics' | 'profiles' | null,
+  runSprintDistances: 'mechanics' as 'mechanics' | 'profiles' | null,
   /**
    * «2 ОД + СД»: whether more than one Свободное движение is allowed per turn. The accepted
-   * Core does not count free moves; the client blocks a repeat until the author decides.
+   * Core now allows one Free Action per turn (ruling 24), which covers this.
    */
-  freeMovesPerTurn: null as number | 'unlimited' | null,
+  freeMovesPerTurn: 1 as number | 'unlimited' | null,
 } as const;

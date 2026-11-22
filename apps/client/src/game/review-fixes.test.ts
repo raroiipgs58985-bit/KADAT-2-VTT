@@ -4,16 +4,7 @@ import type { EffectInstance } from '@kadat/contracts';
 // for wound consequences, so the client boundary is checked against the real shape.
 import { woundEffect } from '../../../../packages/rules-engine/src/wound-state.js';
 import { createBattle, type ActorId, type Battle } from './model';
-import {
-  getEngine,
-  moveActor,
-  movementOptions,
-  RuleDecisionRequired,
-  standUp,
-  startCombat,
-  turnInfo,
-  woundMovementBoundary,
-} from './engine';
+import { getEngine, moveActor, movementOptions, standUp, startCombat, turnInfo } from './engine';
 import { exportReplay, importReplay } from './replay';
 import { fixedDice } from './dice';
 import { commandFeedback } from '../ui/feedback';
@@ -55,20 +46,21 @@ let n = 0;
 const go = (b: Battle, mode: 'half-move' | 'free-move', x: number) =>
   moveActor(b, { id: `m${++n}`, actor: 'kelus-drakar', mode, to: { x: x + 0.5, y: 10.5 } });
 
-describe('Wound consequences the Core movement resolver does not read', () => {
-  it('a СКР penalty from an injury stops movement instead of granting full distance', () => {
+describe('Wound consequences now read by the Core movement (rulings 4, 15)', () => {
+  it('a СКР penalty reduces the distance: СКР 4 − 1 → Полудвижение 3 м', () => {
     const b = started();
     patchActor(b, 'kelus-drakar', {
       effects: [woundEffect('leg2', ref, 'movement', -1, provenance)],
     });
-    expect(woundMovementBoundary(b, 'kelus-drakar')).toMatch(/штраф к СКР \(-1\)/);
-    expect(movementOptions(b, 'kelus-drakar').every((o) => o.blockedBy === 'author')).toBe(true);
-    expect(() => go(b, 'half-move', 7)).toThrow(RuleDecisionRequired);
-    expect(b.positions['kelus-drakar']).toEqual({ x: 5.5, y: 10.5 });
+    expect(
+      movementOptions(b, 'kelus-drakar').find((o) => o.mode === 'half-move')?.maxDistance,
+    ).toBe(3);
+    expect(() => go(b, 'half-move', 9)).toThrow(/больше допустимой 3 м/);
     expect(turnInfo(b).od).toBe(2);
+    expect(go(b, 'half-move', 8).status).toBe('RESOLVED');
   });
 
-  it('an unusable leg stops movement', () => {
+  it('an unusable leg means crawling: СКР / 2, no Run or Sprint', () => {
     const b = started();
     const marker = woundEffect('leg:limb', ref, 'unusable-limb', 1, provenance);
     patchActor(b, 'kelus-drakar', {
@@ -84,11 +76,13 @@ describe('Wound consequences the Core movement resolver does not read', () => {
         },
       ],
     });
-    expect(woundMovementBoundary(b, 'kelus-drakar')).toMatch(/Нога бесполезна/);
-    expect(() => go(b, 'free-move', 6)).toThrow(RuleDecisionRequired);
+    const options = movementOptions(b, 'kelus-drakar');
+    expect(options.find((o) => o.mode === 'half-move')?.maxDistance).toBe(2);
+    expect(options.find((o) => o.mode === 'run')?.available).toBe(false);
+    expect(go(b, 'half-move', 7).status).toBe('RESOLVED');
   });
 
-  it('an unrelated arm restriction does not block movement', () => {
+  it('an unrelated arm restriction does not change movement', () => {
     const b = started();
     const marker = woundEffect('arm:limb', ref, 'unusable-limb', 1, provenance);
     patchActor(b, 'kelus-drakar', {
@@ -104,16 +98,16 @@ describe('Wound consequences the Core movement resolver does not read', () => {
         },
       ],
     });
-    expect(woundMovementBoundary(b, 'kelus-drakar')).toBeNull();
-    expect(go(b, 'half-move', 8).status).toBe('RESOLVED');
+    expect(go(b, 'half-move', 9).status).toBe('RESOLVED');
   });
 });
 
 describe('Prone and «Встать» through the Core', () => {
-  it('a prone actor cannot move, stands up for 1 OD, then moves', () => {
+  it('a prone actor crawls at СКР / 2, stands up for 1 OD, then moves', () => {
     const b = started();
     patchActor(b, 'kelus-drakar', { posture: 'prone' });
-    expect(() => go(b, 'half-move', 7)).toThrow(/лежит/);
+    expect(() => go(b, 'half-move', 8)).toThrow(/больше допустимой 2 м/);
+    expect(turnInfo(b).od).toBe(2);
     standUp(b, { id: 'stand-1', actor: 'kelus-drakar' });
     expect(getEngine(b).wounds.combat.actors['kelus-drakar']!.posture).toBe('standing');
     expect(turnInfo(b).od).toBe(1);

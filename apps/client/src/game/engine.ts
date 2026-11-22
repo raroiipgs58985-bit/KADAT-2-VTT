@@ -976,38 +976,16 @@ const coreMessages: [RegExp, string][] = [
   [/Reaction prohibited by effect/, 'Реакция запрещена активным эффектом'],
   [/Empty or repeated action ID/, 'Команда с таким ID уже исполнена'],
   [/Second attack requires/, 'В этом ходу атака уже была: разрешена одна атака за ход'],
+  [/Free Action already used/, 'Свободное действие (СД) в этом ходу уже использовано'],
+  [/unavailable while crawling/, 'Ползком Бег и Спринт недоступны'],
 ];
-const coreErrorPattern = /^(Insufficient|Unavailable|Action |Reaction |Empty or repeated)/;
+const coreErrorPattern =
+  /^(Insufficient|Unavailable|Action |Reaction |Empty or repeated|Free Action|Run and Sprint|Second attack)/;
 /** Russian explanation for Core validation errors; the original message is kept. */
 export function explainEngineError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const known = coreMessages.find(([pattern]) => pattern.test(message));
   return known ? `${known[1]} (Core: ${message})` : message;
-}
-/**
- * Wound consequences that the accepted movement resolver does not read. Core stores them as
- * runtime Effects (`combat-modifier: movement`, limb `uses-limb:*` restriction, Prone posture)
- * but `resolveCombatAction` derives distance from the raw СКР. Moving at full distance would
- * silently drop canonical consequences, so movement stops until the author decides.
- */
-export function woundMovementBoundary(b: Battle, actorId: ActorId): string | null {
-  const runtime = getEngine(b).wounds.combat.actors[actorId]!;
-  const penalties = runtime.effects.filter(
-    (e) => e.definition.target.kind === 'combat-modifier' && e.definition.target.key === 'movement',
-  );
-  if (penalties.length)
-    return `Ранение даёт штраф к СКР (${penalties.map((e) => e.definition.value).join(', ')}), но принятый Core не применяет его к дистанции движения. Нужно решение: подключить штраф в движок.`;
-  const leg = runtime.effects.some(
-    (e) =>
-      e.definition.target.kind === 'permission' &&
-      e.definition.operation === 'restrict' &&
-      (e.definition.condition?.requiresTags ?? []).some((t) => /^uses-limb:.*Leg$/.test(t)),
-  );
-  if (leg)
-    return 'Нога бесполезна после ранения: правило передвижения в этом состоянии не определено. Нужно решение автора.';
-  if (runtime.posture === 'prone')
-    return 'Персонаж лежит: передвижение лёжа в правилах не описано. Доступно действие «Встать» (1 ОД).';
-  return null;
 }
 function authorBoundary(state: EngineState, actorId: ActorId, mode: MoveMode): string | null {
   if ((mode === 'run' || mode === 'sprint') && rulings.runSprintDistances !== 'mechanics')
@@ -1048,7 +1026,7 @@ export function movementOptions(b: Battle, actorId: ActorId): MoveOption[] {
   return moveModes.map((m) => {
     try {
       movementGate(state, actorId);
-      const blocked = woundMovementBoundary(b, actorId) ?? authorBoundary(state, actorId, m.mode);
+      const blocked = authorBoundary(state, actorId, m.mode);
       if (blocked)
         return { ...m, available: false, maxDistance: null, reason: blocked, blockedBy: 'author' };
       const preview = resolveMove(state, `preview:${m.mode}`, actorId, m.mode);
@@ -1077,8 +1055,7 @@ export function moveActor(b: Battle, command: MoveCommand) {
     movementGate(state, command.actor);
     if (command.sceneRevision !== undefined && command.sceneRevision !== b.sceneRevision)
       throw new Error('Сцена изменилась после предпросмотра: выберите точку назначения заново');
-    const authorBlock =
-      woundMovementBoundary(b, command.actor) ?? authorBoundary(state, command.actor, command.mode);
+    const authorBlock = authorBoundary(state, command.actor, command.mode);
     if (authorBlock) throw new RuleDecisionRequired(authorBlock);
     const geometry = movementProblem(b, command.actor, { x, y });
     if (geometry?.kind === 'position')

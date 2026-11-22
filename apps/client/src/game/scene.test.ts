@@ -8,7 +8,6 @@ import {
   movementOptions,
   nextTurn,
   placeActor,
-  RuleDecisionRequired,
   startCombat,
   turnInfo,
   weaponSupport,
@@ -65,8 +64,9 @@ describe('Movement through the accepted Core', () => {
     expect(option(b, 'free-move')).toMatchObject({ available: true, maxDistance: 2 });
     expect(option(b, 'half-move')).toMatchObject({ available: true, maxDistance: 4 });
     expect(option(b, 'full-move')).toMatchObject({ available: true, maxDistance: 8 });
-    for (const mode of ['run', 'sprint'] as const)
-      expect(option(b, mode)).toMatchObject({ available: false, blockedBy: 'author' });
+    // Ruling 1: Бег СКР × 6, Спринт СКР × 12 («Бой» A44, A46).
+    expect(option(b, 'run')).toMatchObject({ available: true, maxDistance: 24 });
+    expect(option(b, 'sprint')).toMatchObject({ available: true, maxDistance: 48 });
   });
 
   it('spends OD, moves the token and logs the Core execution', () => {
@@ -103,28 +103,23 @@ describe('Movement through the accepted Core', () => {
     expect(b.positions['kelus-drakar']).toEqual({ x: 13.5, y: 10.5 });
   });
 
-  it('allows one free move without OD and blocks a repeat until the author decides', () => {
+  it('allows one free move without OD; the turn’s single Free Action blocks a repeat (ruling 24)', () => {
     const b = started();
     moveActor(b, step('kelus-drakar', 'free-move', 6.5, 10.5));
     expect(turnInfo(b).od).toBe(2);
-    expect(option(b, 'free-move')).toMatchObject({ available: false, blockedBy: 'author' });
+    expect(option(b, 'free-move')).toMatchObject({ available: false, blockedBy: 'engine' });
     expect(() => moveActor(b, step('kelus-drakar', 'free-move', 7.5, 10.5))).toThrow(
-      RuleDecisionRequired,
+      /Free Action already used/,
     );
     expect(b.positions['kelus-drakar']).toEqual({ x: 6.5, y: 10.5 });
-    expect(b.log.at(-1)).toMatchObject({
-      type: 'move-rejected',
-      detail: { authorDecisionRequired: true },
-    });
+    expect(b.log.at(-1)).toMatchObject({ type: 'move-rejected', detail: { committed: false } });
   });
 
-  it('never resolves Run or Sprint while their distances are unresolved', () => {
+  it('Run costs 2 OD and the Reaction (ruling 1, «Бой» A44)', () => {
     const b = started();
-    expect(() => moveActor(b, step('kelus-drakar', 'run', 6.5, 10.5))).toThrow(
-      RuleDecisionRequired,
-    );
-    expect(turnInfo(b).od).toBe(2);
-    expect(turnInfo(b).reactions['kelus-drakar']).toBe(1);
+    moveActor(b, step('kelus-drakar', 'run', 5.5, 2.5));
+    expect(turnInfo(b).od).toBe(0);
+    expect(turnInfo(b).reactions['kelus-drakar']).toBe(0);
   });
 
   it('only the active participant moves, and the turn passes through Core', () => {

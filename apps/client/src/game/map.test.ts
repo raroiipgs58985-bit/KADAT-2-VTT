@@ -253,15 +253,11 @@ describe('Replay and the map', () => {
     expect(importReplay(JSON.parse(JSON.stringify(replay))).map.floor).toEqual({ '1:1': 'green' });
   });
 
-  it('a saved v0.3 replay reproduces the same final state', () => {
-    const replayed = importReplay(legacyReplay);
-    expect({
-      positions: replayed.positions,
-      hp: replayed.hp,
-      ammo: replayed.ammo,
-      footprints: replayed.footprints,
-      logTypes: replayed.log.map((e) => e.type),
-    }).toEqual(legacyExpected);
+  it('a v0.3 replay recorded under earlier author rulings is refused clearly', () => {
+    // The rulings changed on 22.11.2026 (run, sprint, free action, chain): a replay made under
+    // the old ones cannot be reproduced faithfully, so it is refused instead of drifting.
+    void legacyExpected;
+    expect(() => importReplay(legacyReplay)).toThrow(/Решения автора в replay отличаются/);
   });
 
   it('refuses an unknown geometry rules version without replacing anything', () => {

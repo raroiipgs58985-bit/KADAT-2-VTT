@@ -48,6 +48,7 @@ export function resolveCombatAction(
     'quick-aim': 1,
     'careful-aim': 2,
     wait: 1,
+    'free-action': 0,
   };
   const cost = costs[request.type];
   if (cost === undefined) throw new Error('Action requires its dedicated resolver');
@@ -76,19 +77,25 @@ export function resolveCombatAction(
   validateResources(state, request, action, context, window);
   // Non-random actions never consume the supplied RNG.
   void source;
+  const speed = effectiveMovement(actor);
+  if (speed.crawling && (request.type === 'run' || request.type === 'sprint'))
+    throw new Error('Run and Sprint are unavailable while crawling');
+  const skr = speed.value;
   const distance =
     request.type === 'free-move'
-      ? Math.min(5, Math.ceil(actor.movement / 2))
+      ? Math.min(5, Math.ceil(skr / 2))
       : request.type === 'half-move'
-        ? actor.movement
+        ? skr
         : request.type === 'full-move'
-          ? actor.movement * 2
+          ? skr * 2
           : request.type === 'run'
-            ? actor.movement * 6
+            ? skr * 6
             : request.type === 'sprint'
-              ? actor.movement * 12
+              ? skr * 12
               : 0;
-  const fatigueAdded = request.type === 'sprint' ? 2 : 0;
+  // «Бой» A46: Sprint +2 Fatigue; talent «Спринт» — 1 (author ruling 26).
+  const fatigueAdded =
+    request.type === 'sprint' ? ((actor.talents ?? []).includes('Спринт') ? 1 : 2) : 0;
   integer(actor.fatigue + fatigueAdded, 'resulting fatigue', 0);
   if (!Number.isFinite(distance)) throw new RangeError('Invalid movement result');
   const posture =
@@ -150,6 +157,37 @@ export function resolveCombatAction(
   const execution = { ...spent.execution, mutations: [...spent.execution.mutations, mutation] };
   logs[0] = actionLog(state, execution);
   return { state: next, execution, result: { distance, fatigueAdded, posture }, logs };
+}
+
+/**
+ * Current СКР for movement: wound penalties (`combat-modifier: movement`) are subtracted first;
+ * a result of 0 or less counts as 0.5 m («Общая механика» A25). Prone or with a useless leg the
+ * character crawls: the same movement actions from СКР / 2, without Run and Sprint («Раны и
+ * лечение» A9, A14; author rulings 4 and 15). Halving is applied once.
+ */
+export function effectiveMovement(actor: CombatActionState['actors'][string]): {
+  readonly value: number;
+  readonly penalty: number;
+  readonly crawling: boolean;
+} {
+  const own = actor.effects.filter((e) => e.targetActor.actorId === actor.actor.actorId);
+  const penalty = own
+    .filter(
+      (e) =>
+        e.definition.target.kind === 'combat-modifier' && e.definition.target.key === 'movement',
+    )
+    .reduce((total, e) => total + e.definition.value, 0);
+  const uselessLeg = own.some(
+    (e) =>
+      e.definition.target.kind === 'permission' &&
+      e.definition.operation === 'restrict' &&
+      (e.definition.condition?.requiresTags ?? []).some((t) => /^uses-limb:.*Leg$/.test(t)),
+  );
+  const crawling = actor.posture === 'prone' || uselessLeg;
+  let value = actor.movement + penalty;
+  if (value <= 0) value = 0.5;
+  if (crawling) value = Math.max(0.5, value / 2);
+  return { value, penalty, crawling };
 }
 
 export function clearMalfunction(

@@ -18,7 +18,7 @@ export {
   beginActionRound,
   emptyActionContext,
 } from './action-state.js';
-export { resolveCombatAction, clearMalfunction } from './actions.js';
+export { resolveCombatAction, clearMalfunction, effectiveMovement } from './actions.js';
 export {
   activateOverwatch,
   orderOverwatchInterrupts,
@@ -98,3 +98,5 @@ export {
   resolveSuppressionTurnStart,
   beginSuppressionEquipmentTurn,
 } from './suppression-lifecycle.js';
+export { opposedMeleeCheck } from './melee-opposed.js';
+export { FREE_ACTION_TYPES, usesFreeAction } from './action-resources.js';

@@ -117,10 +117,7 @@ export function resolveMeleeOpposedAction(
   const won = opposed.result.winner?.actorId === request.actor.actorId;
   const distance =
     won && request.type === 'pressure'
-      ? Math.min(
-          opposed.result.attackerCheck.totalDegrees,
-          state.actors[request.target.actorId]!.movement,
-        )
+      ? Math.min(opposed.result.winnerDegrees ?? 0, state.actors[request.target.actorId]!.movement)
       : 0;
   if (won && request.type === 'feint')
     next = {

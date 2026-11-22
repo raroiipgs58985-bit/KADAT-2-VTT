@@ -34,6 +34,21 @@ export function definition(
   };
 }
 
+/**
+ * Actions paid with the turn's single Free Action («Бой» A5 «2 ОД + СД»; author ruling 24):
+ * Free Movement, lie down or kneel, change stance/grip, and a generic free action (e.g. a door).
+ */
+export const FREE_ACTION_TYPES: readonly ActionDefinition['type'][] = [
+  'free-move',
+  'prone',
+  'kneel',
+  'change-stance-grip',
+  'free-action',
+];
+export const usesFreeAction = (type: ActionDefinition['type']) => FREE_ACTION_TYPES.includes(type);
+const freeActionUsed = (state: CombatActionState) =>
+  state.session.turn?.flags.some((flag) => flag.startsWith('free-action:')) ?? false;
+
 export function reactionCount(state: CombatActionState, actorId: string): number {
   const entry = state.session.initiativeOrder.find(
     (candidate) => candidate.actor.actorId === actorId,
@@ -71,6 +86,8 @@ export function validateResources(
         ? (state.session.turn?.od ?? 0)
         : 0;
   if (availableOd < action.odCost) throw new Error('Insufficient OD');
+  if (window === 'own-turn' && usesFreeAction(action.type) && freeActionUsed(state))
+    throw new Error('Free Action already used this turn');
   if (reactionCount(state, request.actor.actorId) < action.reactionCost)
     throw new Error('Unavailable Reaction');
   const traces = resolveEffects(context);
@@ -154,9 +171,11 @@ export function spendResources(
         ...(window === 'own-turn'
           ? {
               od: odBefore - action.odCost,
-              flags: action.attack
-                ? [...state.session.turn.flags, `attack:${request.id}`]
-                : state.session.turn.flags,
+              flags: [
+                ...state.session.turn.flags,
+                ...(action.attack ? [`attack:${request.id}`] : []),
+                ...(usesFreeAction(action.type) ? [`free-action:${request.id}`] : []),
+              ],
             }
           : {}),
       }

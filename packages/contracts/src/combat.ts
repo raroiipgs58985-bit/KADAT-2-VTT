@@ -17,6 +17,8 @@ export interface CombatParticipant {
 export interface InitiativeEntry extends CombatParticipant {
   readonly roll: DiceRoll;
   readonly initiative: number;
+  /** 1к10 rerolls that ordered equal initiative (author ruling 23), in roll order. */
+  readonly tieRolls?: readonly DiceRoll[];
 }
 
 export interface TurnState {

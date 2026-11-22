@@ -23,7 +23,8 @@ export function planDeath(
   const wound = state.actors[actor.actorId]!,
     round = state.combat.session.roundNumber;
   if (wound.life.status === 'DEAD') return { state, blocked: false };
-  if (destroyed) {
+  // Author ruling 33: Agony of 2 × бВН = 0 rounds means death at once.
+  if (destroyed || (wound.life.status === 'ALIVE' && 2 * bVN === 0)) {
     next = planWoundCondition(
       next,
       actor,
@@ -42,31 +43,14 @@ export function planDeath(
             source: provenance.source,
             provenance,
             round,
-            reason: `Destroyed ${destroyed}`,
+            reason: destroyed ? `Destroyed ${destroyed}` : 'Agony of 0 rounds (бВН 0)',
           },
         },
       },
     };
   } else if (wound.life.status === 'ALIVE') {
     const durationRounds = 2 * bVN;
-    if (durationRounds === 0) {
-      blocked = true;
-      const intent = woundIntent(
-        `${actor.actorId}:zero-agony`,
-        'DurationInterpretationRequired',
-        actor,
-        provenance,
-        'Agony formula gives zero rounds; no substitute duration is inferred',
-        { duration: { unit: 'round', amount: 0 } },
-      );
-      next = {
-        ...next,
-        actors: {
-          ...next.actors,
-          [actor.actorId]: { ...wound, intents: [...wound.intents, intent] },
-        },
-      };
-    } else {
+    {
       integer(round + durationRounds - 1, 'Agony expiry', 1);
       next = planWoundCondition(
         next,

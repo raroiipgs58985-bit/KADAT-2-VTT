@@ -67,7 +67,7 @@ describe('characteristic resolution', () => {
       finalSuper: 5,
       normalBonus: 11,
       finalBonus: 16,
-      superSuccessDegrees: 3,
+      superSuccessDegrees: 2, // «+1 ст. за каждую 2-ку»: Сверх 5 → 2 (author ruling 18)
     });
   });
 

@@ -254,6 +254,10 @@ export interface OpposedResult {
   readonly defenderCheck: CheckResult;
   readonly sizeDegrees: { readonly attacker: number; readonly defender: number };
   readonly winner: ActorReference | null;
+  /** How the winner was decided («Общая механика» C5). */
+  readonly decidedBy: 'degrees' | 'characteristic-bonus' | 'super-threshold' | 'none';
+  /** Winner's effective degrees (1 when decided by the Super threshold rule); null without a winner. */
+  readonly winnerDegrees: number | null;
 }
 
 export type GrappleAction =
