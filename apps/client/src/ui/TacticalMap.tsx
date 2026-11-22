@@ -482,9 +482,10 @@ export function TacticalMap(props: Props) {
     if (ghostDistance === 0) return 'текущая позиция';
     const problem = movementProblem(battle, ghostActor, ghost);
     if (problem?.kind === 'position') return `некуда поставить: ${problem.reason}`;
+    // Same order as execution: out of reach first, then path barriers and rule questions.
+    if (ghostDistance > moveIntent.maxDistance + 1e-9) return 'вне бюджета Core';
     if (problem?.kind === 'blocked') return `нет пути: ${problem.blocker.label}`;
-    if (problem) return 'нужно решение автора';
-    return ghostDistance > moveIntent.maxDistance + 1e-9 ? 'вне бюджета Core' : null;
+    return problem ? 'нужно решение автора' : null;
   })();
   const showGhost =
     ghost && ghostActor && ghostFrom && (ghost.x !== ghostFrom.x || ghost.y !== ghostFrom.y);

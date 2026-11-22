@@ -48,6 +48,7 @@ import {
   movementProfiles,
   movementProblem,
   placementProblemFor,
+  sceneGeometry,
   tokenConflicts,
   weapons,
   type ActorId,
@@ -57,7 +58,12 @@ import {
 import { rulings } from './rulings';
 import { cellsOf, validateFootprint, type Footprint } from './grid';
 import { mapProblems, segmentLine, type MapDocument } from './map';
-import { buildGeometry, footprintGeometryProblem, initialDoorStates } from './geometry';
+import {
+  buildGeometry,
+  footprintGeometryProblem,
+  initialDoorStates,
+  sightLineBlocker,
+} from './geometry';
 import { storeSnapshot } from './snapshots';
 
 const source = {
@@ -755,6 +761,17 @@ function resolve(
   };
 }
 
+/**
+ * Line of sight and attacks through barriers are not approved yet (author questions 15–16,
+ * stages 5–6). An attack whose straight line from centre to centre crosses or touches a wall,
+ * a closed door or a vision-blocking obstacle stops before any dice; nothing is guessed.
+ */
+export function attackLineProblem(b: Battle, attacker: ActorId, target: ActorId): string | null {
+  const blocker = sightLineBlocker(b.positions[attacker], b.positions[target], sceneGeometry(b));
+  return blocker
+    ? `Ждёт решения автора: линия атаки проходит через ${blocker.label}. Правила линии видимости и атаки сквозь преграды ещё не утверждены (этапы 5–6).`
+    : null;
+}
 /** Local command envelope is atomic; individual accepted resolvers remain unchanged.
  * A pending command retains its full RNG prefix and stable ID for exact continuation. */
 export function attack(b: Battle, command: AttackCommand, source: DiceSource, resume = false) {
@@ -770,6 +787,19 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
   if (current.pendingTurn) throw new Error('Сначала продолжите pending начала хода');
   if (current.committed.includes(command.id)) throw new Error('Команда уже исполнена');
   if (current.pending && !resume) throw new Error('Сначала продолжите сохранённую pending-команду');
+  if (!resume) {
+    const line = attackLineProblem(b, command.actor, command.target);
+    if (line) {
+      append(b, 'rejected', {
+        command,
+        rolls: [],
+        reason: line,
+        committed: false,
+        authorDecisionRequired: true,
+      });
+      throw new RuleDecisionRequired(line);
+    }
+  }
   const prefix = resume ? (current.pending?.prefix ?? []) : [],
     used: DiceRoll[] = [];
   let cursor = 0;
@@ -945,6 +975,7 @@ const coreMessages: [RegExp, string][] = [
   [/Action prohibited by effect/, 'Действие запрещено активным эффектом'],
   [/Reaction prohibited by effect/, 'Реакция запрещена активным эффектом'],
   [/Empty or repeated action ID/, 'Команда с таким ID уже исполнена'],
+  [/Second attack requires/, 'В этом ходу атака уже была: разрешена одна атака за ход'],
 ];
 const coreErrorPattern = /^(Insufficient|Unavailable|Action |Reaction |Empty or repeated)/;
 /** Russian explanation for Core validation errors; the original message is kept. */
@@ -1052,17 +1083,18 @@ export function moveActor(b: Battle, command: MoveCommand) {
     const geometry = movementProblem(b, command.actor, { x, y });
     if (geometry?.kind === 'position')
       throw new Error(`Точка назначения недопустима: ${geometry.reason}`);
-    if (geometry?.kind === 'blocked') throw new Error(geometry.reason);
-    if (geometry) throw new RuleDecisionRequired(geometry.reason);
     const from = b.positions[command.actor];
     const distance = Math.hypot(x - from.x, y - from.y);
     if (distance === 0) throw new Error('Точка назначения совпадает с текущей позицией');
     const resolved = resolveMove(state, command.id, command.actor, command.mode);
     const maxDistance = resolved.result.distance;
+    // Too far is a plain refusal: no rule question arises for a point out of reach.
     if (distance > maxDistance + 1e-9)
       throw new Error(
         `Дистанция ${distance.toFixed(2)} м больше допустимой ${maxDistance} м («${mode.label}»)`,
       );
+    if (geometry?.kind === 'blocked') throw new Error(geometry.reason);
+    if (geometry) throw new RuleDecisionRequired(geometry.reason);
     const next = structuredClone(state);
     next.wounds = { ...next.wounds, combat: resolved.state };
     next.committed.push(command.id);

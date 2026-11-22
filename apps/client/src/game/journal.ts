@@ -156,9 +156,9 @@ export function describeEntry(entry: LogEntry): JournalLine {
     case 'rejected':
       return {
         ...base,
-        title: 'Команда отклонена',
+        title: d.authorDecisionRequired ? 'Атака ждёт решения автора' : 'Команда отклонена',
         summary: String(d.reason),
-        tone: 'error',
+        tone: d.authorDecisionRequired ? 'author' : 'error',
       };
     case 'cancel-unstarted':
       return {

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { BleedingActivity } from '@kadat/contracts';
 import {
   weaponSupport,
+  attackLineProblem,
   type MoveMode,
   type MoveOption,
   type turnInfo as TurnInfoFn,
@@ -244,6 +245,7 @@ export function AttackPanel(props: {
   const distance = (id: ActorId) =>
     Number(Math.hypot(p[attacker].x - p[id].x, p[attacker].y - p[id].y).toFixed(2));
   const set = (patch: Partial<AttackForm>) => props.onChange({ ...form, ...patch });
+  const lineProblem = attackLineProblem(props.battle, attacker, form.target);
   return (
     <div className="stack">
       <label>
@@ -303,11 +305,18 @@ export function AttackPanel(props: {
       {props.attackedThisTurn && (
         <p className="muted small">В этом ходу атака уже была: движок разрешает одну атаку.</p>
       )}
+      {lineProblem && <p className="weapon-note badge-blocked">{lineProblem}</p>}
       <button
         type="button"
         className="primary"
         onClick={props.onAttack}
-        disabled={!props.canAct || support.level === 'blocked' || !form.decline}
+        disabled={
+          !props.canAct ||
+          props.attackedThisTurn ||
+          support.level === 'blocked' ||
+          !form.decline ||
+          lineProblem !== null
+        }
       >
         Атаковать
       </button>

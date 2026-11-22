@@ -996,6 +996,15 @@ check(journal >= 7, `journal lists ${journal} entries`);
   check((await od()) === 2, 'stand: mud refusal spends no OD');
   check((await tokenPosition('kelus-drakar')).x === 6.5, 'stand: Kelus stays in place');
   await page.screenshot({ path: `${out}/04b-stage3-stand.png` });
+  await page.getByRole('tab', { name: 'Атака' }).click();
+  check(
+    (await page.textContent('.actions')).includes('линия атаки проходит через'),
+    'stand: attack through the room walls is flagged for the author',
+  );
+  check(
+    await page.getByRole('button', { name: 'Атаковать' }).isDisabled(),
+    'stand: attack button is disabled while the line is blocked',
+  );
 }
 
 // 8. Phone layout renders without horizontal overflow.

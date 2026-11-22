@@ -292,3 +292,44 @@ export function straightPathProblem(
   }
   return null;
 }
+
+/**
+ * First vision barrier (wall, closed door, vision-blocking obstacle edge) that the straight
+ * segment between two points crosses or touches, or null. Exact: coordinates are doubled.
+ */
+export function sightLineBlocker(from: Point, to: Point, g: GeometryIndex): Blocker | null {
+  const a: V = { x: from.x * 2, y: from.y * 2 };
+  const b: V = { x: to.x * 2, y: to.y * 2 };
+  const orient = (p: V, q: V, r: V) =>
+    Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+  const within = (p: V, q: V, r: V) =>
+    Math.min(p.x, q.x) <= r.x &&
+    r.x <= Math.max(p.x, q.x) &&
+    Math.min(p.y, q.y) <= r.y &&
+    r.y <= Math.max(p.y, q.y);
+  const meets = (p: V, q: V) => {
+    const o1 = orient(a, b, p),
+      o2 = orient(a, b, q),
+      o3 = orient(p, q, a),
+      o4 = orient(p, q, b);
+    if (o1 !== o2 && o3 !== o4) return true;
+    return (
+      (o1 === 0 && within(a, b, p)) ||
+      (o2 === 0 && within(a, b, q)) ||
+      (o3 === 0 && within(p, q, a)) ||
+      (o4 === 0 && within(p, q, b))
+    );
+  };
+  const x0 = Math.floor(Math.min(from.x, to.x)),
+    x1 = Math.ceil(Math.max(from.x, to.x));
+  const y0 = Math.floor(Math.min(from.y, to.y)),
+    y1 = Math.ceil(Math.max(from.y, to.y));
+  for (let x = x0; x <= x1; x++)
+    for (let y = y0; y <= y1; y++) {
+      const h = g.visionEdges.get(`h:${x}:${y}`);
+      if (h && meets({ x: 2 * x, y: 2 * y }, { x: 2 * x + 2, y: 2 * y })) return h;
+      const v = g.visionEdges.get(`v:${x}:${y}`);
+      if (v && meets({ x: 2 * x, y: 2 * y }, { x: 2 * x, y: 2 * y + 2 })) return v;
+    }
+  return null;
+}
