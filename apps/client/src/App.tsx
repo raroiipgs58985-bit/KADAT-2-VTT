@@ -539,10 +539,10 @@ export function App() {
             type="button"
             aria-pressed={details}
             className={details ? 'btn-ghost chosen' : 'btn-ghost'}
-            title="Показать технические подробности: характеристики, данные движка, кубики"
+            title="Вид ГМа: все броски с пояснениями, характеристики, данные движка. Вид игрока: только итог — попадание и урон"
             onClick={() => toggleDetails()}
           >
-            Подробно
+            {details ? 'Вид: ГМ' : 'Вид: игрок'}
           </button>
         </nav>
       </header>

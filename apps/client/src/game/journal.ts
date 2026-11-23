@@ -10,6 +10,8 @@ export interface JournalLine {
   summary: string;
   tone: JournalTone;
   dice: string;
+  /** GM view: every die with what it was rolled for («к100=15 — тест попадания»). */
+  diceDetailed: string;
 }
 
 const locations: Record<string, string> = {
@@ -27,6 +29,15 @@ let nameOf: (id: string) => string = (id) => id;
 const name = (id: unknown) => (typeof id === 'string' ? nameOf(id) : '—');
 const metres = (n: number) => `${Number(n.toFixed(2))} м`;
 // к2 picks the side of an arm or leg hit (ruling 24): 1 — left, 2 — right.
+const diceDetailed = (rolls: unknown, purposes: unknown) =>
+  Array.isArray(rolls)
+    ? (rolls as DiceRoll[])
+        .map((r, i) => {
+          const why = Array.isArray(purposes) ? purposes[i] : undefined;
+          return `к${r.sides}=${r.value}${typeof why === 'string' ? ` — ${why}` : ''}`;
+        })
+        .join('; ')
+    : '';
 const dice = (rolls: unknown) =>
   Array.isArray(rolls)
     ? (rolls as DiceRoll[])
@@ -57,7 +68,12 @@ export function describeEntry(
 ): JournalLine {
   nameOf = names;
   const d = entry.detail as Record<string, unknown>;
-  const base = { id: entry.id, type: entry.type, dice: dice(d?.rolls) };
+  const base = {
+    id: entry.id,
+    type: entry.type,
+    dice: dice(d?.rolls),
+    diceDetailed: diceDetailed(d?.rolls, d?.rollPurposes),
+  };
   switch (entry.type) {
     case 'loaded':
       return {

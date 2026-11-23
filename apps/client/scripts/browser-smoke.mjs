@@ -24,7 +24,7 @@ const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-// Technical checks run with «Подробно» on; the simple view is checked at the end.
+// Technical checks run in the GM view; the player view is checked separately.
 await page.addInitScript(() => {
   if (!sessionStorage.getItem('smoke-simple')) localStorage.setItem('kadat.details', '1');
 });
@@ -1060,13 +1060,21 @@ check(journal >= 7, `journal lists ${journal} entries`);
   );
 }
 
-// 7b. Simple view: technical panels hidden, the essentials stay.
-await page.getByRole('button', { name: 'Подробно' }).click();
+// 7b. Player view: technical panels and dice hidden, the essentials stay.
+await page.getByRole('button', { name: 'Вид: ГМ' }).click();
+check(
+  !(await page
+    .locator('.dice-line')
+    .first()
+    .isVisible()
+    .catch(() => false)),
+  'player view hides the dice of the journal',
+);
 check((await page.locator('.dice').count()) === 0, 'simple view hides the dice panel');
 check(!(await page.locator('.stats').first().isVisible()), 'simple view hides characteristics');
 check(await page.locator('.vitals').first().isVisible(), 'simple view keeps wounds and blood');
 await page.screenshot({ path: `${out}/04c-simple-view.png` });
-await page.getByRole('button', { name: 'Подробно' }).click();
+await page.getByRole('button', { name: 'Вид: игрок' }).click();
 
 // 7c. Character editor (step 3): from a profile, into the library and a file, back to the scene.
 {
@@ -1150,6 +1158,10 @@ await page.getByRole('button', { name: 'Подробно' }).click();
   check(
     (await page.textContent('.vitals')).includes('20 / 33'),
     'Пак takes 13 damage (20 / 33): ½ бСЛ rounded up (ruling 77)',
+  );
+  check(
+    (await page.locator('.dice-line', { hasText: 'тест попадания' }).count()) > 0,
+    'GM view labels every die with what it was rolled for',
   );
   // A hit to the eyes asks the GM for the ОБ; the answer resumes with the saved dice.
   await page.getByRole('button', { name: 'Передать ход' }).click();

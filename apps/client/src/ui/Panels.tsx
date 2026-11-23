@@ -568,7 +568,9 @@ export function CombatLog({ battle }: { battle: Battle }) {
                 <span className="log-tone">{toneLabel[line.tone]}</span>
               </div>
               {line.summary && <p>{line.summary}</p>}
-              {line.dice && <p className="dice-line">Броски: {line.dice}</p>}
+              {line.dice && (
+                <p className="dice-line detail">Броски: {line.diceDetailed || line.dice}</p>
+              )}
               <details className="detail">
                 <summary>Данные движка</summary>
                 <pre>{JSON.stringify(entry.detail, null, 2)}</pre>

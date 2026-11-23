@@ -152,6 +152,24 @@ function ask(command: AttackCommand, question: GmQuestion): number {
   return answer;
 }
 const engines = new WeakMap<Battle, EngineState>();
+/** What the next die of an attack is rolled for; read by the dice tape for the GM view. */
+type RollPhase = 'turn' | 'attack' | 'damage' | 'consequence';
+let rollPhase: RollPhase = 'attack';
+const setPhase = (p: RollPhase) => {
+  rollPhase = p;
+};
+/** GM view: why a die was rolled, from the step of the attack and the die size. */
+export function rollPurpose(phase: RollPhase, sides: number): string {
+  if (phase === 'turn') return 'начало хода';
+  if (phase === 'attack')
+    return sides === 100 ? 'тест попадания' : sides === 2 ? 'сторона попадания' : 'атака';
+  if (phase === 'damage') return 'урон';
+  return sides === 100
+    ? 'тест последствия ранения'
+    : sides === 2
+      ? 'сторона (последствие ранения)'
+      : 'бросок последствия ранения';
+}
 /** A short Russian line for intents the wound core cannot finish on its own. */
 const intentText = (intents: readonly unknown[]) =>
   `Ранение ждёт решения: ${intents
@@ -406,6 +424,7 @@ function resolveHit(
   const traits = info.traits;
   const sl = bonusOf(attacker, 'СЛ');
   const armour = zoneArmour(b, state, command, hit.location);
+  setPhase('damage');
   const roll = resolveDamageRoll(hit.profile.expression, rng, hit.context).result;
   const dice = adjustDamageDice(traits, roll.rolls, rng);
   const bonus = damageBonus(traits, {
@@ -514,6 +533,7 @@ function resolveHit(
   if (damage.result.status !== 'RESOLVED')
     throw new ContextRequired(JSON.stringify(damage.result.status));
   state.protection = damage.state;
+  setPhase('consequence');
   const wound = postDamage(state, damage.result, command, rng, logs);
   return {
     location: hit.location,
@@ -549,7 +569,9 @@ function resolve(
   const arsenalWeapon = selected.arsenal!;
   if (state.wounds.combat.session.phase === 'ready')
     throw new Error('Бой ещё не начат: нажмите «Начать бой»');
+  setPhase('turn');
   begin(state, rng, logs);
+  setPhase('attack');
   if (state.wounds.combat.session.activeActor?.actorId !== command.actor)
     throw new Error('Сейчас ход другого персонажа');
   if (state.wounds.actors[command.actor]!.life.status !== 'ALIVE')
@@ -704,12 +726,15 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
   const prefix = resume ? (current.pending?.prefix ?? []) : [],
     used: DiceRoll[] = [];
   let cursor = 0;
+  const purposes: string[] = [];
+  setPhase('attack');
   const rng: DiceSource = {
     roll(sides) {
       const prior = prefix[cursor++];
       if (prior && prior.sides !== sides) throw new Error('Pending dice prefix mismatch');
       const value = prior?.value ?? source.roll(sides);
       used.push({ sides, value });
+      purposes.push(rollPurpose(rollPhase, sides));
       return value;
     },
   };
@@ -723,6 +748,7 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
     append(b, 'attack', {
       command,
       rolls: used,
+      rollPurposes: purposes,
       weaponName: weaponOf(b, command.weapon)?.name ?? command.weapon,
       maxHp: maxWounds(b, command.target),
       result,
@@ -756,6 +782,7 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
     append(b, 'CONTEXT_REQUIRED', {
       command,
       rolls: used,
+      rollPurposes: purposes,
       reason,
       coreLogs: logs,
       committed: false,

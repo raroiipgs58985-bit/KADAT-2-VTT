@@ -233,3 +233,27 @@ describe('Old talent names (ruling 80)', () => {
     );
   });
 });
+
+describe('GM view: what every die was rolled for', () => {
+  it('labels the attack test, hit side, damage and wound consequences', () => {
+    const b = createBattle();
+    startCombat(b, fixedDice('10:9,10:2'));
+    attack(
+      b,
+      shot({ id: 'gm', mode: 'short-burst' }),
+      fixedDice('100:15,2:2,10:8,2:1,100:66,10:8,2:2,100:31,10:1'),
+    );
+    const d = b.log.at(-1)!.detail as { rollPurposes: string[] };
+    expect(d.rollPurposes).toEqual([
+      'тест попадания',
+      'сторона попадания',
+      'урон',
+      'сторона (последствие ранения)',
+      'тест последствия ранения',
+      'урон',
+      'сторона (последствие ранения)',
+      'тест последствия ранения',
+      'урон',
+    ]);
+  });
+});
