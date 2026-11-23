@@ -254,3 +254,10 @@ export function engineWeapons(b: Battle) {
   }
   return { ranged, containers, melee, meleeActors };
 }
+
+/** The chosen fire mode if the weapon has it, otherwise its first mode (null — not ranged). */
+export function modeFor(w: ArsenalWeapon | null, mode: FireMode): FireMode | null {
+  if (!w || weaponProblem(w) || weaponKind(w) !== 'ranged') return null;
+  const modes = fireModes(w);
+  return (modes.find((m) => m.mode === mode) ?? modes[0])?.mode ?? null;
+}

@@ -33,10 +33,12 @@ import {
   fpOf,
   planRoute,
   posOf,
+  weaponOf,
   type ActorId,
   type Battle,
 } from './game/model';
 import { RosterPanel } from './ui/RosterPanel';
+import { modeFor } from './game/combatants';
 import type { FloorColorId } from './game/map';
 import type { Point } from './game/grid';
 import {
@@ -950,6 +952,13 @@ export function App() {
                             actor: info.active,
                             target: form.target,
                             weapon: form.weapon,
+                            ...(() => {
+                              const m = modeFor(
+                                weaponOf(battle, form.weapon)?.arsenal ?? null,
+                                form.mode,
+                              );
+                              return m ? { mode: m } : {};
+                            })(),
                             targetActivity: form.activity,
                             modifier: form.modifier,
                             defense: 'DECLINE',

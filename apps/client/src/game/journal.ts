@@ -35,6 +35,7 @@ interface AttackDetail {
   weaponName?: string;
   maxHp?: number;
   result: {
+    attack?: { mode?: string; shotsFired?: number; ammoSpent?: number; hitsGenerated?: number };
     hits?: { location: string; finalDamage: number; manual?: string[] }[];
   };
   hp: Record<ActorId, number>;
@@ -170,14 +171,24 @@ export function describeEntry(
       const a = d as unknown as AttackDetail;
       const weapon = a.weaponName ?? a.command.weapon;
       const hits = a.result.hits ?? [];
+      const r = a.result.attack;
+      const modeName: Record<string, string> = {
+        single: 'Одиночный',
+        'short-burst': 'Короткая очередь',
+        'full-auto': 'Длинная очередь',
+      };
+      const fire =
+        r?.mode && r.shotsFired
+          ? `${modeName[r.mode] ?? r.mode}: выстрелов ${r.shotsFired}, зарядов ${r.ammoSpent}, попаданий ${r.hitsGenerated}. `
+          : '';
       const manual = [...new Set(hits.flatMap((h) => h.manual ?? []))];
       const summary = hits.length
-        ? `${hits.length > 1 ? `Попаданий: ${hits.length}. ` : ''}${hits
+        ? `${fire}${hits
             .map((h) => `${locationName(h.location)} — урон ${h.finalDamage}`)
             .join('; ')}. ${name(a.command.target)}: ${a.hp[a.command.target]}${
             a.maxHp ? `/${a.maxHp}` : ''
           } ран.${manual.length ? ` Ведущему применить: ${manual.join(', ')}.` : ''}`
-        : 'Промах — урон не бросается.';
+        : `${fire}Промах — урон не бросается.`;
       return {
         ...base,
         title: `${name(a.command.actor)} → ${name(a.command.target)} (${weapon})`,

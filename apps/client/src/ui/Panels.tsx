@@ -405,23 +405,12 @@ export function AttackPanel(props: {
             >
               {modes.map((m) => (
                 <option key={m.mode} value={m.mode}>
-                  {modeName[m.mode]} (до {m.maxShots})
+                  {modeName[m.mode]} ({m.maxShots})
                 </option>
               ))}
             </select>
           </label>
-          {mode.mode !== 'single' && (
-            <label>
-              Выстрелов
-              <input
-                type="number"
-                min={1}
-                max={mode.maxShots}
-                value={Math.min(form.shots, mode.maxShots)}
-                onChange={(e) => set({ shots: Number(e.target.value) })}
-              />
-            </label>
-          )}
+          <p className="muted small">Выстрелов: {mode.maxShots} (темп оружия, решение 78)</p>
         </div>
       )}
       {support.level !== 'supported' && (

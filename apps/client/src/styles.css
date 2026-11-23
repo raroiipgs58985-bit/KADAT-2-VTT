@@ -1538,6 +1538,13 @@ textarea {
   resize: vertical;
 }
 
+/* Long engine messages must wrap on phones instead of widening the page. */
+.toast,
+.pending p,
+.log-line p {
+  overflow-wrap: anywhere;
+}
+
 /* Step 4: participants before the fight. */
 .roster-list {
   list-style: none;

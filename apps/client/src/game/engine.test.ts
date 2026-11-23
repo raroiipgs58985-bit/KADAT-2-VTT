@@ -8,7 +8,6 @@ import {
   moveActor,
   placeActor,
   removeCombatant,
-  resumeAttack,
   setMovementOption,
   startCombat,
   turnInfo,
@@ -86,27 +85,33 @@ describe('Attack with an Arsenal weapon', () => {
 });
 
 describe('Melee and GM questions', () => {
-  it('Цепной меч: бСЛ + Сверх (ruling 74), ½ бСЛ asked of the GM, armour loses ББ first', () => {
+  it('Цепной меч: бСЛ + Сверх (ruling 74), ½ бСЛ rounded up (ruling 77), armour loses ББ first', () => {
     const b = started((x) => placeActor(x, 'pak', 6.5, 10.5));
-    const first = attack(
+    const r = attack(
       b,
       shot({ id: 'cut', weapon: 'kelus-drakar:1' }),
-      fixedDice('100:35,10:3,10:7'),
+      fixedDice('100:35,10:3,10:7,10:3,10:7'),
     );
-    expect(first).toMatchObject({ status: 'CONTEXT_REQUIRED' });
-    const q = turnInfo(b).pending?.question;
-    expect(q?.key).toBe('chain-half-sl');
-    expect(q?.options?.map((o) => o.value)).toEqual([2, 3]);
-    // The saved dice are reused: nothing is re-rolled after the answer.
-    const r = resumeAttack(b, fixedDice('10:3,10:7'), { 'chain-half-sl': 3 });
     expect(r.status).toBe('RESOLVED');
     const hit = (
       r as { result: { hits: { total: number; armour: number; finalDamage: number }[] } }
     ).result.hits[0]!;
-    // d10 3 → Разрывное (from Цепное) re-roll 7; +5 +бСЛ 5 +3 = 20; torso 7 − 2 = 5.
+    // d10 3 → Разрывное (from Цепное) re-roll 7; +5 +бСЛ 5 +⌈5/2⌉ 3 = 20; torso 7 − 2 = 5.
     expect(hit).toMatchObject({ total: 20, armour: 5, finalDamage: 13 });
     expect(getEngine(b).armorLoss).toEqual({ 'pak:torso': 2 });
     expect(actorStatus(b, 'pak').wounds).toBe(20);
+  });
+  it('a burst fires exactly the weapon rate (ruling 78): short burst 3 = 3 shots × Заряд 7', () => {
+    const b = started();
+    const r = attack(b, shot({ id: 'burst', mode: 'short-burst', shots: 1 }), fixedDice('100:90'));
+    expect((r as { result: { attack: { shotsFired: number } } }).result.attack.shotsFired).toBe(3);
+    expect(b.ammo['kelus-drakar:0']).toBe(60 - 21);
+  });
+  it('a single shot is one shot', () => {
+    const b = started();
+    const r = attack(b, shot({ id: 'one', mode: 'single' }), fixedDice('100:90'));
+    expect((r as { result: { attack: { shotsFired: number } } }).result.attack.shotsFired).toBe(1);
+    expect(b.ammo['kelus-drakar:0']).toBe(53);
   });
   it('a hit to the eyes asks the GM for the ОБ (ruling 75)', () => {
     const b = started((x) => placeActor(x, 'pak', 6.5, 10.5));

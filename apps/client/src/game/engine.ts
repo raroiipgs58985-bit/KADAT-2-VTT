@@ -68,6 +68,7 @@ import {
   engineSource,
   engineWeapons,
   release,
+  fireModes,
   weaponKind,
   weaponProblem,
   type WeaponKind,
@@ -148,6 +149,14 @@ function ask(command: AttackCommand, question: GmQuestion): number {
   return answer;
 }
 const engines = new WeakMap<Battle, EngineState>();
+/** A short Russian line for intents the wound core cannot finish on its own. */
+const intentText = (intents: readonly unknown[]) =>
+  `Ранение ждёт решения: ${intents
+    .map((i) => {
+      const x = i as { type?: string; reason?: string };
+      return [x.type, x.reason].filter(Boolean).join(' — ');
+    })
+    .join('; ')}`;
 
 function participants(b: Battle, rolls?: DiceSource): CombatSession {
   const entries = actorIds(b).map((id) => ({
@@ -318,13 +327,32 @@ function postDamage(
       state: state.wounds,
       damage,
       context: context(state.wounds.combat, command.target, command.actor),
-      facts: { provenance, activity: command.targetActivity },
+      facts: {
+        provenance,
+        activity: command.targetActivity,
+        ...(zoneOf(damage.input.location)
+          ? {}
+          : {
+              consequenceZone: (['HEAD', 'TORSO', 'ARM', 'LEG'] as const)[
+                ask(command, {
+                  key: `consequence-zone:${damage.input.location}`,
+                  text: `Попадание в «${damage.input.location === 'Eyes' ? 'Глаза' : 'Сочленения'}»: по какой таблице ранений считать последствия? (правило не утверждено)`,
+                  options: [
+                    { label: 'Голова', value: 0 },
+                    { label: 'Торс', value: 1 },
+                    { label: 'Рука', value: 2 },
+                    { label: 'Нога', value: 3 },
+                  ],
+                })
+              ]!,
+            }),
+      },
     },
     rng,
   );
   logs.push(...result.logs);
   if (result.result.status !== 'RESOLVED')
-    throw new ContextRequired(JSON.stringify(result.result.pendingIntents));
+    throw new ContextRequired(intentText(result.result.pendingIntents));
   state.wounds = result.result.status === 'RESOLVED' ? result.state : state.wounds;
   return result.result;
 }
@@ -395,16 +423,10 @@ function resolveHit(
     flat += sl;
     notes.push(`бСЛ: +${sl}`);
     if (hasTrait(traits, 'Цепное')) {
-      const half = ask(command, {
-        key: 'chain-half-sl',
-        text: `Цепное: +½ бСЛ к урону. бСЛ ${sl} — сколько прибавить? (округление не утверждено)`,
-        options: [
-          { label: `${Math.floor(sl / 2)} (вниз)`, value: Math.floor(sl / 2) },
-          { label: `${Math.ceil(sl / 2)} (вверх)`, value: Math.ceil(sl / 2) },
-        ],
-      });
+      // «Цепное»: +½ бСЛ, rounded up (ruling 77).
+      const half = Math.ceil(sl / 2);
       flat += half;
-      notes.push(`Цепное: +${half}`);
+      notes.push(`Цепное: +${half} (½ бСЛ вверх)`);
     }
   }
   let total = sum(dice.rolls) + hit.profile.expression.modifier + sum(extra) - sum(minus) + flat;
@@ -563,7 +585,10 @@ function resolve(
   let attack: unknown, degrees: number;
   if (kind === 'ranged') {
     const mode = command.mode ?? 'single';
-    const shots = mode === 'single' ? 1 : (command.shots ?? 1);
+    // Ruling 78: a mode fires exactly the weapon's rate (short burst 3 — three shots).
+    const rate = fireModes(arsenalWeapon).find((m) => m.mode === mode);
+    if (!rate) throw new Error(`${selected.name}: нет режима «${mode}»`);
+    const shots = rate.maxShots;
     const resolved = resolveWoundAwareAction(state.wounds, 'НС', ctx, (combat, context) =>
       resolveRangedAttack(
         combat,

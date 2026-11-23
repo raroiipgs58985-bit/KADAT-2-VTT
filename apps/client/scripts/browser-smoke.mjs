@@ -1144,16 +1144,32 @@ await page.getByRole('button', { name: 'Подробно' }).click();
   await page.getByRole('combobox', { name: 'Оружие' }).selectOption({ label: 'Цепной меч' });
   await page.evaluate(() => document.querySelector('details.dice')?.setAttribute('open', ''));
   await page.locator('.dice select').selectOption('fixed');
-  await page.locator('.dice textarea').fill('100:35,10:3,10:7');
+  await page.locator('.dice textarea').fill('100:35,10:3,10:7,10:3,10:7');
+  await page.getByRole('button', { name: 'Атаковать' }).click();
+  await page.getByRole('tab', { name: 'Пак' }).click();
+  check(
+    (await page.textContent('.vitals')).includes('20 / 33'),
+    'Пак takes 13 damage (20 / 33): ½ бСЛ rounded up (ruling 77)',
+  );
+  // A hit to the eyes asks the GM for the ОБ; the answer resumes with the saved dice.
+  await page.getByRole('button', { name: 'Передать ход' }).click();
+  await page.getByRole('button', { name: 'Передать ход' }).click();
+  await page.getByRole('tab', { name: 'Атака' }).click();
+  await page.getByRole('combobox', { name: 'Оружие' }).selectOption({ label: 'Цепной меч' });
+  await page.locator('.dice textarea').fill('100:20');
   await page.getByRole('button', { name: 'Атаковать' }).click();
   const question = page.getByRole('alertdialog', { name: 'Вопрос ведущему' });
-  check(await question.isVisible(), 'the GM is asked how to round ½ бСЛ for «Цепное»');
+  check(await question.isVisible(), 'the GM is asked for the ОБ of the eyes (ruling 75)');
   await page.screenshot({ path: `${out}/08-gm-question.png` });
-  await page.locator('.dice textarea').fill('10:3,10:7');
-  await question.getByRole('button', { name: /вверх/ }).click();
-  check(!(await question.isVisible()), 'the answer resumes the strike with the saved dice');
-  await page.getByRole('tab', { name: 'Пак' }).click();
-  check((await page.textContent('.vitals')).includes('20 / 33'), 'Пак takes 13 damage (20 / 33)');
+  await page.locator('.dice select').selectOption('random');
+  await question.getByLabel('Ответ').fill('2');
+  await question.getByRole('button', { name: 'Ответить' }).click();
+  check(
+    (await question.textContent()).includes('таблице ранений'),
+    'then the GM picks the wound table for the eyes',
+  );
+  await question.getByRole('button', { name: 'Голова' }).click();
+  check(!(await question.isVisible()), 'the answers resume the strike with the saved dice');
   await page.locator('.dice select').selectOption('random');
 }
 
@@ -1162,6 +1178,17 @@ await page.setViewportSize({ width: 390, height: 844 });
 const overflow = await page.evaluate(
   () => document.documentElement.scrollWidth > window.innerWidth + 1,
 );
+if (overflow)
+  console.log(
+    'INFO overflow:',
+    await page.evaluate(() =>
+      [...document.querySelectorAll('body *')]
+        .filter((e) => e.getBoundingClientRect().right > window.innerWidth + 1)
+        .slice(0, 8)
+        .map((e) => `${e.tagName}.${e.className} ${Math.round(e.getBoundingClientRect().right)}`)
+        .join(' | '),
+    ),
+  );
 check(!overflow, 'no horizontal overflow at 390 px');
 await page.screenshot({ path: `${out}/05-phone.png` });
 
