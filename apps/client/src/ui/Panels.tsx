@@ -384,8 +384,6 @@ export function AttackPanel(props: {
   };
   const set = (patch: Partial<AttackForm>) => props.onChange({ ...form, ...patch });
   const lineProblem = form.target ? attackLineProblem(props.battle, attacker, form.target) : null;
-  const meleeWeapon =
-    !!weapon?.arsenal && !weaponProblem(weapon.arsenal) && weaponKind(weapon.arsenal) === 'melee';
   const modeName: Record<FireMode, string> = {
     single: 'Одиночный',
     'short-burst': 'Короткая очередь',
@@ -439,7 +437,7 @@ export function AttackPanel(props: {
           <p className="muted small">Выстрелов: {mode.maxShots} (темп оружия, решение 78)</p>
         </div>
       )}
-      {weapon && !props.inHand(weapon.id) && (
+      {weapon && support.level !== 'blocked' && !props.inHand(weapon.id) && (
         <div className="stack">
           <p className="weapon-note badge-partial">Это оружие не в руках.</p>
           <button
@@ -512,19 +510,9 @@ export function AttackPanel(props: {
           </optgroup>
         </select>
       </label>
-      <label>
-        Реакция цели
-        <select
-          value={meleeWeapon || form.defense !== 'PARRY' ? form.defense : 'DECLINE'}
-          onChange={(e) => set({ defense: e.target.value as AttackForm['defense'] })}
-        >
-          <option value="DECLINE">Без реакции</option>
-          <option value="DODGE">Уклонение (ЛВ, навык «Уклонение»)</option>
-          <option value="PARRY" disabled={!meleeWeapon}>
-            Парирование (НР, навык «Парирование»){meleeWeapon ? '' : ' — только в ближнем бою'}
-          </option>
-        </select>
-      </label>
+      <p className="muted small">
+        Реакцию выбирает цель, когда по ней попали: уклонение или парирование спросят у неё.
+      </p>
       {props.attackedThisTurn && (
         <p className="muted small">В этом ходу атака уже была: движок разрешает одну атаку.</p>
       )}

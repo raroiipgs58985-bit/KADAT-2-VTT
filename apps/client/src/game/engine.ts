@@ -150,8 +150,11 @@ export interface AttackCommand {
   shots?: number;
   targetActivity: BleedingActivity;
   modifier?: number;
-  /** Reaction of the target: none, Dodge (ЛВ, «Уклонение») or Parry (НР, «Парирование»). */
-  defense: 'DECLINE' | 'DODGE' | 'PARRY';
+  /**
+   * Reaction of the target: none, Dodge (ЛВ, «Уклонение») or Parry (НР, «Парирование»).
+   * Absent — the target decides after being hit (asked with the attack roll already made).
+   */
+  defense?: 'DECLINE' | 'DODGE' | 'PARRY';
   /**
    * «Избирательная атака» (2 ОД, «Бой» A52): a single shot or blow at the chosen location with
    * its modifier (Глаза −50, Голова −20, Руки −20, Торс −10, Ноги −15, Сочленения −40).
@@ -826,39 +829,91 @@ function resolve(
   let attack: unknown, degrees: number;
   let reaction: unknown = null;
   let suppression: unknown = null;
+  // The target decides its reaction once it is hit: a trial run reads only the attack roll
+  // (kept for the real run) to see whether anything hits; then the target is asked.
+  let peeked: number | null = null;
+  const peekSource: DiceSource = {
+    roll(sides) {
+      if (peeked === null) {
+        peeked = rng.roll(sides);
+        return peeked;
+      }
+      return 1;
+    },
+  };
+  let peekUsed = false;
+  const realSource: DiceSource = {
+    roll(sides) {
+      if (peeked !== null && !peekUsed) {
+        peekUsed = true;
+        return peeked;
+      }
+      return rng.roll(sides);
+    },
+  };
+  const askDefense = (hit: boolean, canParry: boolean): 'DECLINE' | 'DODGE' | 'PARRY' => {
+    if (command.defense) return command.defense;
+    const entry = state.wounds.combat.session.initiativeOrder.find(
+      (e) => e.actor.actorId === command.target,
+    );
+    if (!hit || !entry?.reactions.remaining) return 'DECLINE';
+    if (state.wounds.actors[command.target]?.life.status !== 'ALIVE') return 'DECLINE';
+    const answer = ask(command, {
+      key: 'reaction',
+      text: `${actorName(b, command.target)}: по вам попали (${actorName(b, command.actor)}). Ваша реакция?`,
+      options: [
+        { label: 'Без реакции', value: 0 },
+        { label: 'Уклонение', value: 1 },
+        ...(canParry ? [{ label: 'Парирование', value: 2 }] : []),
+      ],
+    });
+    return answer === 2 ? 'PARRY' : answer === 1 ? 'DODGE' : 'DECLINE';
+  };
+  const targetParries = () => {
+    const melee = state.wounds.combat.melee;
+    const wid = melee?.actors[command.target]?.weaponId;
+    const w = wid ? melee?.weapons[wid] : undefined;
+    return !!w && w.held && w.template.profile.family !== 'natural';
+  };
   if (kind === 'ranged') {
     const mode = command.mode ?? 'single';
     // Ruling 78: a mode fires exactly the weapon's rate (short burst 3 — three shots).
     const rate = fireModes(arsenalWeapon).find((m) => m.mode === mode);
     if (!rate) throw new Error(`${selected.name}: нет режима «${mode}»`);
     const shots = command.calledLocation ? 1 : rate.maxShots;
-    const resolved = resolveWoundAwareAction(state.wounds, 'НС', ctx, (combat, context) =>
-      resolveRangedAttack(
-        combat,
-        {
-          id: command.id,
-          type: command.calledLocation ? 'called-attack' : 'ranged-attack',
-          ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
-          actor: ref(command.actor),
-          target: ref(command.target),
-          weaponId: command.weapon,
-          mode: command.calledLocation ? 'single' : mode,
-          shotsRequested: shots,
-          distance,
-          dodgeable: true,
-          ...(command.defense === 'DODGE'
-            ? {
-                dodge: {
-                  id: `${command.id}:dodge`,
-                  context: reactionContext(b, state, command, 'Уклонение'),
-                },
-              }
-            : {}),
-          context,
-        },
-        rng,
-      ),
-    );
+    const runRanged = (defense: 'DECLINE' | 'DODGE' | 'PARRY', src: DiceSource) =>
+      resolveWoundAwareAction(state.wounds, 'НС', ctx, (combat, context) =>
+        resolveRangedAttack(
+          combat,
+          {
+            id: command.id,
+            type: command.calledLocation ? 'called-attack' : 'ranged-attack',
+            ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
+            actor: ref(command.actor),
+            target: ref(command.target),
+            weaponId: command.weapon,
+            mode: command.calledLocation ? 'single' : mode,
+            shotsRequested: shots,
+            distance,
+            dodgeable: true,
+            ...(defense === 'DODGE'
+              ? {
+                  dodge: {
+                    id: `${command.id}:dodge`,
+                    context: reactionContext(b, state, command, 'Уклонение'),
+                  },
+                }
+              : {}),
+            context,
+          },
+          src,
+        ),
+      );
+    const trial = command.defense
+      ? null
+      : runRanged('DECLINE', peekSource).resolution.result.hitsGenerated > 0;
+    const defense = askDefense(trial ?? false, false);
+    const resolved = runRanged(defense, command.defense ? rng : realSource);
     state.wounds = resolved.state;
     logs.push(resolved.projectionLog, ...resolved.resolution.logs);
     const result = resolved.resolution.result;
@@ -868,41 +923,48 @@ function resolve(
     if (result.dodge) reaction = result.dodge;
     suppression = applySuppression(b, state, command, arsenalWeapon.weaponClass, result, rng, logs);
   } else {
-    const meleeAvoidance =
-      command.defense === 'DODGE'
-        ? {
-            id: `${command.id}:dodge`,
-            type: 'dodge' as const,
-            pool: 'normal' as const,
-            context: reactionContext(b, state, command, 'Уклонение'),
-          }
-        : command.defense === 'PARRY'
-          ? parryRequest(b, state, command, traits)
-          : null;
-    const resolved = resolveWoundAwareAction(state.wounds, 'НР', ctx, (combat, context) =>
-      resolveMeleeAttack(
-        combat,
-        {
-          id: command.id,
-          type: 'melee-attack',
-          actor: ref(command.actor),
-          origin: 'NORMAL',
-          base: command.calledLocation ? 'called' : 'simple',
-          ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
-          technique: 'normal',
-          weaponId: command.weapon,
-          targets: [
-            {
-              actor: ref(command.target),
-              distance,
-              ...(meleeAvoidance ? { avoidance: meleeAvoidance } : {}),
-            },
-          ],
-          context,
-        },
-        rng,
-      ),
-    );
+    const runMelee = (defense: 'DECLINE' | 'DODGE' | 'PARRY', src: DiceSource) => {
+      const meleeAvoidance =
+        defense === 'DODGE'
+          ? {
+              id: `${command.id}:dodge`,
+              type: 'dodge' as const,
+              pool: 'normal' as const,
+              context: reactionContext(b, state, command, 'Уклонение'),
+            }
+          : defense === 'PARRY'
+            ? parryRequest(b, state, command, traits)
+            : null;
+      return resolveWoundAwareAction(state.wounds, 'НР', ctx, (combat, context) =>
+        resolveMeleeAttack(
+          combat,
+          {
+            id: command.id,
+            type: 'melee-attack',
+            actor: ref(command.actor),
+            origin: 'NORMAL',
+            base: command.calledLocation ? 'called' : 'simple',
+            ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
+            technique: 'normal',
+            weaponId: command.weapon,
+            targets: [
+              {
+                actor: ref(command.target),
+                distance,
+                ...(meleeAvoidance ? { avoidance: meleeAvoidance } : {}),
+              },
+            ],
+            context,
+          },
+          src,
+        ),
+      );
+    };
+    const trial = command.defense
+      ? null
+      : !!runMelee('DECLINE', peekSource).resolution.result.targets[0]?.hit;
+    const defense = askDefense(trial ?? false, targetParries());
+    const resolved = runMelee(defense, command.defense ? rng : realSource);
     state.wounds = resolved.state;
     logs.push(resolved.projectionLog, ...resolved.resolution.logs);
     const target = resolved.resolution.result.targets[0]!;
@@ -1842,6 +1904,10 @@ export function takeWeapon(b: Battle, command: { id: string; actor: ActorId; wea
   try {
     combatant(b, command.actor);
     if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
+    const chosen = weaponOf(b, command.weapon);
+    const unusable = chosen ? weaponProblem(chosen.arsenal) : 'Нет такого оружия';
+    if (unusable)
+      throw new Error(`${chosen?.name ?? 'Оружие'}: в бою пока не используется — ${unusable}`);
     let combat: CombatActionState;
     let cost = 'до боя';
     if (!combatStarted(b)) combat = putInHand(state.wounds.combat, command.actor, command.weapon);

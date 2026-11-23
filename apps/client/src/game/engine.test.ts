@@ -574,3 +574,31 @@ describe('Suppression («Бой» A12–A15)', () => {
   });
 });
 let supRolls = 0;
+
+describe('The target decides its reaction after being hit', () => {
+  it('a hit asks the target; the attack roll is kept and the dodge follows', () => {
+    const b = started();
+    const cmd = { ...shot({ id: 'ask', mode: 'single' as const }) };
+    delete (cmd as { defense?: unknown }).defense;
+    const first = attack(b, cmd, fixedDice('100:15'));
+    expect(first.status).toBe('CONTEXT_REQUIRED');
+    const q = turnInfo(b).pending?.question;
+    expect(q?.key).toBe('reaction');
+    expect(q?.options?.map((o) => o.label)).toEqual(['Без реакции', 'Уклонение']);
+    // Dodge 10 succeeds: the shot is cancelled, the attack roll stays 15.
+    const r = resumeAttack(b, fixedDice('100:10,100:10'), { reaction: 1, 'cover:pak': 0 });
+    const res = (
+      r as {
+        result: { attack: { check: { rawRoll: number } }; reaction: { cancelledHits: number } };
+      }
+    ).result;
+    expect(res.attack.check.rawRoll).toBe(15);
+    expect(res.reaction.cancelledHits).toBe(1);
+  });
+  it('a miss asks nothing', () => {
+    const b = started();
+    const cmd = { ...shot({ id: 'miss' }) };
+    delete (cmd as { defense?: unknown }).defense;
+    expect(attack(b, cmd, fixedDice('100:95')).status).toBe('RESOLVED');
+  });
+});

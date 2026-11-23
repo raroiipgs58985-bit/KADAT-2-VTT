@@ -1040,11 +1040,6 @@ export function App() {
                             ...(form.called ? { calledLocation: form.called } : {}),
                             targetActivity: form.activity,
                             modifier: form.modifier,
-                            defense:
-                              form.defense === 'PARRY' &&
-                              weaponOf(battle, form.weapon)?.arsenal?.weaponClass !== 'ББ'
-                                ? 'DECLINE'
-                                : form.defense,
                           },
                           source(),
                         ),

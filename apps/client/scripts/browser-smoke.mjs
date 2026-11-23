@@ -60,6 +60,16 @@ const drag = async (from, to) => {
   await page.mouse.up();
 };
 const toast = () => page.textContent('.toast');
+/** The target was hit and is asked for its reaction: answer «Без реакции» with the rest dice. */
+const noReaction = async (rest) => {
+  const q = page.getByRole('alertdialog', { name: 'Вопрос ведущему' });
+  if (!(await q.isVisible().catch(() => false))) return false;
+  if (!((await q.textContent()) ?? '').includes('Ваша реакция')) return false;
+  await page.evaluate(() => document.querySelector('details.dice')?.setAttribute('open', ''));
+  await page.locator('.dice textarea').fill(rest);
+  await q.getByRole('button', { name: 'Без реакции' }).click();
+  return true;
+};
 /** Starts the fight with a fixed initiative (Келус 1к10=9, Пак 2), then back to random dice. */
 const startFight = async () => {
   const openDice = () =>
@@ -955,13 +965,16 @@ await page.locator('.dice textarea').fill('100:45,10:2,100:20');
 await page.getByRole('tab', { name: 'Атака' }).click();
 await page.screenshot({ path: `${out}/03-attack.png` });
 await page.getByRole('button', { name: 'Атаковать' }).click();
+check(await noReaction('10:2,100:20'), 'the hit target is asked for its reaction');
 check((await toast()).includes('Хот-шот лазган'), 'shot resolves through the Arsenal weapon');
 await page.getByRole('tab', { name: 'Пак' }).click();
 check((await page.textContent('.vitals')).includes('29 / 33'), 'Pak wounds 29 / 33 in his card');
 check((await od()) === 0, 'move + shot spent both OD');
 await page.screenshot({ path: `${out}/04-after-attack.png`, fullPage: true });
 
-// 7. Pass the turn; Pak becomes active.
+// 7. Pass the turn; Pak becomes active (random dice for the turn start).
+await page.evaluate(() => document.querySelector('details.dice')?.setAttribute('open', ''));
+await page.locator('.dice select').selectOption('random');
 await page.getByRole('button', { name: 'Передать ход' }).click();
 check((await page.textContent('.turn-bar h2')).includes('Пак'), 'turn passes to Pak');
 const journal = await page.locator('.log-line').count();
@@ -1156,6 +1169,7 @@ await page.getByRole('button', { name: 'Вид: игрок' }).click();
   await page.locator('.dice select').selectOption('fixed');
   await page.locator('.dice textarea').fill('100:35,10:3,10:7,10:3,10:7');
   await page.getByRole('button', { name: 'Атаковать' }).click();
+  check(await noReaction('10:3,10:7,10:3,10:7'), 'the hit target is asked for its reaction');
   await page.getByRole('tab', { name: 'Пак' }).click();
   check(
     (await page.textContent('.vitals')).includes('20 / 33'),
@@ -1174,6 +1188,7 @@ await page.getByRole('button', { name: 'Вид: игрок' }).click();
     await page.getByRole('button', { name: /Взять в руки/ }).click();
   await page.locator('.dice textarea').fill('100:20');
   await page.getByRole('button', { name: 'Атаковать' }).click();
+  check(await noReaction(''), 'the hit target is asked for its reaction');
   const question = page.getByRole('alertdialog', { name: 'Вопрос ведущему' });
   check(await question.isVisible(), 'the GM is asked for the ОБ of the eyes (ruling 75)');
   await page.screenshot({ path: `${out}/08-gm-question.png` });
