@@ -134,7 +134,11 @@ const defaultAttack = (b: Battle, attacker: ActorId): AttackForm => ({
     actorIds(b).find((id) => id !== attacker && b.roster[id]?.side !== b.roster[attacker]?.side) ??
     actorIds(b).find((id) => id !== attacker) ??
     '',
-  weapon: battleWeapons(b, attacker)[0]?.id ?? '',
+  // The weapon in hand (ruling 81), otherwise the first one.
+  weapon:
+    battleWeapons(b, attacker).find((w) => weaponInHand(b, w.id))?.id ??
+    battleWeapons(b, attacker)[0]?.id ??
+    '',
   mode: 'single',
   shots: 1,
   called: '',
