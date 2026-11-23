@@ -1596,3 +1596,21 @@ textarea {
   display: grid;
   text-align: left;
 }
+
+/* Turn actions: aiming, waiting, reloading. */
+.action-grid {
+  display: grid;
+  gap: 6px;
+}
+.action-grid button,
+.weapon-actions button {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.weapon-actions {
+  display: grid;
+  gap: 6px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}

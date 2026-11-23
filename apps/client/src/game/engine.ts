@@ -15,6 +15,8 @@ import type {
 } from '@kadat/contracts';
 import {
   adjustDamageDice,
+  clearMalfunction,
+  reloadWeapon as coreReloadWeapon,
   HEAVY_FROM_HANDS_TALENT,
   braceWeapon as coreBraceWeapon,
   armourAfterProperties,
@@ -247,8 +249,10 @@ function context(combat: CombatActionState, id: string, target?: string): Resolu
 }
 function sync(b: Battle, state: EngineState) {
   for (const id of actorIds(b)) b.hp[id] = maxWounds(b, id) - state.wounds.actors[id]!.damageTaken;
-  for (const [id, c] of Object.entries(state.wounds.combat.containers))
-    b.ammo[id.replace(/:mag$/, '')] = c.currentRounds;
+  for (const w of Object.values(state.wounds.combat.weapons)) {
+    const c = w.loadedContainerId ? state.wounds.combat.containers[w.loadedContainerId] : undefined;
+    b.ammo[w.id] = c ? c.currentRounds : 0;
+  }
   const active = state.wounds.combat.session.activeActor?.actorId;
   if (active) b.active = active;
   engines.set(b, state);
@@ -1120,6 +1124,7 @@ const coreMessages: [RegExp, string][] = [
     'Тяжёлое оружие без опоры стреляет только одиночными (−30). Сначала «Установить на опору» (1 ОД, «Бой» A55)',
   ],
   [/Weapon is already braced/, 'Оружие уже установлено на опору'],
+  [/not in an appropriate jammed state/, 'Оружие не заклинило'],
   [/Parry requires an eligible weapon/, 'Этим оружием нельзя парировать'],
   [/Incoming action is not dodgeable/, 'От этой атаки нельзя уклониться'],
   [/Dodge prohibited by effect/, 'Уклонение запрещено состоянием цели'],
@@ -1500,6 +1505,122 @@ export function weaponSupport(b: Battle, id: WeaponId): WeaponSupport {
     : { level: 'supported', note: 'Свойства оружия учитываются автоматически.' };
 }
 
+export type TurnActionType = 'quick-aim' | 'careful-aim' | 'wait' | 'reload' | 'clear-malfunction';
+export interface TurnActionCommand {
+  id: string;
+  actor: ActorId;
+  type: TurnActionType;
+  /** Weapon for reload and clearing a jam. */
+  weapon?: WeaponId;
+}
+const turnActionName: Record<TurnActionType, string> = {
+  'quick-aim': 'Быстрое прицеливание',
+  'careful-aim': 'Тщательное прицеливание',
+  wait: 'Выжидание',
+  reload: 'Перезарядка',
+  'clear-malfunction': 'Исправление осечки',
+};
+/**
+ * Actions of the turn through the accepted Core: aiming (1 / 2 ОД, +10 / +20 to the next
+ * shot), waiting (1 ОД), reloading (ОД of the weapon, may go on next turn) and clearing a jam
+ * (2 ОД, НС test). Spare magazines are not counted yet: a reload takes a full one.
+ */
+export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSource = noDice) {
+  const state = getEngine(b);
+  const used: DiceRoll[] = [];
+  const tape: DiceSource = {
+    roll(sides) {
+      const value = source.roll(sides);
+      used.push({ sides, value });
+      return value;
+    },
+  };
+  try {
+    combatant(b, command.actor);
+    if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
+    movementGate(state, command.actor);
+    const combat = state.wounds.combat;
+    const base = {
+      id: command.id,
+      actor: ref(command.actor),
+      context: context(combat, command.actor),
+    };
+    let next: CombatActionState;
+    let detail: Record<string, unknown> = {};
+    if (command.type === 'reload' || command.type === 'clear-malfunction') {
+      const weapon = command.weapon ? combat.weapons[command.weapon] : undefined;
+      if (!weapon || weapon.owner.actorId !== command.actor)
+        throw new Error('Выберите стрелковое оружие этого персонажа');
+      if (command.type === 'clear-malfunction') {
+        const r = clearMalfunction(
+          combat,
+          { ...base, type: 'clear-malfunction', weaponId: weapon.id },
+          tape,
+        );
+        next = r.state;
+        detail = { cleared: r.result.outcome === 'success', check: r.result };
+      } else {
+        const loaded = weapon.loadedContainerId
+          ? combat.containers[weapon.loadedContainerId]
+          : undefined;
+        if (!loaded) throw new Error('У оружия нет магазина');
+        // A fresh full magazine of the same kind (spares are not tracked yet).
+        const spareId = weapon.reloadProgress?.containerId ?? `${weapon.id}:mag:${command.id}`;
+        const spare = combat.containers[spareId] ?? {
+          ...loaded,
+          id: spareId,
+          currentRounds: loaded.capacity,
+        };
+        const withSpare = { ...combat, containers: { ...combat.containers, [spareId]: spare } };
+        const r = coreReloadWeapon(withSpare, {
+          ...base,
+          type: 'reload',
+          weaponId: weapon.id,
+          containerId: spareId,
+        });
+        next = r.state;
+        detail = { ...r.result };
+      }
+      detail.weaponName = weaponOf(b, command.weapon!)?.name ?? command.weapon;
+    } else {
+      next = resolveCombatAction(combat, { ...base, type: command.type }, noDice).state;
+    }
+    const after = structuredClone(state);
+    after.wounds = { ...after.wounds, combat: next };
+    after.committed.push(command.id);
+    sync(b, after);
+    append(b, 'turn-action', {
+      command,
+      name: turnActionName[command.type],
+      rolls: used,
+      ...detail,
+      committed: true,
+    });
+    return { status: 'RESOLVED' as const };
+  } catch (error) {
+    append(b, 'turn-action-rejected', {
+      command,
+      name: turnActionName[command.type],
+      reason: explainEngineError(error),
+      committed: false,
+    });
+    throw error;
+  }
+}
+
+/** Magazine, jam and reload progress of a ranged weapon now. */
+export function weaponState(b: Battle, weaponId: WeaponId) {
+  const combat = getEngine(b).wounds.combat;
+  const w = combat.weapons[weaponId];
+  const c = w?.loadedContainerId ? combat.containers[w.loadedContainerId] : undefined;
+  return {
+    rounds: c?.currentRounds ?? 0,
+    jammed: !!w?.jammed,
+    reloading: w?.reloadProgress
+      ? `${w.reloadProgress.odSpent} из ${w.template.profile.reload.odCost} ОД`
+      : null,
+  };
+}
 /** Talent «Бугрящиеся бицепсы»: heavy weapons fire from the hands without penalties. */
 export const heavyFromHands = (b: Battle, actorId: ActorId) =>
   canonicalTalents(b.roster[actorId]?.character.talents ?? []).includes(HEAVY_FROM_HANDS_TALENT);

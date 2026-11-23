@@ -4,6 +4,8 @@ import type { FireMode } from '@kadat/contracts';
 import {
   weaponSupport,
   attackLineProblem,
+  weaponState,
+  type TurnActionType,
   type MoveMode,
   type MoveOption,
   type turnInfo as TurnInfoFn,
@@ -497,6 +499,90 @@ export function AttackPanel(props: {
       >
         Атаковать
       </button>
+    </div>
+  );
+}
+
+/**
+ * Actions of the turn besides moving and attacking: aiming, waiting, reloading and clearing a
+ * jam (Core costs: «Бой» A53–A59).
+ */
+export function ActionsPanel(props: {
+  battle: Battle;
+  actor: ActorId;
+  canAct: boolean;
+  od: number | null;
+  onAction: (type: TurnActionType, weapon?: WeaponId) => void;
+}) {
+  const ranged = battleWeapons(props.battle, props.actor).filter(
+    (w) => w.arsenal && !weaponProblem(w.arsenal) && weaponKind(w.arsenal) === 'ranged',
+  );
+  const od = props.od ?? 0;
+  const state = (id: WeaponId) => weaponState(props.battle, id);
+  return (
+    <div className="stack">
+      <div className="action-grid">
+        <button
+          type="button"
+          disabled={!props.canAct || od < 1}
+          onClick={() => props.onAction('quick-aim')}
+        >
+          Быстрое прицеливание <span className="muted small">1 ОД · +10</span>
+        </button>
+        <button
+          type="button"
+          disabled={!props.canAct || od < 2}
+          onClick={() => props.onAction('careful-aim')}
+        >
+          Тщательное прицеливание <span className="muted small">2 ОД · +20</span>
+        </button>
+        <button
+          type="button"
+          disabled={!props.canAct || od < 1}
+          onClick={() => props.onAction('wait')}
+        >
+          Выжидание <span className="muted small">1 ОД</span>
+        </button>
+      </div>
+      {ranged.length > 0 && <h3>Оружие</h3>}
+      {ranged.map((w) => {
+        const st = state(w.id);
+        return (
+          <div key={w.id} className="weapon-actions">
+            <div>
+              <strong>{w.name}</strong>
+              <span className="muted small">
+                {' '}
+                · магазин {st.rounds} / {w.capacity}
+                {st.jammed ? ' · заклинило' : ''}
+                {st.reloading ? ` · перезарядка ${st.reloading}` : ''}
+              </span>
+            </div>
+            <div className="row">
+              <button
+                type="button"
+                disabled={!props.canAct || od < 1 || st.rounds === w.capacity}
+                onClick={() => props.onAction('reload', w.id)}
+              >
+                Перезарядить <span className="muted small">{w.arsenal?.reload?.od ?? 1} ОД</span>
+              </button>
+              {st.jammed && (
+                <button
+                  type="button"
+                  disabled={!props.canAct || od < 2}
+                  onClick={() => props.onAction('clear-malfunction', w.id)}
+                >
+                  Исправить осечку <span className="muted small">2 ОД · тест НС</span>
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      <p className="muted small">
+        Прицеливание даёт бонус следующему выстрелу этого хода. Запасные магазины пока не считаются:
+        перезарядка ставит полный.
+      </p>
     </div>
   );
 }

@@ -17,6 +17,8 @@ import {
   weaponBraced,
   heavyFromHands,
   resumeAttack,
+  turnAction,
+  weaponState,
   type AttackCommand,
 } from './engine';
 import { fixedDice } from './dice';
@@ -334,5 +336,71 @@ describe('Reactions of the target', () => {
     const parry = (done as { result: { reaction: { check: { target: number } } } }).result.reaction;
     // НР 30 − 20 + 10 = 20.
     expect(parry.check.target).toBe(20);
+  });
+});
+
+describe('Turn actions', () => {
+  it('quick aim (1 ОД) adds +10 to the next shot of the turn', () => {
+    const b = started();
+    turnAction(b, { id: 'aim', actor: 'kelus-drakar', type: 'quick-aim' });
+    expect(turnInfo(b).od).toBe(1);
+    const r = attack(b, shot({ id: 'aimed' }), fixedDice('100:90'));
+    const check = (
+      r as { result: { attack: { check: { modifiers: { id: string; value: number }[] } } } }
+    ).result.attack.check;
+    expect(check.modifiers.find((m) => m.id === 'ranged:aim')?.value).toBe(10);
+  });
+  it('reload takes the weapon ОД and refills the magazine; it may go on next turn', () => {
+    const b = started();
+    attack(b, shot({ id: 's1' }), fixedDice('100:90'));
+    expect(b.ammo['kelus-drakar:0']).toBe(53);
+    nextTurn(b, fixedDice(''));
+    nextTurn(b, fixedDice(''));
+    // Хот-шот лазган: перезарядка 2 ОД.
+    turnAction(b, {
+      id: 'reload-1',
+      actor: 'kelus-drakar',
+      type: 'reload',
+      weapon: 'kelus-drakar:0',
+    });
+    expect(b.ammo['kelus-drakar:0']).toBe(60);
+    expect(turnInfo(b).od).toBe(0);
+  });
+  it('a reload longer than the OD left continues next turn', () => {
+    const b = started();
+    attack(b, shot({ id: 's1' }), fixedDice('100:90'));
+    turnAction(b, {
+      id: 'reload-a',
+      actor: 'kelus-drakar',
+      type: 'reload',
+      weapon: 'kelus-drakar:0',
+    });
+    expect(weaponState(b, 'kelus-drakar:0').reloading).toBe('1 из 2 ОД');
+    expect(b.ammo['kelus-drakar:0']).toBe(53);
+    nextTurn(b, fixedDice(''));
+    nextTurn(b, fixedDice(''));
+    turnAction(b, {
+      id: 'reload-b',
+      actor: 'kelus-drakar',
+      type: 'reload',
+      weapon: 'kelus-drakar:0',
+    });
+    expect(b.ammo['kelus-drakar:0']).toBe(60);
+    expect(weaponState(b, 'kelus-drakar:0').reloading).toBeNull();
+  });
+  it('a jam (96+) is cleared with 2 ОД and an НС test', () => {
+    const b = started();
+    attack(b, shot({ id: 'jam' }), fixedDice('100:97'));
+    expect(weaponState(b, 'kelus-drakar:0').jammed).toBe(true);
+    nextTurn(b, fixedDice(''));
+    nextTurn(b, fixedDice(''));
+    turnAction(
+      b,
+      { id: 'clear', actor: 'kelus-drakar', type: 'clear-malfunction', weapon: 'kelus-drakar:0' },
+      fixedDice('100:20'),
+    );
+    expect(weaponState(b, 'kelus-drakar:0').jammed).toBe(false);
+    const replayed = importReplay(JSON.parse(JSON.stringify(exportReplay(b))));
+    expect(weaponState(replayed, 'kelus-drakar:0').jammed).toBe(false);
   });
 });

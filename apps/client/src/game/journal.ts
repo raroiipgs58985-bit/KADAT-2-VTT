@@ -276,6 +276,36 @@ export function describeEntry(
         tone: 'info',
       };
     }
+    case 'turn-action': {
+      const c = d.command as { actor: string; type: string };
+      const extra =
+        c.type === 'reload'
+          ? d.loaded
+            ? `${String(d.weaponName)} перезаряжено (${String(d.odSpent)} ОД).`
+            : `${String(d.weaponName)}: перезарядка идёт — ${String(d.progress)} из ${String(d.odRequired)} ОД, продолжится в следующем ходу.`
+          : c.type === 'clear-malfunction'
+            ? d.cleared
+              ? `${String(d.weaponName)}: осечка исправлена.`
+              : `${String(d.weaponName)}: исправить не удалось, оружие всё ещё заклинило.`
+            : c.type === 'quick-aim'
+              ? '+10 к следующему выстрелу.'
+              : c.type === 'careful-aim'
+                ? '+20 к следующему выстрелу.'
+                : '';
+      return {
+        ...base,
+        title: `${name(c.actor)}: ${String(d.name)}`,
+        summary: extra,
+        tone: 'success',
+      };
+    }
+    case 'turn-action-rejected':
+      return {
+        ...base,
+        title: `${String(d.name)} не выполнено`,
+        summary: String(d.reason),
+        tone: 'warning',
+      };
     case 'brace':
       return {
         ...base,

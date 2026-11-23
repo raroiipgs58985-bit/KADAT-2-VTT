@@ -1182,6 +1182,10 @@ await page.getByRole('button', { name: 'Вид: игрок' }).click();
   );
   await question.getByRole('button', { name: 'Голова' }).click();
   check(!(await question.isVisible()), 'the answers resume the strike with the saved dice');
+  await page.getByRole('tab', { name: 'Действия' }).click();
+  await page.getByRole('button', { name: /Быстрое прицеливание/ }).click();
+  check((await od()) === 0, 'quick aim spends the last OD');
+  check(await toastWith('Быстрое прицеливание'), 'the aim is logged');
   await page.locator('.dice select').selectOption('random');
 }
 

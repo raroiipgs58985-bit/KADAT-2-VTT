@@ -13,6 +13,7 @@ import {
   nextTurn,
   placeActor,
   resumeAttack,
+  turnAction,
   braceWeapon,
   weaponBraced,
   heavyFromHands,
@@ -98,6 +99,7 @@ import { EditorPanel, toolList } from './ui/EditorPanel';
 import { ActorCard } from './ui/ActorCard';
 import {
   DoorsPanel,
+  ActionsPanel,
   AttackPanel,
   CombatLog,
   DicePanel,
@@ -146,7 +148,7 @@ export function App() {
   const { battle, version } = useCombat();
   const info = useMemo(() => turnInfo(battle), [battle, version]);
   const [selected, setSelected] = useState<ActorId>(info.active);
-  const [tab, setTab] = useState<'move' | 'attack'>('move');
+  const [tab, setTab] = useState<'move' | 'attack' | 'actions'>('move');
   const [moveMode, setMoveModeRaw] = useState<MoveMode | null>(null);
   /** Clicked route points (author ruling 8); null — a click moves at once. */
   const [route, setRoute] = useState<Point[] | null>(null);
@@ -889,6 +891,18 @@ export function App() {
                   >
                     Атака
                   </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === 'actions'}
+                    className={tab === 'actions' ? 'chosen' : ''}
+                    onClick={() => {
+                      setTab('actions');
+                      setMoveMode(null);
+                    }}
+                  >
+                    Действия
+                  </button>
                 </div>
                 {fallActor && (
                   <p className="note-warning" data-testid="fall-note">
@@ -936,6 +950,27 @@ export function App() {
                     }}
                     onStand={() =>
                       run((b) => standUp(b, { id: commandId('stand'), actor: selected }))
+                    }
+                  />
+                ) : tab === 'actions' ? (
+                  <ActionsPanel
+                    battle={battle}
+                    actor={info.active}
+                    canAct={canAct}
+                    od={info.od}
+                    onAction={(type, weapon) =>
+                      run((b) =>
+                        turnAction(
+                          b,
+                          {
+                            id: commandId(type),
+                            actor: info.active,
+                            type,
+                            ...(weapon ? { weapon } : {}),
+                          },
+                          source(),
+                        ),
+                      )
                     }
                   />
                 ) : (
