@@ -120,3 +120,37 @@ export function armourFromItems(items: readonly { ref: string | null }[]): {
   const anyUnder = zones.some((z) => under[z] !== null);
   return { armour: out, undersuit: anyUnder ? under : null, reason: null };
 }
+
+/** An Arsenal property as the rules engine reads it (`WeaponTraitReference`). */
+export interface WeaponTrait {
+  readonly name: string;
+  readonly value?: number;
+}
+/**
+ * Properties of an Arsenal weapon for the rules engine. A rating that is a whole number
+ * becomes `value`; anything else («3+», «2к10/3», «см прим») is not read and is listed for the
+ * GM, like optional properties («(опц)», switched on for a free action) and unknown names.
+ */
+export function weaponTraits(w: ArsenalWeapon): {
+  traits: WeaponTrait[];
+  optional: WeaponTrait[];
+  unread: string[];
+} {
+  const traits: WeaponTrait[] = [];
+  const optional: WeaponTrait[] = [];
+  const unread: string[] = [];
+  for (const p of w.properties) {
+    if (!p.property) {
+      if (!p.attachment && !p.armourTrait) unread.push(p.raw);
+      continue;
+    }
+    let trait: WeaponTrait | null = { name: p.property };
+    if (p.param !== null) {
+      const v = p.param.trim();
+      trait = /^\d+$/.test(v) ? { name: p.property, value: Number(v) } : null;
+    }
+    if (!trait) unread.push(p.raw);
+    else (p.optional ? optional : traits).push(trait);
+  }
+  return { traits, optional, unread };
+}

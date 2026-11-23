@@ -156,3 +156,20 @@ describe('Armour layers (decisions 56, 63)', () => {
     });
   });
 });
+
+describe('Arsenal properties for the rules engine', () => {
+  it('names and whole-number ratings are read; other ratings go to the GM', async () => {
+    const { arsenal, weaponTraits } = await import('./arsenal');
+    const mace = arsenal.weapons.find((w) => w.name === 'Булава')!;
+    expect(weaponTraits(mace).traits).toEqual([
+      { name: 'Примитивное' },
+      { name: 'Не защищённое' },
+      { name: 'Оглушающее', value: 0 },
+    ]);
+    const all = arsenal.weapons.map(weaponTraits);
+    expect(
+      all.flatMap((x) => x.traits).every((t) => t.value === undefined || Number.isInteger(t.value)),
+    ).toBe(true);
+    expect(all.some((x) => x.unread.length > 0)).toBe(true);
+  });
+});
