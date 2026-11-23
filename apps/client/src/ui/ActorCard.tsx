@@ -17,6 +17,7 @@ const conditionLabel: Record<string, string> = {
   Dead: 'Мёртв',
   Prone: 'Лежит',
   Blinded: 'Ослеплён',
+  Suppressed: 'Подавлен',
 };
 const bleedingLabel = { LIGHT: 'лёгкое', MEDIUM: 'среднее', HEAVY: 'тяжёлое' } as const;
 const supportLabel = { supported: 'работает', partial: 'частично', blocked: 'не подключено' };
@@ -87,7 +88,7 @@ export function ActorCard({
 
       {(status.conditions.length > 0 || status.bleeding.length > 0) && (
         <div className="chips">
-          {status.conditions.map((c, i) => (
+          {[...new Set(status.conditions)].map((c, i) => (
             <span className="chip chip-warn" key={`${c}-${i}`}>
               {conditionLabel[c] ?? c}
             </span>
