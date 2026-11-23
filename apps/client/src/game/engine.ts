@@ -801,8 +801,10 @@ export function addCombatant(
   if (problems.length) throw new Error(`Персонаж не готов: ${problems.join('; ')}`);
   let id = character.id;
   for (let n = 2; b.roster[id]; n++) id = `${character.id}-${n}`;
-  const copies = Object.values(b.roster).filter((c) => c.character.id === character.id).length;
-  const name = copies ? `${character.name} ${copies + 1}` : character.name;
+  // Same name already in the fight (a copy or another file of the same character): number it.
+  const names = new Set(Object.values(b.roster).map((c) => c.character.name));
+  let name = character.name;
+  for (let n = 2; names.has(name); n++) name = `${character.name} ${n}`;
   const footprint = footprintForSize(character.size);
   const spot = freeSpot(b, footprint, at);
   if (!spot) throw new Error('На карте нет свободного места для токена');

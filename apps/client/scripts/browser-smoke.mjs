@@ -60,6 +60,18 @@ const drag = async (from, to) => {
   await page.mouse.up();
 };
 const toast = () => page.textContent('.toast');
+/** Starts the fight with a fixed initiative (Келус 1к10=9, Пак 2), then back to random dice. */
+const startFight = async () => {
+  const openDice = () =>
+    page.evaluate(() => document.querySelector('details.dice')?.setAttribute('open', ''));
+  await openDice();
+  await page.locator('.dice select').selectOption('fixed');
+  await page.locator('.dice textarea').fill('10:9,10:2');
+  await page.getByRole('button', { name: 'Начать бой' }).click();
+  await openDice();
+  await page.locator('.dice select').selectOption('random');
+  await page.evaluate(() => document.querySelector('details.dice')?.removeAttribute('open'));
+};
 /** Waits for an asynchronous toast (file reads) that contains `text`. */
 const toastWith = (text) =>
   page
@@ -208,7 +220,7 @@ await page.getByRole('tab', { name: 'Расстановка' }).click();
   const { readFileSync } = await import('node:fs');
   const data = JSON.parse(readFileSync(file, 'utf8'));
   check(
-    data.format === 'kadat-client-combat-v0.5' &&
+    data.format === 'kadat-client-combat-v0.6' &&
       data.steps.some((s) => s.type === 'map' && data.snapshots.maps[s.snapshot]?.cols === 24),
     'replay of a 24 × 12 history is exported with its map snapshot',
   );
@@ -478,7 +490,7 @@ await page.getByRole('tab', { name: 'Расстановка' }).click();
 
   // Combat: through the closed door is refused without spending OD; nothing inside the room
   // is highlighted; a free move elsewhere is accepted.
-  await page.getByRole('button', { name: 'Начать бой' }).click();
+  await startFight();
   await page.locator('.mode').nth(2).click(); // full move, 8 m
   const insideRoom = await page.evaluate(() =>
     [...document.querySelectorAll('[data-testid="reach"] rect')].some(
@@ -506,7 +518,7 @@ await page.getByRole('tab', { name: 'Расстановка' }).click();
   const replayPath = join(work, 'combat.json');
   await (await replayDownload).saveAs(replayPath);
   const replay = JSON.parse(readFileSync(replayPath, 'utf8'));
-  check(replay.format === 'kadat-client-combat-v0.5', 'replay is exported as v0.5');
+  check(replay.format === 'kadat-client-combat-v0.6', 'replay is exported as v0.6');
   await page.reload();
   await page.waitForSelector('svg.map');
   await page
@@ -692,7 +704,7 @@ await page.getByRole('tab', { name: 'Расстановка' }).click();
 
   // Highlight timing in combat: select a movement mode until the reach layer is drawn.
   await page.getByRole('tab', { name: 'Расстановка' }).click();
-  await page.getByRole('button', { name: 'Начать бой' }).click();
+  await startFight();
   const highlightMs = [];
   for (let i = 0; i < 10; i++)
     highlightMs.push(
@@ -790,7 +802,7 @@ await page.getByRole('tab', { name: 'Расстановка' }).click();
 
   // Combat: one accepted move, then the replay is downloaded through the button.
   await page.getByRole('tab', { name: 'Расстановка' }).click();
-  await page.getByRole('button', { name: 'Начать бой' }).click();
+  await startFight();
   await page.locator('.mode').nth(1).click();
   await click(7.5, 10.5);
   check((await od()) === 1, 'an accepted move before saving the replay');
@@ -802,7 +814,7 @@ await page.getByRole('tab', { name: 'Расстановка' }).click();
   const replay = JSON.parse(text);
   const floorLayers = new Set(Object.values(replay.snapshots.maps).map((m) => m.layers.floor));
   check(
-    replay.format === 'kadat-client-combat-v0.5' &&
+    replay.format === 'kadat-client-combat-v0.6' &&
       replay.steps.filter((s) => s.type === 'map').length === 5 &&
       Object.keys(replay.snapshots.maps).length === 5,
     'the downloaded replay references five snapshots',
@@ -897,7 +909,7 @@ check((await occupiedCells('pak')) === 4, 'Размер 1 token occupies 2 × 2 
 await page.getByRole('tab', { name: 'Келус' }).click();
 
 // 2. Start combat.
-await page.getByRole('button', { name: 'Начать бой' }).click();
+await startFight();
 check((await od()) === 2, 'combat start gives Kelus 2 OD');
 check(
   (await page.textContent('.turn-bar h2')).includes('Келус'),
@@ -943,9 +955,9 @@ await page.locator('.dice textarea').fill('100:45,10:2,100:20');
 await page.getByRole('tab', { name: 'Атака' }).click();
 await page.screenshot({ path: `${out}/03-attack.png` });
 await page.getByRole('button', { name: 'Атаковать' }).click();
-check((await toast()).includes('Попадание'), 'shot resolves as a hit');
+check((await toast()).includes('Хот-шот лазган'), 'shot resolves through the Arsenal weapon');
 await page.getByRole('tab', { name: 'Пак' }).click();
-check((await page.textContent('.vitals')).includes('31 / 33'), 'Pak wounds 31 / 33 in his card');
+check((await page.textContent('.vitals')).includes('29 / 33'), 'Pak wounds 29 / 33 in his card');
 check((await od()) === 0, 'move + shot spent both OD');
 await page.screenshot({ path: `${out}/04-after-attack.png`, fullPage: true });
 
@@ -985,7 +997,7 @@ check(journal >= 7, `journal lists ${journal} entries`);
     'stand door opens by a click',
   );
   await click(8, 10.5);
-  await page.getByRole('button', { name: 'Начать бой' }).click();
+  await startFight();
   if ((await page.textContent('.turn-bar h2')).includes('Пак'))
     await page.getByRole('button', { name: 'Передать ход' }).click();
   await page.getByRole('tab', { name: 'Келус' }).click();
@@ -1089,6 +1101,50 @@ await page.getByRole('button', { name: 'Подробно' }).click();
   );
   await page.getByRole('button', { name: 'К сцене' }).click();
   check(await page.locator('svg.map').isVisible(), 'back to the scene');
+}
+
+// 7b. Step 4 polygon: participants from the library, a melee strike with a GM question.
+{
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole('button', { name: 'Новый бой' }).click();
+  await page.getByRole('tab', { name: 'Расстановка' }).click();
+  const tokens = () => page.locator('g.token').count();
+  check((await tokens()) === 2, 'a new fight starts with Келус and Пак');
+  await page.getByLabel('Персонаж для добавления').focus();
+  const libOption = page
+    .locator('select[aria-label="Персонаж для добавления"] optgroup[label^="Библиотека"] option')
+    .first();
+  await page
+    .getByLabel('Персонаж для добавления')
+    .selectOption(await libOption.getAttribute('value'));
+  await page.getByRole('button', { name: 'Добавить на карту' }).click();
+  check((await tokens()) === 3, 'a library character joins the fight as a third token');
+  await page.screenshot({ path: `${out}/07-roster.png` });
+  await page.getByRole('button', { name: /Убрать Пак 2/ }).click();
+  check((await tokens()) === 2, 'the added copy can be removed before the fight');
+
+  await drag({ x: 15.5, y: 10.5 }, { x: 6.5, y: 10.5 });
+  check((await tokenPosition('pak')).x === 6.5, 'Пак placed next to Келус');
+  await startFight();
+  check(
+    (await page.textContent('.turn-bar')).includes('иниц.'),
+    'initiative is shown after the start',
+  );
+  await page.getByRole('tab', { name: 'Атака' }).click();
+  await page.getByRole('combobox', { name: 'Оружие' }).selectOption({ label: 'Цепной меч' });
+  await page.evaluate(() => document.querySelector('details.dice')?.setAttribute('open', ''));
+  await page.locator('.dice select').selectOption('fixed');
+  await page.locator('.dice textarea').fill('100:35,10:3,10:7');
+  await page.getByRole('button', { name: 'Атаковать' }).click();
+  const question = page.getByRole('alertdialog', { name: 'Вопрос ведущему' });
+  check(await question.isVisible(), 'the GM is asked how to round ½ бСЛ for «Цепное»');
+  await page.screenshot({ path: `${out}/08-gm-question.png` });
+  await page.locator('.dice textarea').fill('10:3,10:7');
+  await question.getByRole('button', { name: /вверх/ }).click();
+  check(!(await question.isVisible()), 'the answer resumes the strike with the saved dice');
+  await page.getByRole('tab', { name: 'Пак' }).click();
+  check((await page.textContent('.vitals')).includes('20 / 33'), 'Пак takes 13 damage (20 / 33)');
+  await page.locator('.dice select').selectOption('random');
 }
 
 // 8. Phone layout renders without horizontal overflow.
