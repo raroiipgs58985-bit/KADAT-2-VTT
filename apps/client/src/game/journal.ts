@@ -57,6 +57,7 @@ interface AttackDetail {
   result: {
     attack?: { mode?: string; shotsFired?: number; ammoSpent?: number; hitsGenerated?: number };
     hits?: { location: string; finalDamage: number; manual?: string[] }[];
+    suppression?: { status: string; targets: { actor: string; status: string }[] };
     reaction?:
       | 'declined'
       | {
@@ -229,7 +230,24 @@ export function describeEntry(
               : 'провал'
           }. `
         : '';
-      const summary = hits.length
+      const sup = a.result.suppression;
+      const supText = sup
+        ? ` Подавление: ${sup.targets
+            .map(
+              (t) =>
+                `${name(t.actor)} — ${
+                  t.status === 'SUPPRESSED'
+                    ? 'подавлен'
+                    : t.status === 'PASSED'
+                      ? 'устоял'
+                      : t.status === 'IMMUNE'
+                        ? 'невосприимчив'
+                        : 'решает ведущий'
+                }`,
+            )
+            .join(', ')}.`
+        : '';
+      const summary0 = hits.length
         ? `${fire}${react}${hits
             .map((h) => `${locationName(h.location)} — урон ${h.finalDamage}`)
             .join('; ')}. ${name(a.command.target)}: ${a.hp[a.command.target]}${
@@ -238,6 +256,7 @@ export function describeEntry(
         : reaction && reaction.cancelledHits > 0
           ? `${fire}${react}Урона нет.`
           : `${fire}Промах — урон не бросается.`;
+      const summary = `${summary0}${supText}`;
       return {
         ...base,
         title: `${name(a.command.actor)} → ${name(a.command.target)} (${weapon})`,

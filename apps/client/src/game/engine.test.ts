@@ -122,7 +122,11 @@ describe('Melee and GM questions', () => {
   });
   it('a burst fires exactly the weapon rate (ruling 78): short burst 3 = 3 shots × Заряд 7', () => {
     const b = started();
-    const r = attack(b, shot({ id: 'burst', mode: 'short-burst', shots: 1 }), fixedDice('100:90'));
+    const r = attack(
+      b,
+      shot({ id: 'burst', mode: 'short-burst', shots: 1, answers: { 'cover:pak': 0 } }),
+      fixedDice('100:90,100:10'),
+    );
     expect((r as { result: { attack: { shotsFired: number } } }).result.attack.shotsFired).toBe(3);
     expect(b.ammo['kelus-drakar:0']).toBe(60 - 21);
   });
@@ -194,14 +198,20 @@ describe('Heavy weapon on a support («Бой» A55)', () => {
     ]);
     startCombat(b, fixedDice('10:9,10:2'));
     const burst = (id: string) =>
-      shot({ id, actor: 'gunner', weapon: 'gunner:0', mode: 'short-burst' });
+      shot({
+        id,
+        actor: 'gunner',
+        weapon: 'gunner:0',
+        mode: 'short-burst',
+        answers: { 'cover:pak': 0 },
+      });
     expect(() => attack(b, burst('b1'), fixedDice('100:90'))).toThrow(/Unbraced/);
     expect(String((b.log.at(-1)!.detail as { reason: string }).reason)).toMatch(/без опоры/);
     expect(weaponBraced(b, 'gunner:0')).toBe(false);
     braceWeapon(b, { id: 'brace', actor: 'gunner', weapon: 'gunner:0' });
     expect(weaponBraced(b, 'gunner:0')).toBe(true);
     expect(turnInfo(b).od).toBe(1);
-    const r = attack(b, burst('b2'), fixedDice('100:90'));
+    const r = attack(b, burst('b2'), fixedDice('100:90,100:10'));
     expect((r as { result: { attack: { shotsFired: number } } }).result.attack.shotsFired).toBe(
       stubber.rof!.short!,
     );
@@ -229,8 +239,14 @@ describe('Talent «Бугрящиеся бицепсы»', () => {
     expect(heavyFromHands(b, 'gunner')).toBe(true);
     const r = attack(
       b,
-      shot({ id: 'hands', actor: 'gunner', weapon: 'gunner:0', mode: 'short-burst' }),
-      fixedDice('100:90'),
+      shot({
+        id: 'hands',
+        actor: 'gunner',
+        weapon: 'gunner:0',
+        mode: 'short-burst',
+        answers: { 'cover:pak': 0 },
+      }),
+      fixedDice('100:90,100:10'),
     );
     const res = (
       r as { result: { attack: { shotsFired: number; check: { modifiers: { id: string }[] } } } }
@@ -258,13 +274,14 @@ describe('GM view: what every die was rolled for', () => {
     startCombat(b, fixedDice('10:9,10:2'));
     attack(
       b,
-      shot({ id: 'gm', mode: 'short-burst' }),
-      fixedDice('100:15,2:2,10:8,2:1,100:66,10:8,2:2,100:31,10:1'),
+      shot({ id: 'gm', mode: 'short-burst', answers: { 'cover:pak': 0 } }),
+      fixedDice('100:15,2:2,100:10,10:8,2:1,100:66,10:8,2:2,100:31,10:1'),
     );
     const d = b.log.at(-1)!.detail as { rollPurposes: string[] };
     expect(d.rollPurposes).toEqual([
       'тест попадания',
       'сторона попадания',
+      'тест подавления (СВ)',
       'урон',
       'сторона (последствие ранения)',
       'тест последствия ранения',
@@ -282,8 +299,8 @@ describe('Reactions of the target', () => {
     startCombat(b, fixedDice('10:9,10:2'));
     const r = attack(
       b,
-      shot({ id: 'dodge', mode: 'short-burst', defense: 'DODGE' }),
-      fixedDice('100:15,100:10'),
+      shot({ id: 'dodge', mode: 'short-burst', defense: 'DODGE', answers: { 'cover:pak': 0 } }),
+      fixedDice('100:15,100:10,100:10'),
     );
     const res = (r as { result: { reaction: { cancelledHits: number }; hits: unknown[] } }).result;
     expect(res.reaction.cancelledHits).toBe(3);
@@ -539,3 +556,21 @@ describe('Picking a weapon up (ruling 82)', () => {
     expect(weaponInHand(replayed, 'trooper:0')).toBe(true);
   });
 });
+
+describe('Suppression («Бой» A12–A15)', () => {
+  it('a single shot with 3+ degrees suppresses the target; next turn it has 1 ОД', () => {
+    const b = started();
+    // Attack roll 01 gives 3+ degrees; every later d100 (the СВ test) is 99 — a failure.
+    const r = attack(b, shot({ id: 'sup', answers: { 'cover:pak': 0 } }), {
+      roll: (sides: number) => (sides === 100 ? (supRolls++ === 0 ? 1 : 99) : 5),
+    });
+    expect(r.status).toBe('RESOLVED');
+    const sup = (r as { result: { suppression: { targets: { status: string }[] } } }).result
+      .suppression;
+    expect(sup.targets[0]?.status).toBe('SUPPRESSED');
+    nextTurn(b, fixedDice(''));
+    expect(turnInfo(b).active).toBe('pak');
+    expect(turnInfo(b).od).toBe(1);
+  });
+});
+let supRolls = 0;

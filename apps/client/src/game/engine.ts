@@ -9,6 +9,8 @@ import type {
   FireMode,
   MeleeHitRecord,
   ProtectionRuntimeState,
+  RangedAttackResult,
+  Suppressed,
   ResolutionContext,
   WeaponTraitReference,
   WoundRuntimeState,
@@ -51,6 +53,10 @@ import {
   resolveWoundAwareAction,
   resolveWoundRoundEnd,
   resolveWoundTurnStart,
+  resolveSuppression,
+  resolveSuppressionTurnStart,
+  suppressionEventFromRanged,
+  suppressionTrigger,
   rollDie,
   strengthRequirement,
 } from '@kadat/rules-engine';
@@ -122,6 +128,8 @@ export interface GmQuestion {
 export interface EngineState {
   wounds: WoundRuntimeState;
   protection: ProtectionRuntimeState;
+  /** Suppression conditions and processed source events («Бой» A10–A15). */
+  suppression: { suppressed: Suppressed[]; processedEventIds: string[] };
   /** ОБ lost by armour zones (e.g. «Цепное»), key `${actor}:${zone}`. */
   armorLoss: Record<string, number>;
   committed: string[];
@@ -169,7 +177,7 @@ function ask(command: AttackCommand, question: GmQuestion): number {
 }
 const engines = new WeakMap<Battle, EngineState>();
 /** What the next die of an attack is rolled for; read by the dice tape for the GM view. */
-type RollPhase = 'turn' | 'attack' | 'damage' | 'consequence';
+type RollPhase = 'turn' | 'attack' | 'suppression' | 'damage' | 'consequence';
 let rollPhase: RollPhase = 'attack';
 const setPhase = (p: RollPhase) => {
   rollPhase = p;
@@ -179,6 +187,7 @@ export function rollPurpose(phase: RollPhase, sides: number): string {
   if (phase === 'turn') return 'начало хода';
   if (phase === 'attack')
     return sides === 100 ? 'тест попадания' : sides === 2 ? 'сторона попадания' : 'атака';
+  if (phase === 'suppression') return 'тест подавления (СВ)';
   if (phase === 'damage') return 'урон';
   return sides === 100
     ? 'тест последствия ранения'
@@ -251,6 +260,7 @@ export function getEngine(b: Battle): EngineState {
     ),
     protection: { sources: {}, covers: {}, fields: [], resolvedHitIds: [] },
     armorLoss: {},
+    suppression: { suppressed: [], processedEventIds: [] },
     committed: [],
     moves: [],
   };
@@ -297,6 +307,26 @@ function begin(state: EngineState, rng: DiceSource, logs: unknown[]) {
   if (hooked.status !== 'RESOLVED')
     throw new ContextRequired(JSON.stringify(hooked.pendingIntents));
   state.wounds = hooked.state;
+  // Suppressed at the start of the own turn: 1 ОД and −20 НС, a Will test from the 2nd turn.
+  const sup = resolveSuppressionTurnStart(
+    {
+      combat: state.wounds.combat,
+      equipment: [],
+      suppressed: state.suppression.suppressed,
+      processedEventIds: state.suppression.processedEventIds,
+    },
+    ref(id),
+    context(state.wounds.combat, id),
+    rng,
+    state.wounds,
+  );
+  logs.push(...sup.logs);
+  if (sup.status !== 'RESOLVED') throw new ContextRequired(intentText(sup.pending ?? []));
+  state.wounds = { ...state.wounds, combat: sup.state.combat };
+  state.suppression = {
+    suppressed: [...sup.state.suppressed],
+    processedEventIds: [...sup.state.processedEventIds],
+  };
 }
 
 type Zone = 'head' | 'torso' | 'arms' | 'legs';
@@ -505,6 +535,93 @@ function parryRequest(
   };
 }
 
+const SUPPRESSION_CLASS: Record<string, 'PISTOL' | 'BASIC' | 'HEAVY'> = {
+  П: 'PISTOL',
+  ОС: 'BASIC',
+  ТО: 'HEAVY',
+};
+/**
+ * Suppression after a shot («Бой» A12–A15): a single shot with 3+ degrees suppresses its target,
+ * a burst everyone within 10 m of the target. The GM says for each affected participant whether
+ * cover is within СКР (cover rules are not on the map yet). Problems the core cannot settle
+ * (an already suppressed target and the like) are shown to the GM and change nothing.
+ */
+function applySuppression(
+  b: Battle,
+  state: EngineState,
+  command: AttackCommand,
+  weaponClass: string,
+  result: RangedAttackResult,
+  rng: DiceSource,
+  logs: unknown[],
+) {
+  const cls = SUPPRESSION_CLASS[weaponClass];
+  if (!cls) return null;
+  const event = suppressionEventFromRanged({
+    attackId: command.id,
+    sourceActor: ref(command.actor),
+    primaryTarget: ref(command.target),
+    weapon: source,
+    weaponClass: cls,
+    result,
+    provenance,
+  });
+  const trigger = suppressionTrigger(event);
+  if (!trigger.triggered) return null;
+  const at = posOf(b, command.target);
+  const candidates = actorIds(b)
+    .filter((id) => id !== command.actor && state.wounds.actors[id]?.life.status === 'ALIVE')
+    .map((id) => {
+      const p = posOf(b, id);
+      return { id, distance: Math.hypot(p.x - at.x, p.y - at.y) };
+    })
+    .filter((c) =>
+      trigger.radius === null ? c.id === command.target : c.distance <= trigger.radius,
+    )
+    .map((c) => ({
+      actor: ref(c.id),
+      distanceFromPrimaryTarget: c.distance,
+      nearestCoverWithinSpeed: ask(command, {
+        key: `cover:${c.id}`,
+        text: `Подавление: у ${actorName(b, c.id)} есть укрытие в пределах СКР? (провал теста СВ — укрыться или лечь)`,
+        options: [
+          { label: 'Есть', value: 1 },
+          { label: 'Нет', value: 0 },
+        ],
+      })
+        ? ('YES' as const)
+        : ('NO' as const),
+      context: context(state.wounds.combat, c.id, command.actor),
+      provenance,
+    }));
+  if (!candidates.length) return null;
+  setPhase('suppression');
+  const r = resolveSuppression(
+    {
+      combat: state.wounds.combat,
+      equipment: [],
+      suppressed: state.suppression.suppressed,
+      processedEventIds: state.suppression.processedEventIds,
+    },
+    event,
+    candidates,
+    rng,
+    state.wounds,
+  );
+  logs.push(...r.logs);
+  const summary = r.targets
+    .filter((t) => t.status !== 'NOT_AFFECTED')
+    .map((t) => ({ actor: t.actor.actorId, status: t.status, modifier: t.modifier }));
+  if (r.status === 'RESOLVED') {
+    state.wounds = { ...state.wounds, combat: r.state.combat };
+    state.suppression = {
+      suppressed: [...r.state.suppressed],
+      processedEventIds: [...r.state.processedEventIds],
+    };
+  }
+  return { status: r.status, targets: summary };
+}
+
 /** Damage of one hit: dice, weapon properties, zone armour, endurance and wounds. */
 function resolveHit(
   b: Battle,
@@ -708,6 +825,7 @@ function resolve(
   const hits: DamageInput[] = [];
   let attack: unknown, degrees: number;
   let reaction: unknown = null;
+  let suppression: unknown = null;
   if (kind === 'ranged') {
     const mode = command.mode ?? 'single';
     // Ruling 78: a mode fires exactly the weapon's rate (short burst 3 — three shots).
@@ -748,6 +866,7 @@ function resolve(
     degrees = result.check.totalDegrees;
     hits.push(...result.hits.map((h) => damageInputFromHit(h)));
     if (result.dodge) reaction = result.dodge;
+    suppression = applySuppression(b, state, command, arsenalWeapon.weaponClass, result, rng, logs);
   } else {
     const meleeAvoidance =
       command.defense === 'DODGE'
@@ -800,6 +919,7 @@ function resolve(
     attack,
     hits: damage,
     reaction: reaction ?? 'declined',
+    ...(suppression ? { suppression } : {}),
   };
 }
 

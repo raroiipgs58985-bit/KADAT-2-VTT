@@ -99,7 +99,7 @@ it('malfunction preserves accepted actual fired quantity without spending again'
     a.state.containers['mag:A']?.currentRounds,
   );
 });
-it('adapter rejects inconsistent ammo/shot accepted result', () => {
+it('adapter rejects fewer rounds spent than shots fired (Заряд may spend more)', () => {
   const s = dState();
   const a = resolveRangedAttack(s.combat, attack(), rng(41));
   expect(() =>
@@ -109,7 +109,7 @@ it('adapter rejects inconsistent ammo/shot accepted result', () => {
       primaryTarget: { actorId: 'B' },
       weapon: source,
       weaponClass: 'BASIC',
-      result: { ...a.result, ammoSpent: 2 },
+      result: { ...a.result, shotsFired: 3, ammoSpent: 2 },
       provenance,
     }),
   ).toThrow('firing quantity');
