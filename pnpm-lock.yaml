@@ -70,6 +70,8 @@ importers:
         specifier: 5.12.5
         version: 5.12.5
 
+  packages/canonical-data: {}
+
   packages/contracts: {}
 
   packages/rules-engine:

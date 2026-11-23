@@ -1,0 +1,19 @@
+{
+  "name": "@kadat/canonical-data",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./dataset/arsenal.json": "./dataset/arsenal.json"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "build:arsenal": "tsx scripts/build-arsenal.ts"
+  }
+}
