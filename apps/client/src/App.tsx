@@ -15,6 +15,7 @@ import {
   resumeAttack,
   takeWeapon,
   dropWeapon,
+  pickUpWeapon,
   weaponInHand,
   readyCost,
   combatStarted,
@@ -967,6 +968,15 @@ export function App() {
                     onTake={(id) =>
                       run((b) =>
                         takeWeapon(b, { id: commandId('take'), actor: info.active, weapon: id }),
+                      )
+                    }
+                    onPickUp={(id) =>
+                      run((b) =>
+                        pickUpWeapon(b, {
+                          id: commandId('pickup'),
+                          actor: info.active,
+                          weapon: id,
+                        }),
                       )
                     }
                     onDrop={(id) =>

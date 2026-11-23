@@ -24,6 +24,10 @@ import {
   weaponInHand,
   reloadCost,
   readyCost,
+  pickUpWeapon,
+  pickUpCost,
+  weaponDropped,
+  weaponHanging,
   type AttackCommand,
 } from './engine';
 import { fixedDice } from './dice';
@@ -492,5 +496,46 @@ describe('«Избирательная атака» (2 ОД, «Бой» A52)', (
     expect(r.status).toBe('RESOLVED');
     const res = (r as { result: { hits: { location: string }[] } }).result;
     expect(res.hits[0]?.location).toBe('Left Leg');
+  });
+});
+
+describe('Picking a weapon up (ruling 82)', () => {
+  const trooperBattle = async (sling: boolean) => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const gun = matchWeaponByName('Хот-шот лазган')!;
+    const trooper = {
+      ...emptyCharacter('trooper', 'Боец'),
+      weapons: [{ name: gun.name, ref: gun.id, ...(sling ? { sling: true } : {}) }],
+    };
+    const b = createBattle([
+      { character: trooper, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'trooper' },
+      { character: characterFromProfile('pak'), side: 'b', at: { x: 15.5, y: 10.5 }, id: 'pak' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    return b;
+  };
+  it('dropped on the floor: picking up costs 1 ОД after the Free Action went on dropping', async () => {
+    const b = await trooperBattle(false);
+    dropWeapon(b, { id: 'drop', actor: 'trooper', weapon: 'trooper:0' });
+    expect(weaponDropped(b, 'trooper:0')).toBe(true);
+    expect(pickUpCost(b)).toBe('1 ОД');
+    expect(() => takeWeapon(b, { id: 'take', actor: 'trooper', weapon: 'trooper:0' })).toThrow();
+    pickUpWeapon(b, { id: 'up', actor: 'trooper', weapon: 'trooper:0' });
+    expect(weaponInHand(b, 'trooper:0')).toBe(true);
+    expect(turnInfo(b).od).toBe(1);
+  });
+  it('on a sling the weapon hangs; next turn it is taken back for the Free Action', async () => {
+    const b = await trooperBattle(true);
+    dropWeapon(b, { id: 'let-go', actor: 'trooper', weapon: 'trooper:0' });
+    expect(weaponHanging(b, 'trooper:0')).toBe(true);
+    expect(weaponDropped(b, 'trooper:0')).toBe(false);
+    nextTurn(b, fixedDice(''));
+    nextTurn(b, fixedDice(''));
+    expect(pickUpCost(b)).toBe('СД');
+    pickUpWeapon(b, { id: 'back', actor: 'trooper', weapon: 'trooper:0' });
+    expect(weaponInHand(b, 'trooper:0')).toBe(true);
+    expect(turnInfo(b).od).toBe(2);
+    const replayed = importReplay(JSON.parse(JSON.stringify(exportReplay(b))));
+    expect(weaponInHand(replayed, 'trooper:0')).toBe(true);
   });
 });

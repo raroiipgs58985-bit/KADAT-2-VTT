@@ -78,6 +78,10 @@ export interface WeaponInstance {
   readonly modifications: readonly WeaponProfileContribution[];
   readonly loadedContainerId: string | null;
   readonly jammed: boolean;
+  /** Dropped on the floor (ruling 81); picked up for СД or 1 ОД (ruling 82). */
+  readonly dropped?: boolean;
+  /** Hangs on a sling or chain after being let go (ruling 81). */
+  readonly hanging?: boolean;
   /** Heavy weapon set on a support («Бой» A55); any movement of the owner removes it (ruling 41). */
   readonly braced?: boolean;
   /** Reload longer than the OD left this turn continues next turn. */

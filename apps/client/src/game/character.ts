@@ -45,7 +45,12 @@ export interface CharacterDocument {
   readonly skills: readonly { readonly name: string; readonly bonus: number }[];
   readonly talents: readonly string[];
   /** Weapons from the Arsenal (ruling 48): `ref` is the Arsenal record once it is loaded. */
-  readonly weapons: readonly { readonly name: string; readonly ref: string | null }[];
+  readonly weapons: readonly {
+    readonly name: string;
+    readonly ref: string | null;
+    /** Carried on a sling or chain: let go, it hangs instead of falling (rulings 81–82). */
+    readonly sling?: boolean;
+  }[];
   /** Armour items from the Arsenal (v2); `armour` above holds the ОБ used in combat. */
   readonly armourItems: readonly { readonly name: string; readonly ref: string | null }[];
   /** «Особенности», implants and other combat-relevant text kept as written. */
@@ -153,7 +158,8 @@ export function characterProblems(c: CharacterDocument): string[] {
       (w) =>
         !text(w.name, L.maxItemText) ||
         !w.name.trim() ||
-        !(w.ref === null || text(w.ref, L.maxItemText)),
+        !(w.ref === null || text(w.ref, L.maxItemText)) ||
+        !(w.sling === undefined || typeof w.sling === 'boolean'),
     )
   )
     p.push('Оружие: до 80 записей');

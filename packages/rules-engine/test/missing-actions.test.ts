@@ -325,3 +325,34 @@ describe('Changing weapons and rapid reload (ruling 81)', () => {
     expect(r.state.session.turn?.od).toBe(2);
   });
 });
+
+describe('Picking a weapon up (ruling 82)', () => {
+  test('from the floor for the Free Action, or 1 ОД once it is spent; a sling keeps it hanging', async () => {
+    const { b1State, action } = await import('./b1-fixtures.js');
+    const { dropWeapon, pickUpWeapon } = await import('../src/index.js');
+    const state = b1State();
+    const dropped = dropWeapon(state, {
+      ...action('drop', 'drop-weapon'),
+      type: 'drop-weapon',
+      weaponId: 'gun:A',
+    }).state;
+    expect(dropped.weapons['gun:A']).toMatchObject({ readied: false, dropped: true });
+    // The Free Action went on dropping: picking up now costs 1 ОД.
+    const up = pickUpWeapon(dropped, {
+      ...action('up', 'pick-up-weapon'),
+      type: 'pick-up-weapon',
+      weaponId: 'gun:A',
+    });
+    expect(up.result.free).toBe(false);
+    expect(up.state.session.turn?.od).toBe(1);
+    expect(up.state.weapons['gun:A']!.readied).toBe(true);
+    expect(up.state.weapons['gun:A']!.dropped).toBeUndefined();
+    const slung = dropWeapon(state, {
+      ...action('sling', 'drop-weapon'),
+      type: 'drop-weapon',
+      weaponId: 'gun:A',
+      sling: true,
+    }).state;
+    expect(slung.weapons['gun:A']).toMatchObject({ readied: false, hanging: true });
+  });
+});

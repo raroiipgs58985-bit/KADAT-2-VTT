@@ -42,6 +42,8 @@ export interface BattleWeapon {
   /** Arsenal record (ruling 76: weapons in combat come only from the Arsenal); null — not found. */
   arsenal: ArsenalWeapon | null;
   capacity: number | null;
+  /** On a sling or chain (rulings 81–82). */
+  sling: boolean;
 }
 /** Participants in initiative-independent order (the order they were added). */
 export const actorIds = (b: Battle): ActorId[] => Object.keys(b.roster);
@@ -65,6 +67,7 @@ export function battleWeapons(b: Battle, owner?: ActorId): BattleWeapon[] {
           name: w.name,
           arsenal,
           capacity: arsenal?.magazine ?? null,
+          sling: !!w.sling,
         };
       }),
     );

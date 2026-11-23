@@ -310,9 +310,17 @@ export function describeEntry(
       return {
         ...base,
         title: `${name((d.command as { actor: string }).actor)} бросает ${String(d.weaponName)}`,
-        summary: 'Оружие брошено на пол (СД).',
+        summary: d.sling ? 'Отпущено и повисло на ремне (СД).' : 'Оружие брошено на пол (СД).',
         tone: 'info',
       };
+    case 'pick-up-weapon':
+      return {
+        ...base,
+        title: `${name((d.command as { actor: string }).actor)} ${d.from === 'sling' ? 'берёт с ремня' : 'поднимает'} ${String(d.weaponName)}`,
+        summary: `Оружие в руках (${String(d.cost)}, решение 82).`,
+        tone: 'success',
+      };
+    case 'pick-up-weapon-rejected':
     case 'take-weapon-rejected':
     case 'drop-weapon-rejected':
       return { ...base, title: 'Не удалось', summary: String(d.reason), tone: 'warning' };

@@ -17,6 +17,7 @@ import type {
 import {
   adjustDamageDice,
   dropWeapon as coreDropWeapon,
+  pickUpWeapon as corePickUpWeapon,
   putInHand,
   readyWeapon as coreReadyWeapon,
   QUICK_DRAW_TALENT,
@@ -1153,6 +1154,11 @@ const coreMessages: [RegExp, string][] = [
     'Оружие не в руках: сначала «Взять в руки» (1 ОД, решение 81)',
   ],
   [/Weapon is not in hand/, 'Это оружие не в руках'],
+  [
+    /Weapon must be picked up/,
+    'Оружие на полу или на ремне: его поднимают («Поднять», решение 82)',
+  ],
+  [/Weapon is not dropped or hanging/, 'Оружие не на полу и не на ремне'],
   [/Parry requires an eligible weapon/, 'Этим оружием нельзя парировать'],
   [/Incoming action is not dodgeable/, 'От этой атаки нельзя уклониться'],
   [/Dodge prohibited by effect/, 'Уклонение запрещено состоянием цели'],
@@ -1643,8 +1649,59 @@ export function weaponInHand(b: Battle, weaponId: WeaponId): boolean {
   if (ranged) return ranged.readied;
   return !!combat.melee?.weapons[weaponId]?.held;
 }
-export const weaponDropped = (b: Battle, weaponId: WeaponId) =>
-  !!getEngine(b).wounds.combat.melee?.weapons[weaponId]?.dropped;
+export const weaponDropped = (b: Battle, weaponId: WeaponId) => {
+  const c = getEngine(b).wounds.combat;
+  return !!(c.weapons[weaponId]?.dropped ?? c.melee?.weapons[weaponId]?.dropped);
+};
+export const weaponHanging = (b: Battle, weaponId: WeaponId) => {
+  const c = getEngine(b).wounds.combat;
+  return !!(c.weapons[weaponId]?.hanging ?? c.melee?.weapons[weaponId]?.hanging);
+};
+/** Picking up or taking from a sling: СД, or 1 ОД once it is spent (ruling 82). */
+export const pickUpCost = (b: Battle) =>
+  getEngine(b).wounds.combat.session.turn?.flags.some((f) => f.startsWith('free-action:'))
+    ? '1 ОД'
+    : 'СД';
+const slingOf = (b: Battle, weaponId: WeaponId) => {
+  const [owner, index] = weaponId.split(':');
+  return !!b.roster[owner!]?.character.weapons[Number(index)]?.sling;
+};
+/** Pick a weapon up from the floor or take it from the sling (ruling 82). */
+export function pickUpWeapon(b: Battle, command: { id: string; actor: ActorId; weapon: WeaponId }) {
+  const state = getEngine(b);
+  try {
+    combatant(b, command.actor);
+    if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
+    movementGate(state, command.actor);
+    const hanging = weaponHanging(b, command.weapon);
+    const r = corePickUpWeapon(state.wounds.combat, {
+      id: command.id,
+      type: 'pick-up-weapon',
+      actor: ref(command.actor),
+      weaponId: command.weapon,
+      context: context(state.wounds.combat, command.actor),
+    });
+    const next = structuredClone(state);
+    next.wounds = { ...next.wounds, combat: r.state };
+    next.committed.push(command.id);
+    sync(b, next);
+    append(b, 'pick-up-weapon', {
+      command,
+      weaponName: weaponOf(b, command.weapon)?.name ?? command.weapon,
+      from: hanging ? 'sling' : 'floor',
+      cost: r.result.free ? 'СД' : '1 ОД',
+      committed: true,
+    });
+    return { status: 'RESOLVED' as const };
+  } catch (error) {
+    append(b, 'pick-up-weapon-rejected', {
+      command,
+      reason: explainEngineError(error),
+      committed: false,
+    });
+    throw error;
+  }
+}
 const hasTalentNamed = (b: Battle, actorId: ActorId, talent: string) =>
   canonicalTalents(b.roster[actorId]?.character.talents ?? []).includes(talent);
 /** Cost of taking a weapon in hand: 1 ОД, or СД with «Быстрое выхватывание» (ruling 81). */
@@ -1708,11 +1765,13 @@ export function dropWeapon(b: Battle, command: { id: string; actor: ActorId; wea
     combatant(b, command.actor);
     if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
     movementGate(state, command.actor);
+    const sling = slingOf(b, command.weapon);
     const r = coreDropWeapon(state.wounds.combat, {
       id: command.id,
       type: 'drop-weapon',
       actor: ref(command.actor),
       weaponId: command.weapon,
+      ...(sling ? { sling: true } : {}),
       context: context(state.wounds.combat, command.actor),
     });
     const next = structuredClone(state);
@@ -1721,6 +1780,7 @@ export function dropWeapon(b: Battle, command: { id: string; actor: ActorId; wea
     sync(b, next);
     append(b, 'drop-weapon', {
       command,
+      sling,
       weaponName: weaponOf(b, command.weapon)?.name ?? command.weapon,
       committed: true,
     });

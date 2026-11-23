@@ -34,6 +34,7 @@ export type CombatActionType =
   | 'brace-weapon'
   | 'ready-weapon'
   | 'drop-weapon'
+  | 'pick-up-weapon'
   | GrappleAction;
 
 export interface ActionDefinition {

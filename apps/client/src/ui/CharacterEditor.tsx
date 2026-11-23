@@ -511,6 +511,13 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
             return w ? weaponSummary(w) : 'нет в Арсенале — только название';
           }}
           onRemove={(i) => set({ weapons: doc.weapons.filter((_, j) => j !== i) })}
+          onSling={(i, sling) =>
+            set({
+              weapons: doc.weapons.map((w, j) =>
+                j === i ? (sling ? { ...w, sling: true } : { name: w.name, ref: w.ref }) : w,
+              ),
+            })
+          }
         />
         <ArsenalSearch
           label="Найти оружие в Арсенале"
@@ -592,9 +599,11 @@ const currentOr = (d: CharacterDocument) => d.movement.options[d.movement.curren
 
 /** Items chosen from the Arsenal, with their profile line. */
 function ItemList(props: {
-  items: readonly { name: string; ref: string | null }[];
+  items: readonly { name: string; ref: string | null; sling?: boolean }[];
   describe: (ref: string | null) => string;
   onRemove: (index: number) => void;
+  /** Weapons: «на ремне / цепи» (rulings 81–82). */
+  onSling?: (index: number, sling: boolean) => void;
 }) {
   if (!props.items.length) return <p className="muted small">Пока ничего не выбрано.</p>;
   return (
@@ -604,6 +613,16 @@ function ItemList(props: {
           <div>
             <strong>{it.name}</strong>
             <span className="muted small">{props.describe(it.ref)}</span>
+            {props.onSling && (
+              <label className="check small">
+                <input
+                  type="checkbox"
+                  checked={!!it.sling}
+                  onChange={(e) => props.onSling!(i, e.target.checked)}
+                />
+                на ремне / цепи
+              </label>
+            )}
           </div>
           <button type="button" className="btn-ghost" onClick={() => props.onRemove(i)}>
             Убрать

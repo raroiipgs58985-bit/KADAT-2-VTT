@@ -7,6 +7,8 @@ import {
   weaponState,
   weaponInHand,
   weaponDropped,
+  weaponHanging,
+  pickUpCost,
   readyCost,
   reloadCost,
   type TurnActionType,
@@ -558,6 +560,7 @@ export function ActionsPanel(props: {
   onAction: (type: TurnActionType, weapon?: WeaponId) => void;
   onTake: (weapon: WeaponId) => void;
   onDrop: (weapon: WeaponId) => void;
+  onPickUp: (weapon: WeaponId) => void;
 }) {
   const all = battleWeapons(props.battle, props.actor).filter(
     (w) => w.arsenal && !weaponProblem(w.arsenal),
@@ -601,13 +604,26 @@ export function ActionsPanel(props: {
               <strong>{w.name}</strong>
               <span className="muted small">
                 {' '}
-                · {held ? 'в руках' : weaponDropped(props.battle, w.id) ? 'на полу' : 'убрано'}
+                ·{' '}
+                {held
+                  ? 'в руках'
+                  : weaponDropped(props.battle, w.id)
+                    ? 'на полу'
+                    : weaponHanging(props.battle, w.id)
+                      ? 'висит на ремне'
+                      : 'убрано'}
               </span>
             </div>
             <div className="row">
               {held ? (
                 <button type="button" disabled={!props.canAct} onClick={() => props.onDrop(w.id)}>
-                  Бросить на пол <span className="muted small">СД</span>
+                  {w.sling ? 'Отпустить на ремень' : 'Бросить на пол'}{' '}
+                  <span className="muted small">СД</span>
+                </button>
+              ) : weaponDropped(props.battle, w.id) || weaponHanging(props.battle, w.id) ? (
+                <button type="button" disabled={!props.canAct} onClick={() => props.onPickUp(w.id)}>
+                  {weaponHanging(props.battle, w.id) ? 'Взять с ремня' : 'Поднять'}{' '}
+                  <span className="muted small">{pickUpCost(props.battle)}</span>
                 </button>
               ) : (
                 <button type="button" disabled={!props.canAct} onClick={() => props.onTake(w.id)}>

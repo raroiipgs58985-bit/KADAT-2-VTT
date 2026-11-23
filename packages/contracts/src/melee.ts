@@ -59,6 +59,8 @@ export interface MeleeWeaponInstance {
   readonly held: boolean;
   readonly readied: boolean;
   readonly dropped: boolean;
+  /** Hangs on a sling or chain after being let go (ruling 81). */
+  readonly hanging?: boolean;
   readonly pattern?: MeleeContribution;
   readonly modifications: readonly MeleeContribution[];
   /** Explicit canonical substitute, not a guessed mace catalog entry. */

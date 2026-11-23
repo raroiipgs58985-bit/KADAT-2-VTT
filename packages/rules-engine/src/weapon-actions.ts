@@ -93,6 +93,8 @@ export function readyWeapon(
     throw new Error('Invalid actor/selected weapon');
   if (melee?.template.profile.family === 'natural')
     throw new Error('Invalid actor/selected weapon');
+  if (ranged?.dropped || ranged?.hanging || melee?.dropped || melee?.hanging)
+    throw new Error('Weapon must be picked up');
   const free = hasTalent(state, actorId, QUICK_DRAW_TALENT);
   const context = scopedContext(state, request.actor, request.context, [], ['action:ready-weapon']);
   const action = free ? definition('free-action', 0) : definition('ready-weapon', 1);
@@ -126,7 +128,14 @@ export function putInHand(
   const weapons = Object.fromEntries(
     Object.values(state.weapons)
       .filter((w) => w.owner.actorId === actorId)
-      .map((w) => [w.id, { ...w, readied: w.id === weaponId, braced: false }]),
+      .map((w) => {
+        const next = { ...w, readied: w.id === weaponId, braced: false };
+        if (w.id === weaponId) {
+          delete (next as { dropped?: boolean }).dropped;
+          delete (next as { hanging?: boolean }).hanging;
+        }
+        return [w.id, next];
+      }),
   );
   const melee = state.melee;
   if (!melee) return { ...state, weapons: { ...state.weapons, ...weapons } };
@@ -140,6 +149,7 @@ export function putInHand(
           held: w.id === weaponId,
           readied: w.id === weaponId,
           dropped: w.id === weaponId ? false : w.dropped,
+          ...(w.id === weaponId ? { hanging: false } : {}),
         },
       ]),
   );
@@ -161,6 +171,8 @@ export function putInHand(
 export interface DropWeaponRequest extends ActionRequest {
   readonly type: 'drop-weapon';
   readonly weaponId: string;
+  /** On a sling or chain the weapon hangs on the character instead of falling (ruling 81). */
+  readonly sling?: boolean;
 }
 /** Drop the weapon in hand on the floor — the turn's Free Action, not putting it away (81). */
 export function dropWeapon(
@@ -180,7 +192,15 @@ export function dropWeapon(
   if (ranged)
     next = {
       ...next,
-      weapons: { ...next.weapons, [ranged.id]: { ...ranged, readied: false, braced: false } },
+      weapons: {
+        ...next.weapons,
+        [ranged.id]: {
+          ...ranged,
+          readied: false,
+          braced: false,
+          ...(request.sling ? { hanging: true } : { dropped: true }),
+        },
+      },
     };
   if (melee && next.melee)
     next = {
@@ -189,7 +209,13 @@ export function dropWeapon(
         ...next.melee,
         weapons: {
           ...next.melee.weapons,
-          [melee.id]: { ...melee, held: false, readied: false, dropped: true },
+          [melee.id]: {
+            ...melee,
+            held: false,
+            readied: false,
+            dropped: !request.sling,
+            ...(request.sling ? { hanging: true } : {}),
+          },
         },
       },
     };
@@ -204,6 +230,52 @@ export function dropWeapon(
     state: next,
     execution,
     result: { weaponId: request.weaponId },
+    logs: [actionLog(state, execution)],
+  };
+}
+
+export interface PickUpWeaponRequest extends ActionRequest {
+  readonly type: 'pick-up-weapon';
+  readonly weaponId: string;
+}
+/**
+ * Pick a dropped weapon up from the floor, or take one hanging on a sling back in hand
+ * (ruling 82): the turn's Free Action, or 1 ОД once it is spent.
+ */
+export function pickUpWeapon(
+  state: CombatActionState,
+  request: PickUpWeaponRequest,
+): ActionResolution<{ readonly weaponId: string; readonly free: boolean }> {
+  if (request.type !== 'pick-up-weapon') throw new Error('Invalid pick-up request');
+  const actorId = request.actor.actorId;
+  const ranged = state.weapons[request.weaponId];
+  const melee = state.melee?.weapons[request.weaponId];
+  if ((!ranged && !melee) || (ranged ?? melee)!.owner.actorId !== actorId)
+    throw new Error('Invalid actor/selected weapon');
+  if (!(ranged?.dropped || ranged?.hanging || melee?.dropped || melee?.hanging))
+    throw new Error('Weapon is not dropped or hanging');
+  const free = !(state.session.turn?.flags.some((f) => f.startsWith('free-action:')) ?? false);
+  const context = scopedContext(
+    state,
+    request.actor,
+    request.context,
+    [],
+    ['action:pick-up-weapon'],
+  );
+  const action = free ? definition('free-action', 0) : definition('pick-up-weapon', 1);
+  const spent = spendResources(state, request, action, context, 'own-turn');
+  const next = putInHand(spent.state, actorId, request.weaponId);
+  const execution = {
+    ...spent.execution,
+    mutations: [
+      ...spent.execution.mutations,
+      { type: 'pick-up-weapon', path: `weapons.${request.weaponId}`, before: false, after: true },
+    ],
+  };
+  return {
+    state: next,
+    execution,
+    result: { weaponId: request.weaponId, free },
     logs: [actionLog(state, execution)],
   };
 }
