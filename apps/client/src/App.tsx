@@ -13,6 +13,8 @@ import {
   nextTurn,
   placeActor,
   resumeAttack,
+  braceWeapon,
+  weaponBraced,
   addCombatant,
   removeCombatant,
   setMovementOption,
@@ -943,6 +945,12 @@ export function App() {
                     canAct={canAct}
                     attackedThisTurn={info.attacked}
                     battle={battle}
+                    braced={(id) => weaponBraced(battle, id)}
+                    onBrace={(id) =>
+                      run((b) =>
+                        braceWeapon(b, { id: commandId('brace'), actor: info.active, weapon: id }),
+                      )
+                    }
                     onAttack={() =>
                       run((b) =>
                         attack(

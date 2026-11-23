@@ -15,6 +15,7 @@ import type {
 } from '@kadat/contracts';
 import {
   adjustDamageDice,
+  braceWeapon as coreBraceWeapon,
   armourAfterProperties,
   beginActionRound,
   beginActionTurn,
@@ -734,7 +735,12 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
       !(error instanceof ContextRequired) &&
       !(error instanceof Error && error.message.startsWith('Expected injected'))
     ) {
-      append(b, 'rejected', { command, rolls: used, reason: String(error), committed: false });
+      append(b, 'rejected', {
+        command,
+        rolls: used,
+        reason: explainEngineError(error),
+        committed: false,
+      });
       throw error;
     }
     const reason = String(error instanceof Error ? error.message : error);
@@ -972,9 +978,17 @@ const coreMessages: [RegExp, string][] = [
   [/Second attack requires/, 'В этом ходу атака уже была: разрешена одна атака за ход'],
   [/Free Action already used/, 'Свободное действие (СД) в этом ходу уже использовано'],
   [/unavailable while crawling/, 'Ползком Бег и Спринт недоступны'],
+  [
+    /Unbraced heavy weapon cannot fire bursts/,
+    'Тяжёлое оружие без опоры стреляет только одиночными (−30). Сначала «Установить на опору» (1 ОД, «Бой» A55)',
+  ],
+  [/Weapon is already braced/, 'Оружие уже установлено на опору'],
+  [/Insufficient ammunition/, 'Не хватает боезапаса в магазине'],
+  [/Jammed weapon cannot fire/, 'Оружие заклинило: сначала исправить осечку'],
+  [/Target outside effective melee reach/, 'Цель дальше досягаемости оружия ближнего боя'],
 ];
 const coreErrorPattern =
-  /^(Insufficient|Unavailable|Action |Reaction |Empty or repeated|Free Action|Run and Sprint|Second attack)/;
+  /^(Insufficient|Unavailable|Action |Reaction |Empty or repeated|Free Action|Run and Sprint|Second attack|Unbraced|Weapon is|Jammed|Target outside)/;
 /** Russian explanation for Core validation errors; the original message is kept. */
 export function explainEngineError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -1343,6 +1357,45 @@ export function weaponSupport(b: Battle, id: WeaponId): WeaponSupport {
   return notes.length
     ? { level: 'partial', note: notes.join('. ') }
     : { level: 'supported', note: 'Свойства оружия учитываются автоматически.' };
+}
+
+/** Whether a participant's ranged weapon stands on a support now («Бой» A55). */
+export function weaponBraced(b: Battle, weaponId: WeaponId): boolean {
+  return !!getEngine(b).wounds.combat.weapons[weaponId]?.braced;
+}
+/**
+ * «Установить на опору» (1 ОД, «Бой» A55): a heavy weapon on a support may fire bursts and
+ * loses the −30 for firing unbraced. Any movement of the owner takes it off (ruling 41).
+ */
+export function braceWeapon(b: Battle, command: { id: string; actor: ActorId; weapon: WeaponId }) {
+  const state = getEngine(b);
+  try {
+    combatant(b, command.actor);
+    if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
+    movementGate(state, command.actor);
+    const resolved = coreBraceWeapon(state.wounds.combat, {
+      id: command.id,
+      type: 'brace-weapon',
+      actor: ref(command.actor),
+      weaponId: command.weapon,
+      context: context(state.wounds.combat, command.actor),
+    });
+    const next = structuredClone(state);
+    next.wounds = { ...next.wounds, combat: resolved.state };
+    next.committed.push(command.id);
+    sync(b, next);
+    append(b, 'brace', {
+      command,
+      weaponName: weaponOf(b, command.weapon)?.name ?? command.weapon,
+      odBefore: resolved.execution.odBefore,
+      odAfter: resolved.execution.odAfter,
+      committed: true,
+    });
+    return { status: 'RESOLVED' as const };
+  } catch (error) {
+    append(b, 'brace-rejected', { command, reason: explainEngineError(error), committed: false });
+    throw error;
+  }
 }
 
 /** «Встать» (1 ОД) through the accepted Core; available only when the actor is not standing. */

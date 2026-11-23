@@ -12,6 +12,7 @@ import {
   setDoorLocked,
   setFootprint,
   standUp,
+  braceWeapon,
   addCombatant,
   removeCombatant,
   setSide,
@@ -41,6 +42,7 @@ type Step =
   | { type: 'move'; command: MoveCommand; rolls?: DiceRoll[] }
   | { type: 'fall'; actor: ActorId; x: number; y: number }
   | { type: 'stand'; command: { id: string; actor: ActorId } }
+  | { type: 'brace'; command: { id: string; actor: ActorId; weapon: string } }
   | { type: 'footprint'; actor: ActorId; footprint: Footprint }
   // v0.4: geometry-sensitive commands.
   // v0.5: the map geometry is a reference into the replay's shared snapshot store.
@@ -169,6 +171,10 @@ export function exportReplay(b: Battle): Replay {
       const r = entry.detail as { character: CharacterDocument; side: Side; at: Point };
       steps.push({ type: 'roster-add', character: r.character, side: r.side, at: r.at });
     }
+    if (entry.type === 'brace') {
+      const r = entry.detail as { command: { id: string; actor: ActorId; weapon: string } };
+      steps.push({ type: 'brace', command: r.command });
+    }
     if (entry.type === 'skr') {
       const r = entry.detail as { actor: ActorId; option: number };
       steps.push({ type: 'skr', actor: r.actor, option: r.option });
@@ -252,6 +258,7 @@ export function importReplay(value: unknown): Battle {
     else if (step.type === 'move') moveActor(b, step.command, dice(step.rolls ?? []));
     else if (step.type === 'fall') placeFallen(b, step.actor, { x: step.x, y: step.y });
     else if (step.type === 'stand') standUp(b, step.command);
+    else if (step.type === 'brace') braceWeapon(b, step.command);
     else if (step.type === 'footprint') setFootprint(b, step.actor, step.footprint);
     else if (step.type === 'map') {
       if (r.format === REPLAY_FORMAT && typeof step.snapshot !== 'string')

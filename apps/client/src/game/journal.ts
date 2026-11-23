@@ -26,8 +26,17 @@ export const locationName = (location: string) => locations[location] ?? locatio
 let nameOf: (id: string) => string = (id) => id;
 const name = (id: unknown) => (typeof id === 'string' ? nameOf(id) : '—');
 const metres = (n: number) => `${Number(n.toFixed(2))} м`;
+// к2 picks the side of an arm or leg hit (ruling 24): 1 — left, 2 — right.
 const dice = (rolls: unknown) =>
-  Array.isArray(rolls) ? (rolls as DiceRoll[]).map((r) => `к${r.sides}=${r.value}`).join(', ') : '';
+  Array.isArray(rolls)
+    ? (rolls as DiceRoll[])
+        .map((r) =>
+          r.sides === 2
+            ? `к2=${r.value} (${r.value === 1 ? 'левая' : 'правая'} сторона)`
+            : `к${r.sides}=${r.value}`,
+        )
+        .join(', ')
+    : '';
 
 interface AttackDetail {
   command: AttackCommand;
@@ -227,6 +236,20 @@ export function describeEntry(
         tone: 'info',
       };
     }
+    case 'brace':
+      return {
+        ...base,
+        title: `${name((d.command as { actor: string }).actor)}: оружие на опоре`,
+        summary: `${String(d.weaponName)} установлено на опору (1 ОД, «Бой» A55): доступны очереди, без штрафа −30. Любое движение снимает опору.`,
+        tone: 'success',
+      };
+    case 'brace-rejected':
+      return {
+        ...base,
+        title: 'Установить на опору не удалось',
+        summary: String(d.reason),
+        tone: 'warning',
+      };
     case 'roster-side':
       return {
         ...base,

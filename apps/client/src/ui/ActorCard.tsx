@@ -10,6 +10,14 @@ const lifeLabel: Record<string, string> = {
   DEAD: 'Мёртв',
 };
 const postureLabel = { standing: 'стоит', kneeling: 'на колене', prone: 'лёжа' } as const;
+const conditionLabel: Record<string, string> = {
+  Stunned: 'Оглушён',
+  Helpless: 'Беспомощен',
+  Unconscious: 'Без сознания',
+  Dead: 'Мёртв',
+  Prone: 'Лежит',
+  Blinded: 'Ослеплён',
+};
 const bleedingLabel = { LIGHT: 'лёгкое', MEDIUM: 'среднее', HEAVY: 'тяжёлое' } as const;
 const supportLabel = { supported: 'работает', partial: 'частично', blocked: 'не подключено' };
 
@@ -81,7 +89,7 @@ export function ActorCard({
         <div className="chips">
           {status.conditions.map((c, i) => (
             <span className="chip chip-warn" key={`${c}-${i}`}>
-              {c}
+              {conditionLabel[c] ?? c}
             </span>
           ))}
           {status.bleeding.map((b) => (

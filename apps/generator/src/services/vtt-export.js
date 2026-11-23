@@ -55,6 +55,19 @@
       return entry;
     },
   };
+  // «← В KADAT VTT»: go back to the VTT page the generator was opened from; the link address
+  // is only a fallback (a hosted page may not live at «../»).
+  if (root.document)
+    root.document.addEventListener('click', (e) => {
+      const link = e.target && e.target.closest && e.target.closest('#back-to-vtt');
+      if (!link) return;
+      const sameSite =
+        root.document.referrer && new URL(root.document.referrer).origin === root.location.origin;
+      if (sameSite && root.history.length > 1) {
+        e.preventDefault();
+        root.history.back();
+      }
+    });
   if (root.KadatExports)
     root.KadatExports.register('kadat-vtt', {
       download: (c) => root.KadatVttExport.send(c),

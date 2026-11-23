@@ -341,6 +341,9 @@ export function AttackPanel(props: {
   canAct: boolean;
   attackedThisTurn: boolean;
   battle: Battle;
+  /** The selected weapon stands on a support («Бой» A55). */
+  braced: (weaponId: string) => boolean;
+  onBrace: (weaponId: string) => void;
 }) {
   const { form, attacker } = props;
   const own = battleWeapons(props.battle, attacker);
@@ -352,7 +355,11 @@ export function AttackPanel(props: {
     weapon?.arsenal && !weaponProblem(weapon.arsenal) && weaponKind(weapon.arsenal) === 'ranged'
       ? fireModes(weapon.arsenal)
       : [];
-  const mode = modes.find((m) => m.mode === form.mode) ?? modes[0];
+  // «Бой» A55: a heavy weapon without a support fires single shots only (−30).
+  const heavy = weapon?.arsenal?.weaponClass === 'ТО';
+  const onSupport = !!weapon && props.braced(weapon.id);
+  const usable = heavy && !onSupport ? modes.filter((m) => m.mode === 'single') : modes;
+  const mode = usable.find((m) => m.mode === form.mode) ?? usable[0];
   const from = posOf(props.battle, attacker);
   const distance = (id: ActorId) => {
     const to = posOf(props.battle, id);
@@ -404,13 +411,27 @@ export function AttackPanel(props: {
               }}
             >
               {modes.map((m) => (
-                <option key={m.mode} value={m.mode}>
-                  {modeName[m.mode]} ({m.maxShots})
+                <option key={m.mode} value={m.mode} disabled={!usable.includes(m)}>
+                  {modeName[m.mode]} ({m.maxShots}){usable.includes(m) ? '' : ' — нужна опора'}
                 </option>
               ))}
             </select>
           </label>
           <p className="muted small">Выстрелов: {mode.maxShots} (темп оружия, решение 78)</p>
+        </div>
+      )}
+      {heavy && weapon && (
+        <div className="stack">
+          <p className="muted small">
+            {onSupport
+              ? 'Оружие на опоре: доступны очереди. Любое движение снимает опору (решение 41).'
+              : 'Тяжёлое оружие без опоры: только одиночный выстрел, −30 («Бой» A55).'}
+          </p>
+          {!onSupport && (
+            <button type="button" onClick={() => props.onBrace(weapon.id)} disabled={!props.canAct}>
+              Установить на опору (1 ОД)
+            </button>
+          )}
         </div>
       )}
       {support.level !== 'supported' && (

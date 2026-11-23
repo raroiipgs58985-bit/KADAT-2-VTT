@@ -12,6 +12,9 @@ import {
   startCombat,
   turnInfo,
   weaponSupport,
+  braceWeapon,
+  nextTurn,
+  weaponBraced,
   type AttackCommand,
 } from './engine';
 import { fixedDice } from './dice';
@@ -155,5 +158,37 @@ describe('Roster', () => {
     const replayed = importReplay(JSON.parse(JSON.stringify(exportReplay(b))));
     expect(replayed.hp).toEqual(b.hp);
     expect(Object.keys(replayed.roster)).toEqual(Object.keys(b.roster));
+  });
+});
+
+describe('Heavy weapon on a support («Бой» A55)', () => {
+  it('fires single shots only until braced; bracing costs 1 ОД; moving takes it off', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const stubber = matchWeaponByName('Тяжелый стаббер')!;
+    const gunner = {
+      ...emptyCharacter('gunner', 'Пулемётчик'),
+      weapons: [{ name: stubber.name, ref: stubber.id }],
+    };
+    const b = createBattle([
+      { character: gunner, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'gunner' },
+      { character: characterFromProfile('pak'), side: 'b', at: { x: 15.5, y: 10.5 }, id: 'pak' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    const burst = (id: string) =>
+      shot({ id, actor: 'gunner', weapon: 'gunner:0', mode: 'short-burst' });
+    expect(() => attack(b, burst('b1'), fixedDice('100:90'))).toThrow(/Unbraced/);
+    expect(String((b.log.at(-1)!.detail as { reason: string }).reason)).toMatch(/без опоры/);
+    expect(weaponBraced(b, 'gunner:0')).toBe(false);
+    braceWeapon(b, { id: 'brace', actor: 'gunner', weapon: 'gunner:0' });
+    expect(weaponBraced(b, 'gunner:0')).toBe(true);
+    expect(turnInfo(b).od).toBe(1);
+    const r = attack(b, burst('b2'), fixedDice('100:90'));
+    expect((r as { result: { attack: { shotsFired: number } } }).result.attack.shotsFired).toBe(
+      stubber.rof!.short!,
+    );
+    nextTurn(b, fixedDice(''));
+    nextTurn(b, fixedDice(''));
+    moveActor(b, { id: 'step', actor: 'gunner', mode: 'half-move', to: { x: 6.5, y: 10.5 } });
+    expect(weaponBraced(b, 'gunner:0')).toBe(false);
   });
 });
