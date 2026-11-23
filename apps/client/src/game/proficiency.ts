@@ -7,8 +7,13 @@ import type { ArsenalWeapon } from '../../../../packages/canonical-data/src/arse
 export const PROFICIENCY_PENALTY = -30;
 const norm = (s: string) => s.toLowerCase().replace(/ё/g, 'е').trim();
 
+/** Arsenal sheets of xenos weapons: exotic, each type needs its own «Владение экзотическим оружием». */
+export const EXOTIC_SHEETS = ['Аэльдари', 'Друкхари', 'Тау'];
+export const isExotic = (w: ArsenalWeapon) => EXOTIC_SHEETS.includes(w.sheet);
+
 export function weaponKindName(w: ArsenalWeapon): string | null {
   const g = norm(w.group ?? '');
+  if (isExotic(w)) return w.name;
   switch (w.sheet) {
     case 'Лаз':
       return 'Лаз';
@@ -56,3 +61,20 @@ export function proficientKinds(talents: readonly string[]): Set<string> {
 }
 export const hasProficiency = (talents: readonly string[], kind: string) =>
   proficientKinds(talents).has(norm(kind));
+
+/**
+ * Exotic (xenos) weapon: only «Владение экзотическим оружием (тип)» naming this weapon or its
+ * group counts (the talent covers one type, not all — «Таланты (обновлены)» стр. 29).
+ */
+export function hasExoticProficiency(talents: readonly string[], w: ArsenalWeapon): boolean {
+  const name = norm(w.name);
+  const group = norm(w.group ?? '');
+  return talents.some((t) => {
+    const m = /^Владение экзотическим оружием\s*\((.+)\)\s*$/i.exec(t.trim());
+    if (!m) return false;
+    return m[1]!
+      .split(/[,|/]/)
+      .map(norm)
+      .some((k) => !!k && (name.includes(k) || k.includes(name) || (!!group && group.includes(k))));
+  });
+}

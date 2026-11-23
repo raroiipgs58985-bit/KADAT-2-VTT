@@ -653,3 +653,14 @@ describe('«Владение оружием» (ruling 84)', () => {
     expect(mods.find((m) => m.id === 'p:no-proficiency')?.value).toBe(-30);
   });
 });
+
+describe('Exotic (xenos) weapons', () => {
+  it('need «Владение экзотическим оружием» of that type', async () => {
+    const { arsenal } = await import('./arsenal');
+    const { hasExoticProficiency, isExotic } = await import('./proficiency');
+    const xeno = arsenal.weapons.find((w) => w.sheet === 'Тау')!;
+    expect(isExotic(xeno)).toBe(true);
+    expect(hasExoticProficiency(['Владение оружием (Лаз)'], xeno)).toBe(false);
+    expect(hasExoticProficiency([`Владение экзотическим оружием (${xeno.name})`], xeno)).toBe(true);
+  });
+});
