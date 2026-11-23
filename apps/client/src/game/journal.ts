@@ -57,6 +57,13 @@ interface AttackDetail {
   result: {
     attack?: { mode?: string; shotsFired?: number; ammoSpent?: number; hitsGenerated?: number };
     hits?: { location: string; finalDamage: number; manual?: string[] }[];
+    reaction?:
+      | 'declined'
+      | {
+          check: { outcome: string; totalDegrees: number };
+          cancelledHits: number;
+          counterattack?: unknown;
+        };
   };
   hp: Record<ActorId, number>;
 }
@@ -207,13 +214,30 @@ export function describeEntry(
           ? `${modeName[r.mode] ?? r.mode}: выстрелов ${r.shotsFired}, зарядов ${r.ammoSpent}, попаданий ${r.hitsGenerated}. `
           : '';
       const manual = [...new Set(hits.flatMap((h) => h.manual ?? []))];
+      const reaction =
+        a.result.reaction && a.result.reaction !== 'declined' ? a.result.reaction : null;
+      const reactionName =
+        a.command.defense === 'PARRY'
+          ? 'Парирование'
+          : a.command.defense === 'DODGE'
+            ? 'Уклонение'
+            : '';
+      const react = reaction
+        ? `${reactionName} цели: ${
+            reaction.check.outcome === 'success'
+              ? `успех (${reaction.check.totalDegrees} ст.), отменено попаданий ${reaction.cancelledHits}${reaction.counterattack ? ', есть право на контратаку' : ''}`
+              : 'провал'
+          }. `
+        : '';
       const summary = hits.length
-        ? `${fire}${hits
+        ? `${fire}${react}${hits
             .map((h) => `${locationName(h.location)} — урон ${h.finalDamage}`)
             .join('; ')}. ${name(a.command.target)}: ${a.hp[a.command.target]}${
             a.maxHp ? `/${a.maxHp}` : ''
           } ран.${manual.length ? ` Ведущему применить: ${manual.join(', ')}.` : ''}`
-        : `${fire}Промах — урон не бросается.`;
+        : reaction && reaction.cancelledHits > 0
+          ? `${fire}${react}Урона нет.`
+          : `${fire}Промах — урон не бросается.`;
       return {
         ...base,
         title: `${name(a.command.actor)} → ${name(a.command.target)} (${weapon})`,

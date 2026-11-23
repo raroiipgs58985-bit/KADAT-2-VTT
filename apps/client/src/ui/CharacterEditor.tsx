@@ -18,6 +18,7 @@ import { loadLibrary, saveLibrary } from './character-library';
 import {
   armourById,
   armourFromItems,
+  withArmourFromItems,
   armourSummary,
   arsenal,
   searchArsenal,
@@ -526,41 +527,35 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
             const a = ref ? armourById(ref) : undefined;
             return a ? armourSummary(a) : 'нет в Арсенале — только название';
           }}
-          onRemove={(i) => set({ armourItems: doc.armourItems.filter((_, j) => j !== i) })}
+          onRemove={(i) =>
+            setDoc((d) =>
+              withArmourFromItems({ ...d, armourItems: d.armourItems.filter((_, j) => j !== i) }),
+            )
+          }
         />
         <ArsenalSearch
           label="Найти броню в Арсенале"
           placeholder="например: флак, панцирь, шлем"
           search={(q) => searchArsenal(arsenal.armour, q)}
           describe={armourSummary}
-          onPick={(a) => set({ armourItems: [...doc.armourItems, { name: a.name, ref: a.id }] })}
+          onPick={(a) =>
+            setDoc((d) =>
+              withArmourFromItems({
+                ...d,
+                armourItems: [...d.armourItems, { name: a.name, ref: a.id }],
+              }),
+            )
+          }
         />
         {(() => {
           const fill = armourFromItems(doc.armourItems);
+          if (!doc.armourItems.length) return null;
           return (
-            <div className="row">
-              <button
-                type="button"
-                className="btn-ghost"
-                disabled={!fill.armour}
-                title={fill.reason ?? 'ОБ по зонам из выбранной брони'}
-                onClick={() =>
-                  fill.armour &&
-                  set({
-                    armour: fill.armour,
-                    undersuit: fill.undersuit ?? {
-                      head: null,
-                      torso: null,
-                      arms: null,
-                      legs: null,
-                    },
-                  })
-                }
-              >
-                Взять ОБ из брони
-              </button>
-              {fill.reason && <span className="muted small">{fill.reason}</span>}
-            </div>
+            <p className="muted small">
+              {fill.armour
+                ? 'ОБ по зонам выше взяты из этой брони автоматически.'
+                : `ОБ не пересчитаны: ${fill.reason ?? 'нет данных'}. Задайте их вручную.`}
+            </p>
           );
         })()}
 

@@ -188,3 +188,28 @@ export function weaponTraits(w: ArsenalWeapon): {
   }
   return { traits, optional, unread };
 }
+
+/**
+ * The character with ОБ and undersuit taken from its Arsenal armour items. With no items, or
+ * items whose ОБ cannot be combined (see `armourFromItems`), the ОБ stay as they are.
+ */
+export function withArmourFromItems<
+  T extends {
+    armourItems: readonly { ref: string | null }[];
+    armour: Zones;
+    undersuit: {
+      head: number | null;
+      torso: number | null;
+      arms: number | null;
+      legs: number | null;
+    };
+  },
+>(c: T): T {
+  const fill = armourFromItems(c.armourItems);
+  if (!fill.armour) return c;
+  return {
+    ...c,
+    armour: fill.armour,
+    undersuit: fill.undersuit ?? { head: null, torso: null, arms: null, legs: null },
+  };
+}

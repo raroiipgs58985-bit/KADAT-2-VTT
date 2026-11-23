@@ -131,7 +131,7 @@ const defaultAttack = (b: Battle, attacker: ActorId): AttackForm => ({
   shots: 1,
   modifier: 0,
   activity: 'REST',
-  decline: true,
+  defense: 'DECLINE',
 });
 
 /** Simple view: the first sentence only; the full text stays in the journal. */
@@ -971,7 +971,11 @@ export function App() {
                             })(),
                             targetActivity: form.activity,
                             modifier: form.modifier,
-                            defense: 'DECLINE',
+                            defense:
+                              form.defense === 'PARRY' &&
+                              weaponOf(battle, form.weapon)?.arsenal?.weaponClass !== 'ББ'
+                                ? 'DECLINE'
+                                : form.defense,
                           },
                           source(),
                         ),

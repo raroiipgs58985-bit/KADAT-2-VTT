@@ -330,7 +330,8 @@ export interface AttackForm {
   shots: number;
   modifier: number;
   activity: BleedingActivity;
-  decline: boolean;
+  /** Reaction of the target chosen by its player or the GM. */
+  defense: 'DECLINE' | 'DODGE' | 'PARRY';
 }
 
 export function AttackPanel(props: {
@@ -369,6 +370,8 @@ export function AttackPanel(props: {
   };
   const set = (patch: Partial<AttackForm>) => props.onChange({ ...form, ...patch });
   const lineProblem = form.target ? attackLineProblem(props.battle, attacker, form.target) : null;
+  const meleeWeapon =
+    !!weapon?.arsenal && !weaponProblem(weapon.arsenal) && weaponKind(weapon.arsenal) === 'melee';
   const modeName: Record<FireMode, string> = {
     single: 'Одиночный',
     'short-burst': 'Короткая очередь',
@@ -463,13 +466,18 @@ export function AttackPanel(props: {
           </select>
         </label>
       </div>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={form.decline}
-          onChange={(e) => set({ decline: e.target.checked })}
-        />
-        Цель без реакции (уклонение и парирование пока не автоматизированы)
+      <label>
+        Реакция цели
+        <select
+          value={meleeWeapon || form.defense !== 'PARRY' ? form.defense : 'DECLINE'}
+          onChange={(e) => set({ defense: e.target.value as AttackForm['defense'] })}
+        >
+          <option value="DECLINE">Без реакции</option>
+          <option value="DODGE">Уклонение (ЛВ, навык «Уклонение»)</option>
+          <option value="PARRY" disabled={!meleeWeapon}>
+            Парирование (НР, навык «Парирование»){meleeWeapon ? '' : ' — только в ближнем бою'}
+          </option>
+        </select>
       </label>
       {props.attackedThisTurn && (
         <p className="muted small">В этом ходу атака уже была: движок разрешает одну атаку.</p>
@@ -484,7 +492,6 @@ export function AttackPanel(props: {
           props.attackedThisTurn ||
           support.level === 'blocked' ||
           !form.target ||
-          !form.decline ||
           lineProblem !== null
         }
       >

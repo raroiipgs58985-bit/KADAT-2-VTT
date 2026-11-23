@@ -223,6 +223,8 @@ describe('Character from the generator', () => {
     expect(c.talents).toEqual(['Спринт']);
     expect(c.weapons.map((w) => w.name)).toEqual(['Лазган']);
     expect(c.armourItems.map((a) => a.name)).toEqual(['Флак-форма']);
+    // ОБ come from the armour item automatically (Флак-форма 2/2/2/2).
+    expect(c.armour).toEqual({ head: 2, torso: 2, arms: 2, legs: 2 });
     expect(c.notes).toContain('Фляга');
     expect(characterProblems(c)).toEqual([]);
   });

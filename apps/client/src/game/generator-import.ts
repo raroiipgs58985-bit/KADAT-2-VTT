@@ -4,7 +4,7 @@ import {
   splitProfileList,
   type CharacterDocument,
 } from './character';
-import { matchArmourByName, matchWeaponByName } from './arsenal';
+import { matchArmourByName, matchWeaponByName, withArmourFromItems } from './arsenal';
 
 /**
  * A character handed over by the character generator (apps/generator, «В KADAT VTT»). The
@@ -91,7 +91,7 @@ export function characterFromGenerator(g: GeneratorCharacter, id: string): Chara
   const skills = g.skills
     .map((s) => ({ name: s.name.trim(), bonus: Math.max(0, Math.min(60, s.bonus | 0)) }))
     .filter((s, i, all) => s.name && all.findIndex((x) => x.name === s.name) === i);
-  return {
+  return withArmourFromItems({
     ...base,
     description: `Из генератора: ${g.race.name}, ${g.world.name}, ${g.specialty.name}.`,
     characteristics,
@@ -111,7 +111,7 @@ export function characterFromGenerator(g: GeneratorCharacter, id: string): Chara
       .filter(Boolean)
       .join('\n')
       .slice(0, 4000),
-  };
+  });
 }
 
 /** Characters waiting in the generator outbox of this browser (newest first). */

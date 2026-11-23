@@ -29,6 +29,7 @@ import {
   enduranceBonusAfterProperties,
   finishActionTurn,
   hasTrait,
+  parryOptions,
   impliedTraits,
   initializeMeleeState,
   resolveCombatAction,
@@ -132,7 +133,8 @@ export interface AttackCommand {
   shots?: number;
   targetActivity: BleedingActivity;
   modifier?: number;
-  defense: 'DECLINE';
+  /** Reaction of the target: none, Dodge (ЛВ, «Уклонение») or Parry (НР, «Парирование»). */
+  defense: 'DECLINE' | 'DODGE' | 'PARRY';
   /** GM answers to questions asked during this attack, by question key. */
   answers?: Record<string, number>;
 }
@@ -402,6 +404,82 @@ const MANUAL_PROPERTIES = new Set([
   'Частичное опутывание',
 ]);
 
+/**
+ * Context of the target's reaction with its skill (ruling 49): the skill bonus is added;
+ * without the skill the GM chooses the penalty (asked once per attack).
+ */
+function reactionContext(
+  b: Battle,
+  state: EngineState,
+  command: AttackCommand,
+  skillName: 'Уклонение' | 'Парирование',
+  extra: { id: string; value: number; reason: string }[] = [],
+): ResolutionContext {
+  const target = combatant(b, command.target).character;
+  const skill = target.skills.find((s) => s.name.toLowerCase() === skillName.toLowerCase());
+  const value =
+    skill?.bonus ??
+    ask(command, {
+      key: `untrained:${skillName}`,
+      text: `${target.name}: нет навыка «${skillName}». Какой штраф к тесту? (решение 49: выбирает ведущий, например −20 или −30)`,
+      min: -60,
+      max: 0,
+    });
+  const gm = { kind: 'gm', id: `${skillName}: ${skill ? 'навык' : 'штраф ведущего'}` };
+  const mods = [{ id: `${command.id}:skill:${skillName}`, value, reason: gm.id }, ...extra].filter(
+    (m) => m.value !== 0,
+  );
+  return {
+    ...context(state.wounds.combat, command.target, command.actor),
+    modifiers: mods.map((m) => ({
+      id: m.id,
+      value: m.value,
+      source: gm,
+      provenance: { source: gm, reason: m.reason },
+    })),
+  };
+}
+
+/**
+ * Parry with the target's melee weapon in hand: «Парирование» skill (ruling 49) and the
+ * properties of both weapons (Гибкое cannot be parried, Громоздкое, Сбалансированное …).
+ */
+function parryRequest(
+  b: Battle,
+  state: EngineState,
+  command: AttackCommand,
+  attackingTraits: readonly WeaponTraitReference[],
+) {
+  const melee = state.wounds.combat.melee!;
+  const weaponId = melee.actors[command.target]?.weaponId;
+  const weapon = weaponId ? melee.weapons[weaponId] : undefined;
+  if (!weapon || !weapon.held || weapon.template.profile.family === 'natural')
+    throw new Error('Парировать нечем: у цели нет оружия ближнего боя в руке');
+  const options = parryOptions({
+    parrying: weapon.template.traits ?? [],
+    attacking: attackingTraits,
+    strengthBonus: bonusOf(combatant(b, command.target).character, 'СЛ'),
+  });
+  if (!options.allowed) throw new Error(options.reason ?? 'Парирование невозможно');
+  return {
+    id: `${command.id}:parry`,
+    type: 'parry' as const,
+    weaponId: weapon.id,
+    pool: 'normal' as const,
+    context: reactionContext(
+      b,
+      state,
+      command,
+      'Парирование',
+      options.modifiers.map((m, i) => ({
+        id: `${command.id}:parry-property:${i}`,
+        value: m.value,
+        reason: `${m.property} (${m.source})`,
+      })),
+    ),
+  };
+}
+
 /** Damage of one hit: dice, weapon properties, zone armour, endurance and wounds. */
 function resolveHit(
   b: Battle,
@@ -557,10 +635,6 @@ function resolve(
   combatant(b, command.actor);
   combatant(b, command.target);
   if (command.actor === command.target) throw new Error('Неверные участники атаки');
-  if (command.defense !== 'DECLINE')
-    throw new ContextRequired(
-      'Реакции цели (уклонение, парирование) в полигоне пока не подключены.',
-    );
   const selected = weaponOf(b, command.weapon);
   if (!selected || selected.owner !== command.actor)
     throw new Error('Оружие не принадлежит атакующему');
@@ -608,6 +682,7 @@ function resolve(
   };
   const hits: DamageInput[] = [];
   let attack: unknown, degrees: number;
+  let reaction: unknown = null;
   if (kind === 'ranged') {
     const mode = command.mode ?? 'single';
     // Ruling 78: a mode fires exactly the weapon's rate (short burst 3 — three shots).
@@ -627,6 +702,14 @@ function resolve(
           shotsRequested: shots,
           distance,
           dodgeable: true,
+          ...(command.defense === 'DODGE'
+            ? {
+                dodge: {
+                  id: `${command.id}:dodge`,
+                  context: reactionContext(b, state, command, 'Уклонение'),
+                },
+              }
+            : {}),
           context,
         },
         rng,
@@ -638,7 +721,19 @@ function resolve(
     attack = result;
     degrees = result.check.totalDegrees;
     hits.push(...result.hits.map((h) => damageInputFromHit(h)));
+    if (result.dodge) reaction = result.dodge;
   } else {
+    const meleeAvoidance =
+      command.defense === 'DODGE'
+        ? {
+            id: `${command.id}:dodge`,
+            type: 'dodge' as const,
+            pool: 'normal' as const,
+            context: reactionContext(b, state, command, 'Уклонение'),
+          }
+        : command.defense === 'PARRY'
+          ? parryRequest(b, state, command, traits)
+          : null;
     const resolved = resolveWoundAwareAction(state.wounds, 'НР', ctx, (combat, context) =>
       resolveMeleeAttack(
         combat,
@@ -650,7 +745,13 @@ function resolve(
           base: 'simple',
           technique: 'normal',
           weaponId: command.weapon,
-          targets: [{ actor: ref(command.target), distance }],
+          targets: [
+            {
+              actor: ref(command.target),
+              distance,
+              ...(meleeAvoidance ? { avoidance: meleeAvoidance } : {}),
+            },
+          ],
           context,
         },
         rng,
@@ -662,6 +763,7 @@ function resolve(
     attack = target.check;
     degrees = target.check.totalDegrees;
     if (target.hit) hits.push(damageInputFromHit(target.hit as MeleeHitRecord));
+    if (target.avoidance) reaction = target.avoidance;
   }
   const damage = hits.map((hit) =>
     resolveHit(b, state, command, hit, { ...info, degrees }, rng, logs),
@@ -670,7 +772,7 @@ function resolve(
     status: 'RESOLVED',
     attack,
     hits: damage,
-    reaction: 'declined',
+    reaction: reaction ?? 'declined',
   };
 }
 
@@ -727,6 +829,7 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
     used: DiceRoll[] = [];
   let cursor = 0;
   const purposes: string[] = [];
+  let attackTests = 0;
   setPhase('attack');
   const rng: DiceSource = {
     roll(sides) {
@@ -734,7 +837,12 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
       if (prior && prior.sides !== sides) throw new Error('Pending dice prefix mismatch');
       const value = prior?.value ?? source.roll(sides);
       used.push({ sides, value });
-      purposes.push(rollPurpose(rollPhase, sides));
+      // In the attack step the first d100 is the attack test, a later one the target's reaction.
+      purposes.push(
+        rollPhase === 'attack' && sides === 100 && attackTests++ > 0
+          ? 'тест реакции цели (уклонение/парирование)'
+          : rollPurpose(rollPhase, sides),
+      );
       return value;
     },
   };
@@ -1012,6 +1120,10 @@ const coreMessages: [RegExp, string][] = [
     'Тяжёлое оружие без опоры стреляет только одиночными (−30). Сначала «Установить на опору» (1 ОД, «Бой» A55)',
   ],
   [/Weapon is already braced/, 'Оружие уже установлено на опору'],
+  [/Parry requires an eligible weapon/, 'Этим оружием нельзя парировать'],
+  [/Incoming action is not dodgeable/, 'От этой атаки нельзя уклониться'],
+  [/Dodge prohibited by effect/, 'Уклонение запрещено состоянием цели'],
+  [/Parry prohibited by effect/, 'Парирование запрещено состоянием цели'],
   [/Insufficient ammunition/, 'Не хватает боезапаса в магазине'],
   [/Jammed weapon cannot fire/, 'Оружие заклинило: сначала исправить осечку'],
   [/Target outside effective melee reach/, 'Цель дальше досягаемости оружия ближнего боя'],

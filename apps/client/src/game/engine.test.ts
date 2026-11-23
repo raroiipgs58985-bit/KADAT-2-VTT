@@ -16,6 +16,7 @@ import {
   nextTurn,
   weaponBraced,
   heavyFromHands,
+  resumeAttack,
   type AttackCommand,
 } from './engine';
 import { fixedDice } from './dice';
@@ -255,5 +256,83 @@ describe('GM view: what every die was rolled for', () => {
       'тест последствия ранения',
       'урон',
     ]);
+  });
+});
+
+describe('Reactions of the target', () => {
+  it('Dodge (ЛВ + «Уклонение») cancels hits by its degrees', () => {
+    const b = createBattle();
+    startCombat(b, fixedDice('10:9,10:2'));
+    const r = attack(
+      b,
+      shot({ id: 'dodge', mode: 'short-burst', defense: 'DODGE' }),
+      fixedDice('100:15,100:10'),
+    );
+    const res = (r as { result: { reaction: { cancelledHits: number }; hits: unknown[] } }).result;
+    expect(res.reaction.cancelledHits).toBe(3);
+    expect(res.hits).toEqual([]);
+    expect(actorStatus(b, 'pak').wounds).toBe(33);
+    expect(turnInfo(b).reactions.pak).toBe(0);
+  });
+  it('Parry needs a melee weapon in hand of the target', () => {
+    const b = started((x) => placeActor(x, 'pak', 6.5, 10.5));
+    expect(() =>
+      attack(b, shot({ id: 'p', weapon: 'kelus-drakar:1', defense: 'PARRY' }), fixedDice('100:35')),
+    ).toThrow(/Парировать нечем/);
+  });
+  it('Parry with a chain sword (НР + «Парирование», Сбалансированное +10)', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const sword = matchWeaponByName('Цепной меч')!;
+    const duelist = {
+      ...emptyCharacter('duelist', 'Дуэлянт'),
+      weapons: [{ name: sword.name, ref: sword.id }],
+    };
+    const b = createBattle([
+      { character: duelist, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'duelist' },
+      {
+        character: characterFromProfile('kelus-drakar'),
+        side: 'b',
+        at: { x: 6.5, y: 10.5 },
+        id: 'kelus-drakar',
+      },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    // Келус has «Парирование» +10: НР 40 + 10 + Сбалансированное 10 = 60.
+    const r = attack(
+      b,
+      shot({
+        id: 'cut',
+        actor: 'duelist',
+        target: 'kelus-drakar',
+        weapon: 'duelist:0',
+        defense: 'PARRY',
+      }),
+      fixedDice('100:20,100:30'),
+    );
+    const res = (
+      r as {
+        result: {
+          reaction: { check: { target: number; outcome: string }; cancelledHits: number };
+          hits: unknown[];
+        };
+      }
+    ).result;
+    expect(res.reaction.check.target).toBe(60);
+    expect(res.reaction.cancelledHits).toBe(1);
+    expect(res.hits).toEqual([]);
+    // The other way round the duelist has no «Парирование»: the GM is asked for the penalty.
+    nextTurn(b, fixedDice(''));
+    const back = attack(
+      b,
+      shot({ id: 'back', target: 'duelist', weapon: 'kelus-drakar:1', defense: 'PARRY' }),
+      fixedDice('100:20'),
+    );
+    expect(back.status).toBe('CONTEXT_REQUIRED');
+    expect(turnInfo(b).pending?.question?.key).toBe('untrained:Парирование');
+    // The question comes before any die: the attack test is rolled after the answer.
+    const done = resumeAttack(b, fixedDice('100:20,100:15'), { 'untrained:Парирование': -20 });
+    const parry = (done as { result: { reaction: { check: { target: number } } } }).result.reaction;
+    // НР 30 − 20 + 10 = 20.
+    expect(parry.check.target).toBe(20);
   });
 });
