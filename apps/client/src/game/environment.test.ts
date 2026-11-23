@@ -80,7 +80,7 @@ function scene(doorOpen: boolean, wideDoor = false) {
 describe('Combat movement with walls, doors and obstacles', () => {
   it('a move through a closed door is refused before Core spends OD', () => {
     const b = scene(false);
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     expect(() => go(b, 'half-move', 9.5, 10.5)).toThrow(/Путь пересекает: закрытая дверь/);
     expect(turnInfo(b).od).toBe(2);
     expect(b.positions['kelus-drakar']).toEqual({ x: 6.5, y: 10.5 });
@@ -89,14 +89,14 @@ describe('Combat movement with walls, doors and obstacles', () => {
 
   it('the same move through the open door succeeds and spends 1 OD', () => {
     const b = scene(true);
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     expect(go(b, 'half-move', 9.5, 10.5)).toMatchObject({ status: 'RESOLVED', distance: 3 });
     expect(turnInfo(b).od).toBe(1);
   });
 
   it('a free cell behind the wall is not highlighted and cannot be reached', () => {
     const b = scene(false);
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     const reachable = destinationsWithin(b, 'kelus-drakar', 8);
     expect(reachable.some((c) => c.x > 8)).toBe(false); // nothing inside the room
     expect(() => go(b, 'full-move', 9.5, 8.5)).toThrow(/Путь пересекает: стена/);
@@ -106,7 +106,7 @@ describe('Combat movement with walls, doors and obstacles', () => {
   it('obstacle cells are neither destinations nor passable', () => {
     const b = scene(true);
     placeActor(b, 'kelus-drakar', 9.5, 9.5); // inside the room
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     expect(() => go(b, 'half-move', 11.5, 9.5)).toThrow(/Ящики/);
     expect(() => go(b, 'full-move', 12.5, 9.5)).toThrow(/Путь пересекает: препятствие «Ящики»/);
     expect(destinationsWithin(b, 'kelus-drakar', 4).some((c) => c.x === 11.5 && c.y < 12)).toBe(
@@ -117,7 +117,7 @@ describe('Combat movement with walls, doors and obstacles', () => {
   it('difficult terrain costs double: 4 m with 3 m of mud cost 7 m (ruling 11)', () => {
     const b = scene(true);
     placeActor(b, 'kelus-drakar', 1.5, 3.5);
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     expect(() => go(b, 'half-move', 5.5, 3.5)).toThrow(
       /7.00 м \(трудная местность 3.00 м считается вдвое\)/,
     );
@@ -130,7 +130,7 @@ describe('Combat movement with walls, doors and obstacles', () => {
     const b = scene(true);
     const previewed = b.sceneRevision;
     setDoorOpen(b, 'west-door', false);
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     expect(() =>
       moveActor(b, {
         id: 'stale',
@@ -154,7 +154,7 @@ describe('Doors during setup', () => {
       detail: { doorId: 'west-door', open: true, by: null },
     });
     expect(() => setDoorOpen(b, 'west-door', true)).toThrow(/уже открыта/);
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     setDoorOpen(b, 'west-door', false); // the GM, at any moment (ruling 10)
     expect(b.doors['west-door']).toBe(false);
     expect(turnInfo(b).od).toBe(2);
@@ -163,7 +163,7 @@ describe('Doors during setup', () => {
   it('in combat a character opens a door for the Free Action, from any distance (rulings 10, 44)', () => {
     const b = scene(false);
     placeActor(b, 'pak', 17.5, 17.5);
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     expect(() => setDoorOpen(b, 'west-door', true, 'pak')).toThrow(/ход другого/);
     setDoorOpen(b, 'west-door', true, 'kelus-drakar');
     expect(b.log.at(-1)).toMatchObject({ detail: { by: 'kelus-drakar', freeAction: true } });
@@ -176,7 +176,7 @@ describe('Doors during setup', () => {
   it('a locked door does not open for a Free Action; the GM unlocks it', () => {
     const b = scene(false);
     setDoorLocked(b, 'west-door', true);
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     expect(() => setDoorOpen(b, 'west-door', true, 'kelus-drakar')).toThrow(/заперта/);
     setDoorLocked(b, 'west-door', false);
     setDoorOpen(b, 'west-door', true, 'kelus-drakar');
@@ -215,7 +215,7 @@ describe('Replay v0.4 on a saved geometry snapshot', () => {
   it('reproduces the room, the door change and the accepted move', () => {
     const b = scene(false);
     setDoorOpen(b, 'west-door', true);
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     go(b, 'half-move', 9.5, 10.5);
     expect(() => go(b, 'half-move', 12.5, 10.5)).toThrow(); // crates: refused, not replayed
     const replay = JSON.parse(JSON.stringify(exportReplay(b)));

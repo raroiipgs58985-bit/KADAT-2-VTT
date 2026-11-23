@@ -1,6 +1,6 @@
 import data from './data/fixture.json';
 import {
-  SINGLE_CELL,
+  footprintForSize,
   cellKey,
   cellsOf,
   distance,
@@ -20,43 +20,57 @@ import {
   type PathProblem,
   type TerrainCell,
 } from './geometry';
-import armorCatalog from './data/canonical-armor.json';
-export const pakArmorProperties = armorCatalog.sheets[0]!.data.find((d) => d.startRow === 32)!
-  .rowData[0]!.values[2]!.formattedValue;
-export type ActorId = 'kelus-drakar' | 'pak';
-export const ids: ActorId[] = ['kelus-drakar', 'pak'];
-export type WeaponId = 'hotshot' | 'kelus-chain' | 'pak-chain' | 'bracer' | 'flamer';
-export const weapons: {
+import { currentSkr, type CharacterDocument } from './character';
+import { characterFromProfile } from './character-file';
+import { weaponById } from './arsenal';
+import type { ArsenalWeapon } from '../../../../packages/canonical-data/src/arsenal';
+/** Any participant of the battle: a character from the library or a profile (step 4). */
+export type ActorId = string;
+/** A weapon carried by a participant: `${actorId}:${index}` of the character's weapon list. */
+export type WeaponId = string;
+export type Side = 'a' | 'b';
+export interface Combatant {
+  readonly id: ActorId;
+  readonly character: CharacterDocument;
+  /** Token colour / side chosen by the GM. */
+  readonly side: Side;
+}
+export interface BattleWeapon {
   id: WeaponId;
   owner: ActorId;
   name: string;
-  raw: string;
+  /** Arsenal record (ruling 76: weapons in combat come only from the Arsenal); null — not found. */
+  arsenal: ArsenalWeapon | null;
   capacity: number | null;
-}[] = [
-  {
-    id: 'hotshot',
-    owner: 'kelus-drakar',
-    name: 'Хот-шот лазган',
-    raw: data.actors[0]!.profile.find((p) => p.label === 'Снаряжение:')!.note!.split('\n')[0]!,
-    capacity: 250,
-  },
-  {
-    id: 'kelus-chain',
-    owner: 'kelus-drakar',
-    name: 'Цепной меч Келуса',
-    raw: data.actors[0]!.profile.find((p) => p.label === 'Снаряжение:')!.note!.split('\n')[1]!,
-    capacity: 50,
-  },
-  ...(['pak-chain', 'bracer', 'flamer'] as WeaponId[]).map((id, i) => ({
-    id,
-    owner: 'pak' as const,
-    name: ['Цепной меч Пака', 'Пирофорный наруч', 'Освящённый огнемёт'][i]!,
-    raw: data.actors[1]!.profile.find((p) => p.label === 'Снаряжение:')!.formattedValue!.split(
-      '\n',
-    )[i]!,
-    capacity: [null, 10, 9][i]!,
-  })),
-];
+}
+/** Participants in initiative-independent order (the order they were added). */
+export const actorIds = (b: Battle): ActorId[] => Object.keys(b.roster);
+export function combatant(b: Battle, id: ActorId): Combatant {
+  const c = b.roster[id];
+  if (!c) throw new Error('Неизвестный персонаж');
+  return c;
+}
+export const actorName = (b: Battle, id: ActorId) => b.roster[id]?.character.name ?? id;
+export const maxWounds = (b: Battle, id: ActorId) => combatant(b, id).character.wounds;
+export const skrOf = (b: Battle, id: ActorId) => currentSkr(combatant(b, id).character);
+export function battleWeapons(b: Battle, owner?: ActorId): BattleWeapon[] {
+  return actorIds(b)
+    .filter((id) => owner === undefined || id === owner)
+    .flatMap((id) =>
+      combatant(b, id).character.weapons.map((w, i) => {
+        const arsenal = w.ref ? (weaponById(w.ref) ?? null) : null;
+        return {
+          id: `${id}:${i}`,
+          owner: id,
+          name: w.name,
+          arsenal,
+          capacity: arsenal?.magazine ?? null,
+        };
+      }),
+    );
+}
+export const weaponOf = (b: Battle, id: WeaponId) =>
+  battleWeapons(b).find((w) => w.id === id) ?? null;
 export function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object') {
     Object.freeze(value);
@@ -65,13 +79,14 @@ export function deepFreeze<T>(value: T): T {
   return value;
 }
 export const fixture = deepFreeze(structuredClone(data));
-export const actor = (id: ActorId) => fixture.actors.find((a) => a.id === id)!;
 export interface LogEntry {
   id: number;
   type: string;
   detail: unknown;
 }
 export interface Battle {
+  /** Participants by id; tokens, wounds and ammunition are keyed by the same ids. */
+  roster: Record<ActorId, Combatant>;
   active: ActorId;
   /** Centre of each token's footprint, metres; always aligned to the 1 m grid. */
   positions: Record<ActorId, { x: number; y: number }>;
@@ -96,46 +111,75 @@ export interface Battle {
 export function append(b: Battle, type: string, detail: unknown) {
   b.log.push({ id: b.log.length + 1, type, detail: structuredClone(detail) });
 }
-export function createBattle(): Battle {
-  return {
-    active: 'kelus-drakar',
-    // Test placement on cell centres; the 10 m separation of the experiment is preserved.
-    positions: { 'kelus-drakar': { x: 5.5, y: 10.5 }, pak: { x: 15.5, y: 10.5 } },
-    footprints: { 'kelus-drakar': SINGLE_CELL, pak: SINGLE_CELL },
+/** The default test pair from «Профили персонажей»: Келус and Пак, 10 m apart. */
+export const DEFAULT_ROSTER: readonly { id: ActorId; side: Side; at: Point }[] = [
+  { id: 'kelus-drakar', side: 'a', at: { x: 5.5, y: 10.5 } },
+  { id: 'pak', side: 'b', at: { x: 15.5, y: 10.5 } },
+];
+export function createBattle(
+  participants: readonly {
+    character: CharacterDocument;
+    side: Side;
+    at: Point;
+    id?: ActorId;
+  }[] = DEFAULT_ROSTER.map((p) => ({ ...p, character: characterFromProfile(p.id) })),
+): Battle {
+  const roster: Record<ActorId, Combatant> = {};
+  const positions: Record<ActorId, Point> = {};
+  const footprints: Record<ActorId, Footprint> = {};
+  const hp: Record<ActorId, number> = {};
+  for (const p of participants) {
+    let id = p.id ?? p.character.id;
+    for (let n = 2; roster[id]; n++) id = `${p.id ?? p.character.id}-${n}`;
+    roster[id] = { id, character: structuredClone(p.character), side: p.side };
+    positions[id] = { x: p.at.x, y: p.at.y };
+    footprints[id] = footprintForSize(p.character.size);
+    hp[id] = p.character.wounds;
+  }
+  const b: Battle = {
+    roster,
+    active: Object.keys(roster)[0] ?? '',
+    positions,
+    footprints,
     map: structuredClone(STANDARD_MAP),
     mapRevision: 0,
     doors: {},
     locks: {},
     sceneRevision: 0,
     snapshots: emptySnapshotStore(),
-    hp: { 'kelus-drakar': 26, pak: 33 },
-    ammo: Object.fromEntries(weapons.map((w) => [w.id, w.capacity])) as Battle['ammo'],
-    log: [
-      {
-        id: 1,
-        type: 'loaded',
-        detail: {
-          source: fixture.sources,
-          authorRulings: fixture.authorRulings,
-          map: 'test placement, not canonical coordinates',
-        },
-      },
-    ],
+    hp,
+    ammo: {},
+    log: [],
   };
+  b.ammo = Object.fromEntries(battleWeapons(b).map((w) => [w.id, w.capacity]));
+  b.log.push({
+    id: 1,
+    type: 'loaded',
+    detail: {
+      participants: Object.values(roster).map((c) => ({
+        id: c.id,
+        character: c.character,
+        side: c.side,
+        at: positions[c.id],
+      })),
+      source: fixture.sources,
+      map: 'test placement, not canonical coordinates',
+    },
+  });
+  return b;
 }
 /** Cells taken by every token except `except` (walls and obstacles will join this set). */
 export function occupiedCells(b: Battle, except?: ActorId): Set<string> {
   const taken = new Set<string>();
-  for (const id of ids)
-    if (id !== except)
-      for (const c of cellsOf(b.positions[id], b.footprints[id])) taken.add(cellKey(c));
+  for (const id of actorIds(b))
+    if (id !== except) for (const c of cellsOf(posOf(b, id), fpOf(b, id))) taken.add(cellKey(c));
   return taken;
 }
 export function placementProblemFor(
   b: Battle,
   id: ActorId,
   center: Point,
-  footprint: Footprint = b.footprints[id],
+  footprint: Footprint = fpOf(b, id),
 ): string | null {
   return (
     placementProblem(center, footprint, occupiedCells(b, id), b.map) ??
@@ -182,9 +226,9 @@ export function planRoute(
   points: readonly Point[],
   g: GeometryIndex = sceneGeometry(b),
 ): RoutePlan {
-  const f = b.footprints[id];
+  const f = fpOf(b, id);
   const others = occupiedCells(b, id);
-  let from = b.positions[id];
+  let from = posOf(b, id);
   let meters = 0,
     difficult = 0,
     problem: MovementProblem | null = null;
@@ -225,8 +269,8 @@ export function movementProblem(
  * are visited, so the cost does not grow with map size.
  */
 export function destinationsWithin(b: Battle, id: ActorId, maxDistance: number): Point[] {
-  const from = b.positions[id];
-  const f = b.footprints[id];
+  const from = posOf(b, id);
+  const f = fpOf(b, id);
   const g = sceneGeometry(b);
   const reach = Math.ceil(maxDistance) + 1;
   const col0 = Math.max(0, Math.floor(from.x - f.width / 2) - reach);
@@ -246,48 +290,25 @@ export function destinationsWithin(b: Battle, id: ActorId, maxDistance: number):
 }
 /** Low-level placement: validates grid alignment, map bounds and overlap, then logs. */
 export function move(b: Battle, id: ActorId, x: number, y: number) {
-  if (!ids.includes(id)) throw new Error('Неизвестный персонаж');
+  combatant(b, id);
   const problem = placementProblemFor(b, id, { x, y });
   if (problem) throw new Error(problem);
-  const before = b.positions[id];
+  const before = posOf(b, id);
   b.positions[id] = { x, y };
   append(b, 'placement', {
     actor: id,
     before,
-    after: b.positions[id],
-    cells: cellsOf(b.positions[id], b.footprints[id]),
+    after: posOf(b, id),
+    cells: cellsOf(posOf(b, id), fpOf(b, id)),
     meters: Math.hypot(x - before.x, y - before.y),
     od: 'manual placement; not a movement action',
   });
 }
 export function selectActor(b: Battle, id: ActorId) {
-  if (!ids.includes(id)) throw new Error('Неизвестный Actor');
+  combatant(b, id);
   b.active = id;
   append(b, 'manual-turn', { actor: id });
 }
-/**
- * СКР (base movement, metres) per personal profile cell `Движение`. The accepted Core
- * derives every movement distance from this value (Механика / Бой: СД = 1/2 СКР ≤ 5 м,
- * Полудвижение = СКР, Полное движение = СКР×2). Values are read, not computed here.
- */
-export const movementProfiles: Record<
-  ActorId,
-  { skr: number; source: string; profileText: string; openQuestion?: string }
-> = {
-  'kelus-drakar': {
-    skr: 4,
-    source: 'Профили / Персонажи Вольного торговца, «Движение» (примечание), строка «Базовый»',
-    profileText: '2/4/8/12/24 — Базовый; 3/5/10/15/30 — Броня; 2/4/8/12/24 — Гравишют',
-    openQuestion:
-      'Профиль указывает отдельную строку «Броня» (СКР 5) для запитанной брони. Какая строка действует в бою — решает автор; до решения используется «Базовый».',
-  },
-  pak: {
-    skr: 4,
-    source: 'Профили / Персонажи Вольного торговца, «Движение»',
-    profileText: '4/8/12/24',
-  },
-};
-
 /**
  * Placement problems of every token for a map size and a set of positions (a draft or the
  * current scene). Tokens are checked against the map bounds and against each other.
@@ -300,15 +321,27 @@ export function tokenConflicts(
 ): { actor: ActorId; problem: string }[] {
   const out: { actor: ActorId; problem: string }[] = [];
   const g = buildGeometry(map, doors);
+  const ids = Object.keys(positions);
   for (const id of ids) {
     const blocked = new Set<string>();
     for (const other of ids)
       if (other !== id)
-        for (const c of cellsOf(positions[other], footprints[other])) blocked.add(cellKey(c));
+        for (const c of cellsOf(positions[other]!, footprints[other]!)) blocked.add(cellKey(c));
     const problem =
-      placementProblem(positions[id], footprints[id], blocked, map) ??
-      footprintGeometryProblem(positions[id], footprints[id], g);
+      placementProblem(positions[id]!, footprints[id]!, blocked, map) ??
+      footprintGeometryProblem(positions[id]!, footprints[id]!, g);
     if (problem) out.push({ actor: id, problem });
   }
   return out;
+}
+/** Token centre of a participant (throws for an unknown id). */
+export function posOf(b: Battle, id: ActorId): Point {
+  const p = b.positions[id];
+  if (!p) throw new Error('Неизвестный персонаж');
+  return p;
+}
+export function fpOf(b: Battle, id: ActorId): Footprint {
+  const f = b.footprints[id];
+  if (!f) throw new Error('Неизвестный персонаж');
+  return f;
 }

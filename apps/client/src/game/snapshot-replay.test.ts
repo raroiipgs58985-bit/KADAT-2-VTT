@@ -84,7 +84,7 @@ describe('Replay snapshots are stored once', () => {
 
   it('export → open → export through text keeps steps, snapshots, journal and outcome', () => {
     const b = fiveApplies();
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     moveActor(b, {
       id: 'm',
       actor: 'kelus-drakar',
@@ -102,7 +102,7 @@ describe('Replay snapshots are stored once', () => {
     expect(again.outcome).toEqual(first.outcome);
   });
 
-  it('a v0.4 replay with inline snapshots still opens', () => {
+  it('a v0.4 replay (fixed Келус/Пак adapter) is refused since step 4', () => {
     const b = fiveApplies();
     const v05 = JSON.parse(JSON.stringify(exportReplay(b)));
     const v04 = {
@@ -115,8 +115,9 @@ describe('Replay snapshots are stored once', () => {
           : s,
       ),
     };
-    const replayed = importReplay(JSON.parse(JSON.stringify(v04)));
-    expect(replayed.map.name).toBe('Большая карта, правка 5');
+    expect(() => importReplay(JSON.parse(JSON.stringify(v04)))).toThrow(
+      /Неподдерживаемый формат replay/,
+    );
   });
 
   it('a missing snapshot reference is refused', () => {

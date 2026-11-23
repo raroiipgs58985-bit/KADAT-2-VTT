@@ -11,6 +11,7 @@ import {
   createSequenceDice,
   damageBonus,
   enduranceBonusAfterProperties,
+  impliedTraits,
   instantDeath,
   isMalfunction,
   malfunctionThreshold,
@@ -276,5 +277,19 @@ describe('Rulings 70–73', () => {
     expect(concussion([t('Контузия', 3)])).toMatchObject({ modifier: -30, rounds: 2 });
     expect(concussion([t('Контузия', 1)])?.rounds).toBe(1);
     expect(concussion([])).toBeNull();
+  });
+});
+
+describe('Implied properties', () => {
+  test('Цепное includes Бритвенно острое and Разрывное (row 88), without duplicates', () => {
+    expect(impliedTraits([t('Цепное')]).map((x) => x.name)).toEqual([
+      'Цепное',
+      'Бритвенно острое',
+      'Разрывное',
+    ]);
+    expect(
+      impliedTraits([t('Цепное'), t('Разрывное')]).filter((x) => x.name === 'Разрывное'),
+    ).toHaveLength(1);
+    expect(impliedTraits([t('Моно')])).toEqual([t('Моно')]);
   });
 });

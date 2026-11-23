@@ -14,7 +14,7 @@ import {
 } from '../game/map';
 import { MAP_FILE_EXTENSION } from '../game/map-file';
 import type { EditorHistory } from '../game/map-editor';
-import { actor, type ActorId } from '../game/model';
+import type { ActorId } from '../game/model';
 import type { Point } from '../game/grid';
 import type { EditorTool, SelectedObject } from './TacticalMap';
 
@@ -324,6 +324,7 @@ export function EditorPanel(props: {
   onNewEmpty: (name: string, cols: number, rows: number) => void;
   onEraseOutside: () => void;
   onKeepDraft: (id: ActorId) => void;
+  nameOf: (id: ActorId) => string;
   onTakeScene: (id: ActorId) => void;
   onUndo: () => void;
   onRedo: () => void;
@@ -718,7 +719,7 @@ export function EditorPanel(props: {
             ))}
             {props.problems.tokens.map((t) => (
               <li key={t.actor}>
-                {actor(t.actor).name}: {t.problem}. Перетащите токен на свободные клетки внутри
+                {props.nameOf(t.actor)}: {t.problem}. Перетащите токен на свободные клетки внутри
                 карты.
               </li>
             ))}
@@ -726,7 +727,7 @@ export function EditorPanel(props: {
           {props.problems.stale.map((s) => (
             <div key={s.actor} className="stale" data-stale={s.actor}>
               <p>
-                {actor(s.actor).name} перемещён и в черновике (около клетки {cell(s.draft)}), и в
+                {props.nameOf(s.actor)} перемещён и в черновике (около клетки {cell(s.draft)}), и в
                 расстановке (около клетки {cell(s.scene)}). Какую позицию оставить?
               </p>
               <div className="row">

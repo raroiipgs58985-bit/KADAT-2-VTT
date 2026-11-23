@@ -12,6 +12,7 @@ export type WeaponTrait = WeaponTraitReference;
 /** Where each property is written: «Свойства оружия», row; or an author ruling. */
 export const PROPERTY_SOURCES: Readonly<Record<string, string>> = {
   Батарея: 'Свойства оружия, стр. 2',
+  Цепное: 'Свойства оружия, стр. 88',
   'Бритвенно острое': 'Свойства оружия, стр. 3',
   Гальваническое: 'Свойства оружия, стр. 10',
   Гибкое: 'Свойства оружия, стр. 11',
@@ -47,6 +48,22 @@ export const PROPERTY_SOURCES: Readonly<Record<string, string>> = {
   бСЛх2: 'решение 61',
   Ослепляющее: 'решение 54',
 };
+
+/**
+ * Properties that include others by their own text: «Цепное» — «Имеет черту Бритвенно-острое
+ * и Разрывное» («Свойства оружия», стр. 88). Added once, never duplicated.
+ */
+export function impliedTraits(traits: readonly WeaponTrait[]): WeaponTrait[] {
+  const out = [...traits];
+  const add = (name: string) => {
+    if (!out.some((t) => t.name === name)) out.push({ name });
+  };
+  if (out.some((t) => t.name === 'Цепное')) {
+    add('Бритвенно острое');
+    add('Разрывное');
+  }
+  return out;
+}
 
 export const findTrait = (traits: readonly WeaponTrait[], name: string) =>
   traits.find((t) => t.name === name);

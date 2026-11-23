@@ -143,7 +143,7 @@ describe('Large map with several edits (TZ load check)', () => {
     expect(sceneGeometry(b).blockedCells.has('165:30')).toBe(false); // removed obstacle o49
 
     // Combat on the edited map, then the replay reproduces it exactly.
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     expect(() =>
       moveActor(b, {
         id: 'into-room',

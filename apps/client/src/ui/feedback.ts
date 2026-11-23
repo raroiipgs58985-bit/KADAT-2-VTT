@@ -14,10 +14,11 @@ export function commandFeedback(
   logLengthBefore: number,
   log: LogEntry[],
   error?: unknown,
+  names?: (id: string) => string,
 ): Feedback {
   const entry = log.length > logLengthBefore ? log.at(-1) : undefined;
   if (entry) {
-    const line = describeEntry(entry);
+    const line = describeEntry(entry, names);
     if (error === undefined) return { text: `${line.title}. ${line.summary}`, tone: line.tone };
     return {
       text: `${line.title}: ${line.summary}`,

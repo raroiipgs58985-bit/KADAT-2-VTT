@@ -1,0 +1,256 @@
+import type {
+  Characteristics,
+  CombatActorRuntime,
+  MeleeActorState,
+  MeleeWeaponInstance,
+  WeaponInstance,
+  AmmoContainerInstance,
+  FireMode,
+} from '@kadat/contracts';
+import { impliedTraits } from '@kadat/rules-engine';
+import { weaponTraits } from './arsenal';
+import type { ArsenalWeapon } from '../../../../packages/canonical-data/src/arsenal';
+import { battleWeapons, combatant, actorIds, type ActorId, type Battle } from './model';
+import { currentSkr, type CharacterDocument } from './character';
+
+/**
+ * Builds the rules-engine runtime of every participant from its character (step 4): the
+ * characteristics, СКР, and the Arsenal weapons as engine weapon instances with their
+ * properties. Nothing is added that the character or the Arsenal does not say.
+ */
+export const release = 'kadat-arsenal-and-profiles';
+export const engineSource = { kind: 'canonical-data', id: 'Арсенал Кадата + персонажи' };
+export const engineProvenance = {
+  source: engineSource,
+  reason: 'Character from the library and Arsenal records (author rulings 47–53, 74–76)',
+};
+const ref = (actorId: string) => ({ actorId });
+
+export function characteristicsOf(c: CharacterDocument): Characteristics {
+  return Object.fromEntries(
+    Object.entries(c.characteristics).map(([k, v]) => [
+      k,
+      { baseValue: v.value, baseSuper: v.super },
+    ]),
+  ) as Characteristics;
+}
+/** Characteristic bonus with the Super-characteristic (ruling 74: бСЛ + СверхСЛ). */
+export const bonusOf = (c: CharacterDocument, key: keyof CharacterDocument['characteristics']) =>
+  Math.floor(c.characteristics[key].value / 10) + c.characteristics[key].super;
+
+export function actorRuntime(b: Battle, id: ActorId): CombatActorRuntime {
+  const c = combatant(b, id).character;
+  return {
+    actor: ref(id),
+    characteristics: characteristicsOf(c),
+    movement: currentSkr(c),
+    fatigue: 0,
+    posture: 'standing',
+    effects: [],
+    talents: [...c.talents],
+  } as CombatActorRuntime;
+}
+
+const MELEE_CLASSES = ['ББ'];
+const RANGED_CLASSES = ['П', 'ОС', 'ТО', 'СТ'];
+export type WeaponKind = 'ranged' | 'melee';
+
+/** Why an Arsenal weapon cannot be used by the combat engine yet; null — usable. */
+export function weaponProblem(w: ArsenalWeapon | null): string | null {
+  if (!w) return 'Оружия нет в Арсенале (решение 76: в бою только оружие Арсенала)';
+  if (!w.damage) return 'В Арсенале нет урона (зависит от боеприпаса или не указан)';
+  if (![5, 10].includes(w.damage.sides)) return 'Урон не в к5/к10';
+  if (w.penetration === null) return 'В Арсенале нет ББ';
+  if (MELEE_CLASSES.includes(w.weaponClass)) {
+    if (w.range.meters === null) return 'Дистанция удара не прочитана';
+    return null;
+  }
+  if (!RANGED_CLASSES.includes(w.weaponClass))
+    return `Класс «${w.weaponClass}» (гранаты, метательное) в бою пока не поддержан`;
+  if (w.range.meters === null) return 'Дистанция не прочитана (формула от бСЛ)';
+  if (!w.rof || (!w.rof.single && !w.rof.short && !w.rof.long))
+    return 'Режимы стрельбы не прочитаны';
+  if (w.magazine === null) return 'Нет магазина в Арсенале';
+  return null;
+}
+export const weaponKind = (w: ArsenalWeapon): WeaponKind =>
+  MELEE_CLASSES.includes(w.weaponClass) ? 'melee' : 'ranged';
+
+export function fireModes(w: ArsenalWeapon): { mode: FireMode; maxShots: number }[] {
+  const out: { mode: FireMode; maxShots: number }[] = [];
+  if (w.rof?.single) out.push({ mode: 'single', maxShots: 1 });
+  if (w.rof?.short) out.push({ mode: 'short-burst', maxShots: w.rof.short });
+  if (w.rof?.long) out.push({ mode: 'full-auto', maxShots: w.rof.long });
+  return out;
+}
+
+function rangedInstance(id: string, owner: ActorId, w: ArsenalWeapon): WeaponInstance {
+  const source = { kind: 'arsenal', id: `${w.sheet}, стр. ${w.source.row}: ${w.name}` };
+  return {
+    id,
+    owner: ref(owner),
+    readied: true,
+    modifications: [],
+    jammed: false,
+    loadedContainerId: `${id}:mag`,
+    template: {
+      id: `${id}:profile`,
+      canonical: { releaseId: release, templateId: w.id, templateVersion: 'arsenal' },
+      provenance: { source, reason: 'Arsenal record' },
+      properties: [],
+      effects: [],
+      traits: impliedTraits(weaponTraits(w).traits),
+      profile: {
+        weaponClass: w.weaponClass,
+        optimalRange: w.range.meters!,
+        classification: w.damage!.type === 'Э' ? 'energy-beam' : 'kinetic',
+        modes: fireModes(w),
+        ...(w.modeModifiers ? { modeModifiers: w.modeModifiers } : {}),
+        damage: {
+          source,
+          expression: {
+            count: w.damage!.count,
+            sides: w.damage!.sides,
+            modifier: w.damage!.modifier,
+          },
+        },
+        penetration: { source, value: w.penetration! },
+        compatibleAmmoTypes: ['arsenal-ammo'],
+        compatibleContainerTypes: ['arsenal-magazine'],
+        capacityReference: source,
+        reload: { source, odCost: w.reload?.od ?? 1 },
+        malfunction: 'generic-jam',
+      },
+    },
+  };
+}
+function magazine(id: string, w: ArsenalWeapon, rounds: number): AmmoContainerInstance {
+  return {
+    id: `${id}:mag`,
+    type: 'arsenal-magazine',
+    compatibleWeaponTemplateIds: [`${id}:profile`],
+    capacity: w.magazine!,
+    currentRounds: rounds,
+    ammo: { source: engineSource, type: 'arsenal-ammo', effects: [] },
+    state: 'ready',
+    provenance: engineProvenance,
+  };
+}
+function meleeInstance(id: string, owner: ActorId, w: ArsenalWeapon): MeleeWeaponInstance {
+  const source = { kind: 'arsenal', id: `${w.sheet}, стр. ${w.source.row}: ${w.name}` };
+  const twoHanded = /2р/.test(w.classNote ?? '');
+  return {
+    id,
+    owner: ref(owner),
+    held: true,
+    readied: true,
+    dropped: false,
+    modifications: [],
+    template: {
+      id: `${id}:profile`,
+      canonical: { releaseId: release, templateId: w.id, templateVersion: 'arsenal' },
+      provenance: { source, reason: 'Arsenal record' },
+      effects: [],
+      traits: impliedTraits(weaponTraits(w).traits),
+      profile: {
+        source,
+        family: 'arsenal',
+        handedness: twoHanded ? 'two-handed' : 'one-handed',
+        validGrips: [twoHanded ? 'two-handed' : 'one-handed'],
+        reach: w.range.meters!,
+        damage: {
+          source,
+          expression: {
+            count: w.damage!.count,
+            sides: w.damage!.sides,
+            modifier: w.damage!.modifier,
+          },
+        },
+        penetration: { source, value: w.penetration! },
+        parryEligible: true,
+        properties: [],
+      },
+    },
+  };
+}
+/** Placeholder for a participant without a melee weapon; the engine never strikes with it. */
+function bareHands(owner: ActorId): MeleeWeaponInstance {
+  const source = { kind: 'canonical', id: 'Механика / Бой: Кулаки 1к5−3 У' };
+  return {
+    id: `${owner}:hands`,
+    owner: ref(owner),
+    held: false,
+    readied: false,
+    dropped: false,
+    modifications: [],
+    template: {
+      id: `${owner}:hands:profile`,
+      canonical: { releaseId: release, templateId: 'hands', templateVersion: 'mechanics' },
+      provenance: { source, reason: 'No melee weapon: unarmed attacks are not supported yet' },
+      effects: [],
+      profile: {
+        source,
+        family: 'natural',
+        handedness: 'one-handed',
+        validGrips: ['one-handed'],
+        reach: 1,
+        damage: { source, expression: { count: 1, sides: 5, modifier: -3 } },
+        penetration: { source, value: 0 },
+        parryEligible: false,
+        properties: [],
+      },
+    },
+  };
+}
+
+/**
+ * Engine weapons of the battle. Every weapon is in hand and ready at the start of the fight
+ * (the polygon does not track drawing weapons yet).
+ */
+export function engineWeapons(b: Battle) {
+  const ranged: Record<string, WeaponInstance> = {};
+  const containers: Record<string, AmmoContainerInstance> = {};
+  const melee: Record<string, MeleeWeaponInstance> = {};
+  const meleeActors: Record<string, MeleeActorState> = {};
+  for (const w of battleWeapons(b)) {
+    if (!w.arsenal || weaponProblem(w.arsenal)) continue;
+    if (weaponKind(w.arsenal) === 'ranged') {
+      ranged[w.id] = rangedInstance(w.id, w.owner, w.arsenal);
+      containers[`${w.id}:mag`] = magazine(w.id, w.arsenal, b.ammo[w.id] ?? w.arsenal.magazine!);
+    } else melee[w.id] = meleeInstance(w.id, w.owner, w.arsenal);
+  }
+  for (const id of actorIds(b)) {
+    const c = combatant(b, id).character;
+    let weaponId = Object.values(melee).find((m) => m.owner.actorId === id)?.id;
+    if (!weaponId) {
+      const hands = bareHands(id);
+      melee[hands.id] = hands;
+      weaponId = hands.id;
+    }
+    const skill = (name: string, key: 'СЛ' | 'ЛВ') => {
+      const s = c.skills.find((x) => x.name.toLowerCase() === name.toLowerCase());
+      return s ? c.characteristics[key].value + s.bonus : null;
+    };
+    meleeActors[id] = {
+      weaponId,
+      stance: 'standard',
+      grip: melee[weaponId]!.template.profile.validGrips[0]!,
+      sizeCategory: Math.max(0, c.size),
+      skills: {
+        athletics: {
+          baseValue: skill('Атлетика', 'СЛ') ?? c.characteristics.СЛ.value,
+          finalSuper: c.characteristics.СЛ.super,
+          provenance: engineProvenance,
+        },
+        acrobatics: {
+          baseValue: skill('Акробатика', 'ЛВ') ?? 0,
+          finalSuper: c.characteristics.ЛВ.super,
+          provenance: engineProvenance,
+        },
+      },
+      meleeOnlyReactionRemaining: 0,
+      palisadeSpent: false,
+    };
+  }
+  return { ranged, containers, melee, meleeActors };
+}

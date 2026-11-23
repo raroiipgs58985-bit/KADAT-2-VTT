@@ -62,7 +62,7 @@ describe('Token area in the scene', () => {
     expect(b.positions.pak).toEqual({ x: 16, y: 11 });
     expect(occupiedCells(b, 'kelus-drakar')).toEqual(new Set(['15:10', '16:10', '15:11', '16:11']));
     expect(b.log.at(-1)).toMatchObject({ type: 'footprint', detail: { cells: [{}, {}, {}, {}] } });
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     expect(() => setFootprint(b, 'pak', huge)).toThrow(/до начала боя/);
   });
 
@@ -90,7 +90,7 @@ describe('Grid movement through the Core', () => {
   it('a move into another token is rejected before Core spends OD', () => {
     const b = createBattle();
     placeActor(b, 'pak', 8.5, 10.5);
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     expect(() => go(b, 'kelus-drakar', 'half-move', 8.5, 10.5)).toThrow(/заняты/);
     expect(turnInfo(b).od).toBe(2);
     expect(b.positions['kelus-drakar']).toEqual({ x: 5.5, y: 10.5 });
@@ -98,7 +98,7 @@ describe('Grid movement through the Core', () => {
 
   it('an off-grid or out-of-map destination is rejected without spending OD', () => {
     const b = createBattle();
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     expect(() => go(b, 'kelus-drakar', 'half-move', 7.2, 10.5)).toThrow(/не привязана/);
     expect(() => go(b, 'kelus-drakar', 'half-move', 5.5, -0.5)).toThrow(/границы карты/);
     expect(turnInfo(b).od).toBe(2);
@@ -107,7 +107,7 @@ describe('Grid movement through the Core', () => {
   it('a 2 × 2 token moves by its centre, spends OD and occupies four cells', () => {
     const b = createBattle();
     setFootprint(b, 'kelus-drakar', big); // centre 6, 11
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     go(b, 'kelus-drakar', 'half-move', 9, 11); // 3 m of 4 m
     expect(turnInfo(b).od).toBe(1);
     expect(occupiedCells(b, 'pak')).toEqual(new Set(['8:10', '9:10', '8:11', '9:11']));
@@ -139,7 +139,7 @@ describe('Replay on the grid', () => {
     const b = createBattle();
     setFootprint(b, 'pak', big);
     placeActor(b, 'pak', 12, 8);
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     go(b, 'kelus-drakar', 'half-move', 8.5, 10.5);
     const replayed = importReplay(JSON.parse(JSON.stringify(exportReplay(b))));
     expect(replayed.positions).toEqual(b.positions);

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { BleedingActivity } from '@kadat/contracts';
+import type { FireMode } from '@kadat/contracts';
 import {
   weaponSupport,
   attackLineProblem,
@@ -8,7 +9,16 @@ import {
   type turnInfo as TurnInfoFn,
 } from '../game/engine';
 import { describeEntry, type JournalTone } from '../game/journal';
-import { actor, ids, weapons, type ActorId, type Battle, type WeaponId } from '../game/model';
+import {
+  actorIds,
+  actorName,
+  battleWeapons,
+  posOf,
+  type ActorId,
+  type Battle,
+  type WeaponId,
+} from '../game/model';
+import { fireModes, weaponKind, weaponProblem } from '../game/combatants';
 
 type TurnInfo = ReturnType<typeof TurnInfoFn>;
 
@@ -24,17 +34,17 @@ export function TurnBar(props: {
   info: TurnInfo;
   onStart: () => void;
   onNextTurn: () => void;
-  onOrder: (id: ActorId) => void;
   startBlocked?: string | null;
 }) {
   const { info } = props;
+  const name = (id: ActorId) => actorName(props.battle, id);
   const odMax = 2;
   return (
     <section className="panel turn-bar" aria-label="Ход и раунд">
       <div className="turn-head">
         <div>
           <span className="eyebrow">{info.started ? `Раунд ${info.round}` : 'Подготовка'}</span>
-          <h2>{info.started ? `Ход: ${actor(info.active).name}` : 'Расстановка и очередь'}</h2>
+          <h2>{info.started ? `Ход: ${name(info.active)}` : 'Расстановка участников'}</h2>
         </div>
         {info.turnActive && info.od !== null && (
           <div className="od" aria-label={`Очки действий: ${info.od} из ${odMax}`}>
@@ -48,7 +58,10 @@ export function TurnBar(props: {
       <ol className="initiative">
         {info.order.map((id) => (
           <li key={id} className={info.started && id === info.active ? 'current' : ''}>
-            <span>{actor(id).name}</span>
+            <span>
+              {name(id)}
+              {info.started && <span className="muted small"> · иниц. {info.initiative[id]}</span>}
+            </span>
             <span className="muted small">
               Реакция: {info.reactions[id] ? 'доступна' : 'потрачена'}
             </span>
@@ -57,16 +70,9 @@ export function TurnBar(props: {
       </ol>
       {!info.started ? (
         <div className="stack">
-          <label>
-            Первым ходит (ручная очередь, инициатива не бросается)
-            <select value={info.active} onChange={(e) => props.onOrder(e.target.value as ActorId)}>
-              {ids.map((id) => (
-                <option key={id} value={id}>
-                  {actor(id).name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <p className="muted small">
+            При начале боя бросается инициатива: 1к10 + бЛВ, равные перебрасываются.
+          </p>
           <button
             type="button"
             className="primary"
@@ -93,10 +99,54 @@ export function TurnBar(props: {
 export function PendingBanner(props: {
   info: TurnInfo;
   onResume: () => void;
+  onAnswer: (key: string, value: number) => void;
   onCancel: () => void;
 }) {
   const { pending, pendingTurn } = props.info;
+  const [value, setValue] = useState('');
   if (!pending && !pendingTurn) return null;
+  const q = pending?.question;
+  if (q)
+    return (
+      <section className="panel pending question" role="alertdialog" aria-label="Вопрос ведущему">
+        <span className="eyebrow">Вопрос ведущему</span>
+        <p>{q.text}</p>
+        {q.options ? (
+          <div className="row">
+            {q.options.map((o) => (
+              <button key={o.value} type="button" onClick={() => props.onAnswer(q.key, o.value)}>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <form
+            className="row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (value.trim() !== '' && Number.isInteger(Number(value)))
+                props.onAnswer(q.key, Number(value));
+            }}
+          >
+            <input
+              type="number"
+              step={1}
+              min={q.min}
+              max={q.max}
+              value={value}
+              aria-label="Ответ"
+              onChange={(e) => setValue(e.target.value)}
+            />
+            <button type="submit" className="primary">
+              Ответить
+            </button>
+          </form>
+        )}
+        <p className="muted small">
+          Уже брошенные кубики сохранены: после ответа действие продолжится с ними.
+        </p>
+      </section>
+    );
   return (
     <section className="panel pending" role="alert">
       <span className="eyebrow">Действие остановлено</span>
@@ -276,6 +326,8 @@ export function MovePanel(props: {
 export interface AttackForm {
   target: ActorId;
   weapon: WeaponId;
+  mode: FireMode;
+  shots: number;
   modifier: number;
   activity: BleedingActivity;
   decline: boolean;
@@ -291,31 +343,48 @@ export function AttackPanel(props: {
   battle: Battle;
 }) {
   const { form, attacker } = props;
-  const own = weapons.filter((w) => w.owner === attacker);
-  const weapon = own.find((w) => w.id === form.weapon) ?? own[0]!;
-  const support = weaponSupport(weapon.id);
-  const p = props.battle.positions;
-  const distance = (id: ActorId) =>
-    Number(Math.hypot(p[attacker].x - p[id].x, p[attacker].y - p[id].y).toFixed(2));
+  const own = battleWeapons(props.battle, attacker);
+  const weapon = own.find((w) => w.id === form.weapon) ?? own[0];
+  const support = weapon
+    ? weaponSupport(props.battle, weapon.id)
+    : { level: 'blocked' as const, note: 'У персонажа нет оружия' };
+  const modes =
+    weapon?.arsenal && !weaponProblem(weapon.arsenal) && weaponKind(weapon.arsenal) === 'ranged'
+      ? fireModes(weapon.arsenal)
+      : [];
+  const mode = modes.find((m) => m.mode === form.mode) ?? modes[0];
+  const from = posOf(props.battle, attacker);
+  const distance = (id: ActorId) => {
+    const to = posOf(props.battle, id);
+    return Number(Math.hypot(from.x - to.x, from.y - to.y).toFixed(2));
+  };
   const set = (patch: Partial<AttackForm>) => props.onChange({ ...form, ...patch });
-  const lineProblem = attackLineProblem(props.battle, attacker, form.target);
+  const lineProblem = form.target ? attackLineProblem(props.battle, attacker, form.target) : null;
+  const modeName: Record<FireMode, string> = {
+    single: 'Одиночный',
+    'short-burst': 'Короткая очередь',
+    'full-auto': 'Длинная очередь',
+  };
   return (
     <div className="stack">
       <label>
         Цель
-        <select value={form.target} onChange={(e) => set({ target: e.target.value as ActorId })}>
-          {ids
+        <select value={form.target} onChange={(e) => set({ target: e.target.value })}>
+          {actorIds(props.battle)
             .filter((id) => id !== attacker)
             .map((id) => (
               <option key={id} value={id}>
-                {actor(id).name} — {distance(id)} м
+                {actorName(props.battle, id)} — {distance(id)} м
               </option>
             ))}
         </select>
       </label>
       <label>
         Оружие
-        <select value={weapon.id} onChange={(e) => set({ weapon: e.target.value as WeaponId })}>
+        <select
+          value={weapon?.id ?? ''}
+          onChange={(e) => set({ weapon: e.target.value, mode: 'single', shots: 1 })}
+        >
           {own.map((w) => (
             <option key={w.id} value={w.id}>
               {w.name}
@@ -323,8 +392,41 @@ export function AttackPanel(props: {
           ))}
         </select>
       </label>
-      <p className={`weapon-note badge-${support.level} detail`}>{support.note}</p>
-      <p className="raw small detail">{weapon.raw}</p>
+      {modes.length > 0 && mode && (
+        <div className="row">
+          <label>
+            Режим
+            <select
+              value={mode.mode}
+              onChange={(e) => {
+                const m = modes.find((x) => x.mode === e.target.value)!;
+                set({ mode: m.mode, shots: m.maxShots });
+              }}
+            >
+              {modes.map((m) => (
+                <option key={m.mode} value={m.mode}>
+                  {modeName[m.mode]} (до {m.maxShots})
+                </option>
+              ))}
+            </select>
+          </label>
+          {mode.mode !== 'single' && (
+            <label>
+              Выстрелов
+              <input
+                type="number"
+                min={1}
+                max={mode.maxShots}
+                value={Math.min(form.shots, mode.maxShots)}
+                onChange={(e) => set({ shots: Number(e.target.value) })}
+              />
+            </label>
+          )}
+        </div>
+      )}
+      {support.level !== 'supported' && (
+        <p className={`weapon-note badge-${support.level}`}>{support.note}</p>
+      )}
       <div className="row detail">
         <label>
           Модификатор ведущего
@@ -367,6 +469,7 @@ export function AttackPanel(props: {
           !props.canAct ||
           props.attackedThisTurn ||
           support.level === 'blocked' ||
+          !form.target ||
           !form.decline ||
           lineProblem !== null
         }
@@ -442,7 +545,7 @@ export function CombatLog({ battle }: { battle: Battle }) {
       <h2>Журнал</h2>
       <ol>
         {lines.map((entry) => {
-          const line = describeEntry(entry);
+          const line = describeEntry(entry, (id) => actorName(battle, id));
           return (
             <li key={entry.id} className={`log-line tone-${line.tone}`}>
               <div className="log-head">

@@ -13,7 +13,10 @@ import {
   nextTurn,
   placeActor,
   resumeAttack,
-  selectManualOrder,
+  addCombatant,
+  removeCombatant,
+  setMovementOption,
+  setSide,
   setDoorOpen,
   setFootprint,
   standUp,
@@ -22,7 +25,18 @@ import {
   type MoveMode,
 } from './game/engine';
 import type { JournalTone } from './game/journal';
-import { actor, createBattle, ids, planRoute, weapons, type ActorId } from './game/model';
+import {
+  actorIds,
+  actorName,
+  battleWeapons,
+  createBattle,
+  fpOf,
+  planRoute,
+  posOf,
+  type ActorId,
+  type Battle,
+} from './game/model';
+import { RosterPanel } from './ui/RosterPanel';
 import type { FloorColorId } from './game/map';
 import type { Point } from './game/grid';
 import {
@@ -74,13 +88,7 @@ import {
   type EditorDraft,
   type EditorHistory,
 } from './game/map-editor';
-import {
-  demoBattle,
-  parseReplayText,
-  REPLAY_MAX_BYTES,
-  resolvedDemoBattle,
-  serializeReplay,
-} from './game/replay';
+import { parseReplayText, REPLAY_MAX_BYTES, serializeReplay } from './game/replay';
 import { EditorPanel, toolList } from './ui/EditorPanel';
 import { ActorCard } from './ui/ActorCard';
 import {
@@ -108,9 +116,14 @@ import {
 } from './ui/TacticalMap';
 
 const commandId = (kind: string) => `${kind}-${crypto.randomUUID().slice(0, 8)}`;
-const defaultAttack = (attacker: ActorId): AttackForm => ({
-  target: ids.find((id) => id !== attacker)!,
-  weapon: weapons.find((w) => w.owner === attacker)!.id,
+const defaultAttack = (b: Battle, attacker: ActorId): AttackForm => ({
+  target:
+    actorIds(b).find((id) => id !== attacker && b.roster[id]?.side !== b.roster[attacker]?.side) ??
+    actorIds(b).find((id) => id !== attacker) ??
+    '',
+  weapon: battleWeapons(b, attacker)[0]?.id ?? '',
+  mode: 'single',
+  shots: 1,
   modifier: 0,
   activity: 'REST',
   decline: true,
@@ -138,7 +151,7 @@ export function App() {
     setMoveModeRaw(m);
     setRoute(null);
   };
-  const [form, setForm] = useState<AttackForm>(() => defaultAttack(info.active));
+  const [form, setForm] = useState<AttackForm>(() => defaultAttack(battle, info.active));
   const [dice, setDice] = useState<DiceSettings>({
     mode: 'random',
     fixed: '100:45,10:2,100:20',
@@ -317,7 +330,7 @@ export function App() {
   // Combat start and every new turn select the active participant and reset per-turn choices.
   useEffect(() => {
     setSelected(info.active);
-    setForm(defaultAttack(info.active));
+    setForm(defaultAttack(combatStore.getSnapshot().battle, info.active));
     setMoveMode(null);
   }, [info.active, info.round, info.started]);
 
@@ -325,7 +338,7 @@ export function App() {
   const wounds = useMemo(
     () =>
       Object.fromEntries(
-        ids.map((id) => {
+        actorIds(battle).map((id) => {
           const s = actorStatus(battle, id);
           return [id, { current: s.wounds, max: s.maxWounds }];
         }),
@@ -360,9 +373,17 @@ export function App() {
     const before = combatStore.getSnapshot().battle.log.length;
     try {
       combatStore.run(command);
-      setToast(commandFeedback(before, combatStore.getSnapshot().battle.log));
+      setToast(
+        commandFeedback(before, combatStore.getSnapshot().battle.log, undefined, (id) =>
+          actorName(combatStore.getSnapshot().battle, id),
+        ),
+      );
     } catch (error) {
-      setToast(commandFeedback(before, combatStore.getSnapshot().battle.log, error));
+      setToast(
+        commandFeedback(before, combatStore.getSnapshot().battle.log, error, (id) =>
+          actorName(combatStore.getSnapshot().battle, id),
+        ),
+      );
     }
   };
   const onMove = (
@@ -446,28 +467,6 @@ export function App() {
                 type="button"
                 onClick={() =>
                   replaceBattle(
-                    resolvedDemoBattle(),
-                    'Сценарий «попадание / промах» разрешён движком.',
-                  )
-                }
-              >
-                Попадание / промах
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  replaceBattle(
-                    demoBattle(),
-                    'Сценарий «два попадания» разрешён движком: «Цепное» снимает ОБ до расчёта урона.',
-                  )
-                }
-              >
-                Два попадания
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  replaceBattle(
                     stage3Stand(),
                     'Стенд этапа 3 загружен: комната с закрытой дверью, ящики, грязь. Проверяйте по файлу ПРОВЕРКА-ЭТАПА.md.',
                   )
@@ -480,7 +479,10 @@ export function App() {
           <button
             type="button"
             onClick={() =>
-              replaceBattle(createBattle(), 'Создана новая сессия из исходных профилей.')
+              replaceBattle(
+                createBattle(),
+                'Новый бой: Келус и Пак из профилей. До начала боя участников можно добавить из библиотеки или убрать.',
+              )
             }
           >
             Новый бой
@@ -565,18 +567,26 @@ export function App() {
               }
               onStart={() => run((b) => startCombat(b, source()))}
               onNextTurn={() => run((b) => nextTurn(b, source()))}
-              onOrder={(id) => run((b) => selectManualOrder(b, id))}
             />
             <PendingBanner
               info={info}
               onResume={() =>
                 run((b) => (info.pending ? resumeAttack(b, source()) : nextTurn(b, source())))
               }
+              onAnswer={(key, value) => run((b) => resumeAttack(b, source(), { [key]: value }))}
               onCancel={() => run((b) => cancelUnstarted(b))}
             />
+            {!info.started && (
+              <RosterPanel
+                battle={battle}
+                onAdd={(character, side) => run((b) => addCombatant(b, character, side))}
+                onRemove={(id) => run((b) => removeCombatant(b, id))}
+                onSide={(id, side) => run((b) => setSide(b, id, side))}
+              />
+            )}
             <div className="panel">
               <div className="actor-tabs" role="tablist" aria-label="Персонажи">
-                {ids.map((id) => (
+                {actorIds(battle).map((id) => (
                   <button
                     key={id}
                     type="button"
@@ -585,7 +595,7 @@ export function App() {
                     className={selected === id ? 'chosen' : ''}
                     onClick={() => setSelected(id)}
                   >
-                    {id === 'pak' ? 'Пак' : 'Келус'}
+                    {actorName(battle, id)}
                   </button>
                 ))}
               </div>
@@ -594,6 +604,7 @@ export function App() {
                 id={selected}
                 setup={mode === 'placement'}
                 onFootprint={(f) => run((b) => setFootprint(b, selected, f))}
+                onSkr={(option) => run((b) => setMovementOption(b, selected, option))}
               />
             </div>
           </aside>
@@ -669,7 +680,7 @@ export function App() {
               onPlaceFall={(id, p) => run((b) => placeFallen(b, id, p))}
               onPlace={(id, x, y) => run((b) => placeActor(b, id, x, y))}
               onDraftPlace={(id, x, y) =>
-                edit((d) => placeToken(d, id, { x, y }, battle.positions[id]))
+                edit((d) => placeToken(d, id, { x, y }, posOf(battle, id)))
               }
               onPaint={(cells, c) => edit((d) => paint(d, cells, c))}
               backgroundUrl={backgroundUrl}
@@ -771,6 +782,7 @@ export function App() {
           <aside className="column right">
             {editing && history ? (
               <EditorPanel
+                nameOf={(id) => actorName(battle, id)}
                 history={history}
                 appliedName={battle.map.name}
                 problems={problems}
@@ -787,8 +799,8 @@ export function App() {
                   setSelectedDecorationId(null);
                 }}
                 onEraseOutside={() => edit(eraseOutside)}
-                onKeepDraft={(id) => edit((d) => keepDraftPosition(d, id, battle.positions[id]))}
-                onTakeScene={(id) => edit((d) => takeScenePosition(d, id, battle.positions[id]))}
+                onKeepDraft={(id) => edit((d) => keepDraftPosition(d, id, posOf(battle, id)))}
+                onTakeScene={(id) => edit((d) => takeScenePosition(d, id, posOf(battle, id)))}
                 background={history.present.map.background}
                 onLoadBackground={loadBackground}
                 onUpdateBackground={(patch) => edit((d) => updateBackground(d, patch))}
@@ -874,8 +886,8 @@ export function App() {
                 </div>
                 {fallActor && (
                   <p className="note-warning" data-testid="fall-note">
-                    {actor(fallActor).name} упал на трудной местности. Щёлкните на карте клетку, где
-                    он лежит.
+                    {actorName(battle, fallActor)} упал на трудной местности. Щёлкните на карте
+                    клетку, где он лежит.
                   </p>
                 )}
                 {info.started && selected !== info.active && (
@@ -889,10 +901,10 @@ export function App() {
                     selectedMode={moveMode}
                     onSelectMode={setMoveMode}
                     onMoveTo={(x, y) => onMove(selected, x, y)}
-                    position={battle.positions[selected]}
+                    position={posOf(battle, selected)}
                     canAct={canAct}
                     posture={actorStatus(battle, selected).posture}
-                    footprint={battle.footprints[selected]}
+                    footprint={fpOf(battle, selected)}
                     mapSize={battle.map}
                     route={route}
                     routePlan={
@@ -958,7 +970,7 @@ export function App() {
                   locked: doorLocked(battle, d.id),
                 }))}
                 combat={info.started}
-                activeName={actor(info.active).name}
+                activeName={actorName(battle, info.active)}
                 canAct={info.turnActive && !busy && !fallActor}
                 onCharacter={(id, open) => run((b) => setDoorOpen(b, id, open, info.active))}
                 onGm={(id, open) => run((b) => setDoorOpen(b, id, open))}

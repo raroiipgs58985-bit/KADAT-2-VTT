@@ -18,7 +18,7 @@ import { stage3StandMap } from './scenarios';
 function scene(map: MapDocument, kelus: { x: number; y: number }, pak = { x: 17.5, y: 17.5 }) {
   const b = createBattle();
   applyMap(b, { map, positions: { 'kelus-drakar': kelus, pak } });
-  startCombat(b, fixedDice(''));
+  startCombat(b, fixedDice('10:9,10:2'));
   if (turnInfo(b).active !== 'kelus-drakar') throw new Error('Kelus must act first');
   return b;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createBattle, movementProfiles } from './model';
+import { createBattle, skrOf } from './model';
 import {
   actorStatus,
   attack,
@@ -25,7 +25,7 @@ const step = (actor: 'kelus-drakar' | 'pak', mode: MoveMode, x: number, y: numbe
 });
 const started = () => {
   const b = createBattle();
-  expect(startCombat(b, fixedDice('')).status).toBe('RESOLVED');
+  expect(startCombat(b, fixedDice('10:9,10:2')).status).toBe('RESOLVED');
   return b;
 };
 const option = (b: ReturnType<typeof createBattle>, mode: MoveMode) =>
@@ -37,7 +37,7 @@ describe('Setup phase', () => {
     placeActor(b, 'pak', 12.5, 9.5);
     expect(b.positions.pak).toEqual({ x: 12.5, y: 9.5 });
     expect(b.log.at(-1)?.type).toBe('placement');
-    startCombat(b, fixedDice(''));
+    startCombat(b, fixedDice('10:9,10:2'));
     expect(() => placeActor(b, 'pak', 13.5, 9.5)).toThrow(/только до начала боя/);
     expect(b.positions.pak).toEqual({ x: 12.5, y: 9.5 });
   });
@@ -51,7 +51,7 @@ describe('Setup phase', () => {
     const b = started();
     expect(turnInfo(b)).toMatchObject({ turnActive: true, active: 'kelus-drakar', od: 2 });
     expect(b.log.at(-1)?.type).toBe('combat-start');
-    expect(() => startCombat(b, fixedDice(''))).toThrow(/уже начат/);
+    expect(() => startCombat(b, fixedDice('10:9,10:2'))).toThrow(/уже начат/);
   });
 });
 
@@ -59,7 +59,7 @@ describe('Movement through the accepted Core', () => {
   it('uses the sourced profile СКР and returns Core distances for every mode', () => {
     const b = started();
     expect(getEngine(b).wounds.combat.actors['kelus-drakar']!.movement).toBe(
-      movementProfiles['kelus-drakar'].skr,
+      skrOf(b, 'kelus-drakar'),
     );
     expect(option(b, 'free-move')).toMatchObject({ available: true, maxDistance: 2 });
     expect(option(b, 'half-move')).toMatchObject({ available: true, maxDistance: 4 });
@@ -149,7 +149,7 @@ describe('Movement through the accepted Core', () => {
         id: 'shot-after-move',
         actor: 'kelus-drakar',
         target: 'pak',
-        weapon: 'hotshot',
+        weapon: 'kelus-drakar:0',
         targetActivity: 'REST',
         defense: 'DECLINE',
       },
@@ -157,7 +157,7 @@ describe('Movement through the accepted Core', () => {
     );
     expect(shot.status).toBe('RESOLVED');
     expect(turnInfo(b).od).toBe(0);
-    expect(actorStatus(b, 'pak').wounds).toBe(31);
+    expect(actorStatus(b, 'pak').wounds).toBe(29);
     const entry = b.log.at(-1)!.detail as { coreLogs: { result?: { distance?: number } }[] };
     expect(JSON.stringify(entry.coreLogs)).toContain('"distance":6');
   });
@@ -178,9 +178,10 @@ describe('Replay and reporting', () => {
   });
 
   it('reports weapon boundaries honestly', () => {
-    expect(weaponSupport('hotshot').level).toBe('supported');
-    expect(weaponSupport('pak-chain').level).toBe('partial');
-    expect(weaponSupport('kelus-chain').level).toBe('blocked');
-    expect(weaponSupport('flamer').level).toBe('blocked');
+    const b = createBattle();
+    // «Регулировка мощности» is read but its modes are not offered yet.
+    expect(weaponSupport(b, 'kelus-drakar:0').level).not.toBe('blocked');
+    expect(weaponSupport(b, 'kelus-drakar:1').level).toBe('supported');
+    expect(weaponSupport(b, 'pak:0').level).toBe('blocked');
   });
 });

@@ -1,22 +1,23 @@
 import { expect, it } from 'vitest';
-import { createBattle, fixture, move, selectActor, weapons } from './model';
-it('restores real profiles, health and author-approved full ammunition', () => {
+import { battleWeapons, createBattle, move, selectActor } from './model';
+it('a new battle starts the profile characters at full wounds with full Arsenal magazines', () => {
   const b = createBattle();
-  expect(b.hp).toEqual({ 'kelus-drakar': 26, pak: 33 });
-  expect(b.ammo.hotshot).toBe(250);
-  expect(b.ammo.bracer).toBe(10);
-  expect(b.ammo.flamer).toBe(9);
-  expect(fixture.actors[1]!.characteristics.НР.value).toBe(50);
-  expect(weapons[2]!.raw).toContain('1к10+10');
+  expect(b.hp).toEqual({ 'kelus-drakar': 32, pak: 33 });
+  expect(battleWeapons(b, 'kelus-drakar').map((w) => w.name)).toEqual([
+    'Хот-шот лазган',
+    'Цепной меч',
+  ]);
+  expect(b.ammo['kelus-drakar:0']).toBe(60);
+  expect(b.ammo['kelus-drakar:1']).toBeNull();
 });
-it('places on cell centres, manually selects turns and logs without mutating profiles', () => {
-  const original = JSON.stringify(fixture),
-    b = createBattle();
+it('places on cell centres, manually selects turns and logs without mutating characters', () => {
+  const b = createBattle();
+  const original = JSON.stringify(b.roster);
   move(b, 'pak', 6.5, 9.5);
   selectActor(b, 'pak');
   expect(b.positions.pak).toEqual({ x: 6.5, y: 9.5 });
   expect(b.log.at(-1)?.type).toBe('manual-turn');
-  expect(JSON.stringify(fixture)).toBe(original);
+  expect(JSON.stringify(b.roster)).toBe(original);
 });
 it('rejects off-grid, overlapping and out-of-map placement atomically', () => {
   const b = createBattle(),

@@ -10,9 +10,10 @@ import type { Vertex } from '../game/map';
 import { floorColor, type FloorColorId, type MapDocument } from '../game/map';
 import { rectangleCells } from '../game/map-editor';
 import {
-  actor,
+  actorIds,
+  actorName,
   destinationsWithin,
-  ids,
+  fpOf,
   planRoute,
   placementProblemFor,
   type ActorId,
@@ -119,10 +120,11 @@ type Drag =
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const fmt = (n: number) => `${Number(n.toFixed(2))}`;
-const tokenColor = (id: ActorId) => (id === 'pak' ? 'var(--token-b)' : 'var(--token-a)');
-const initials = (id: ActorId) =>
-  actor(id)
-    .name.split(' ')
+const tokenColor = (b: Battle, id: ActorId) =>
+  b.roster[id]?.side === 'b' ? 'var(--token-b)' : 'var(--token-a)';
+const initials = (b: Battle, id: ActorId) =>
+  actorName(b, id)
+    .split(' ')
     .map((w) => w[0])
     .join('')
     .slice(0, 2);
@@ -147,9 +149,10 @@ export function TacticalMap(props: Props) {
       minY = 0,
       maxX = map.cols,
       maxY = map.rows;
-    for (const id of ids) {
-      const f = battle.footprints[id];
+    for (const id of actorIds(battle)) {
+      const f = fpOf(battle, id);
       const p = positions[id];
+      if (!p) continue;
       minX = Math.min(minX, p.x - f.width / 2);
       minY = Math.min(minY, p.y - f.height / 2);
       maxX = Math.max(maxX, p.x + f.width / 2);
@@ -249,7 +252,7 @@ export function TacticalMap(props: Props) {
   );
   const reachCells = useMemo(() => {
     if (!moveIntent) return [];
-    const f = battle.footprints[moveIntent.actor];
+    const f = fpOf(battle, moveIntent.actor);
     const cells = new Map<string, Cell>();
     for (const d of destinations) for (const c of cellsOf(d, f)) cells.set(cellKey(c), c);
     return [...cells.values()];
@@ -259,7 +262,7 @@ export function TacticalMap(props: Props) {
     mode === 'editor' ||
     mode === 'placement' ||
     (turnActive && id === activeActor && moveIntent?.actor === id);
-  const snapFor = (id: ActorId, p: Point) => snapCenter(p, battle.footprints[id], map);
+  const snapFor = (id: ActorId, p: Point) => snapCenter(p, fpOf(battle, id), map);
   const vertexAt = (p: Point): Vertex => ({
     x: clamp(Math.round(p.x), 0, map.cols),
     y: clamp(Math.round(p.y), 0, map.rows),
@@ -294,6 +297,7 @@ export function TacticalMap(props: Props) {
     if (!canDrag(id)) return;
     const p = toMap(e.clientX, e.clientY);
     const pos = positions[id];
+    if (!pos) return;
     svg.current!.setPointerCapture(e.pointerId);
     setDrag({
       kind: 'token',
@@ -442,7 +446,7 @@ export function TacticalMap(props: Props) {
     if (drag && drag.pointer === e.pointerId) {
       if (drag.kind === 'token') {
         const pos = positions[drag.id];
-        if (drag.at.x !== pos.x || drag.at.y !== pos.y) {
+        if (pos && (drag.at.x !== pos.x || drag.at.y !== pos.y)) {
           if (mode === 'editor') props.onDraftPlace(drag.id, drag.at.x, drag.at.y);
           else if (mode === 'placement') props.onPlace(drag.id, drag.at.x, drag.at.y);
           else props.onMove(drag.id, drag.at.x, drag.at.y, drag.revision);
@@ -562,7 +566,9 @@ export function TacticalMap(props: Props) {
         {i}
       </text>,
     );
-  const attack = attackLine ? { a: positions[attackLine.from], b: positions[attackLine.to] } : null;
+  const attackA = attackLine ? positions[attackLine.from] : undefined;
+  const attackB = attackLine ? positions[attackLine.to] : undefined;
+  const attack = attackA && attackB ? { a: attackA, b: attackB } : null;
   const hoverCell = hover && inMap(hover) ? cellAt(hover) : null;
   const hint =
     mode === 'editor'
@@ -904,15 +910,17 @@ export function TacticalMap(props: Props) {
           </text>
         </g>
 
-        {ids.map((id) => {
-          const f = battle.footprints[id];
+        {actorIds(battle).map((id) => {
+          const f = fpOf(battle, id);
+          const p = positions[id];
+          if (!p) return null;
           return (
             <rect
               key={`occ-${id}`}
               className={`occupied ${props.conflicts.has(id) ? 'conflict' : ''}`}
               data-occupied={id}
               data-cells={f.width * f.height}
-              {...rectOf(positions[id], f.width, f.height)}
+              {...rectOf(p, f.width, f.height)}
             />
           );
         })}
@@ -955,10 +963,10 @@ export function TacticalMap(props: Props) {
           </g>
         )}
 
-        {moveIntent && routeSoFar && routeSoFar.length > 0 && (
+        {moveIntent && positions[moveIntent.actor] && routeSoFar && routeSoFar.length > 0 && (
           <g className="route" data-testid="route">
             <polyline
-              points={[positions[moveIntent.actor], ...routeSoFar]
+              points={[positions[moveIntent.actor]!, ...routeSoFar]
                 .map((p) => `${p.x},${p.y}`)
                 .join(' ')}
             />
@@ -967,11 +975,11 @@ export function TacticalMap(props: Props) {
             ))}
           </g>
         )}
-        {props.fallActor && (
+        {props.fallActor && positions[props.fallActor] && (
           <text
             className="fall-hint"
-            x={positions[props.fallActor].x}
-            y={positions[props.fallActor].y - 0.8}
+            x={positions[props.fallActor]!.x}
+            y={positions[props.fallActor]!.y - 0.8}
             textAnchor="middle"
           >
             Щёлкните, где упал
@@ -983,14 +991,14 @@ export function TacticalMap(props: Props) {
             <rect
               {...rectOf(
                 ghost,
-                battle.footprints[ghostActor].width - INSET * 2,
-                battle.footprints[ghostActor].height - INSET * 2,
+                fpOf(battle, ghostActor).width - INSET * 2,
+                fpOf(battle, ghostActor).height - INSET * 2,
               )}
               rx={0.3}
             />
             <text
               x={ghost.x}
-              y={ghost.y - battle.footprints[ghostActor].height / 2 - 0.25}
+              y={ghost.y - fpOf(battle, ghostActor).height / 2 - 0.25}
               textAnchor="middle"
             >
               {ghostPlan && ghostPlan.difficult > 0 ? 'стоит ' : ''}
@@ -1001,11 +1009,12 @@ export function TacticalMap(props: Props) {
           </g>
         )}
 
-        {ids.map((id) => {
-          const f = battle.footprints[id];
+        {actorIds(battle).map((id) => {
+          const f = fpOf(battle, id);
           const pos =
             drag?.kind === 'token' && drag.id === id && mode !== 'combat' ? drag.at : positions[id];
           const w = props.wounds[id];
+          if (!pos || !w) return null;
           const ratio = w.max ? clamp(w.current / w.max, 0, 1) : 0;
           const bodyW = f.width - INSET * 2,
             bodyH = f.height - INSET * 2;
@@ -1020,7 +1029,7 @@ export function TacticalMap(props: Props) {
               transform={`translate(${pos.x} ${pos.y})`}
               onPointerDown={(e) => onTokenDown(e, id)}
               role="button"
-              aria-label={`${actor(id).name}: раны ${w.current} из ${w.max}, клеток ${f.width * f.height}`}
+              aria-label={`${actorName(battle, id)}: раны ${w.current} из ${w.max}, клеток ${f.width * f.height}`}
             >
               {isActive && (
                 <rect
@@ -1033,10 +1042,10 @@ export function TacticalMap(props: Props) {
                 className="token-body"
                 {...rectOf({ x: 0, y: 0 }, bodyW, bodyH)}
                 rx={radius}
-                style={{ fill: tokenColor(id) }}
+                style={{ fill: tokenColor(battle, id) }}
               />
               <text className="token-initials" textAnchor="middle" dominantBaseline="central">
-                {initials(id)}
+                {initials(battle, id)}
               </text>
               <rect
                 className="wound-track"
@@ -1053,7 +1062,7 @@ export function TacticalMap(props: Props) {
                 height={0.08}
               />
               <text className="token-name" y={f.height / 2 + 0.42} textAnchor="middle">
-                {actor(id).name}
+                {actorName(battle, id)}
               </text>
             </g>
           );

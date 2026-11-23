@@ -73,7 +73,7 @@ function history(): Battle {
   setDoorOpen(b, 'd', true);
   setFootprint(b, 'pak', { width: 2, height: 2 });
   placeActor(b, 'pak', 15, 8);
-  startCombat(b, fixedDice(''));
+  startCombat(b, fixedDice('10:9,10:2'));
   expect(() =>
     moveActor(b, { id: 'bad', actor: 'kelus-drakar', mode: 'half-move', to: { x: 4.5, y: 3.5 } }),
   ).toThrow();
@@ -90,7 +90,7 @@ function history(): Battle {
       id: 'shot',
       actor: 'kelus-drakar',
       target: 'pak',
-      weapon: 'hotshot',
+      weapon: 'kelus-drakar:0',
       targetActivity: 'REST',
       defense: 'DECLINE',
     },

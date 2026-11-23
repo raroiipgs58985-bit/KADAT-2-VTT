@@ -12,14 +12,18 @@ import {
   setDoorLocked,
   setFootprint,
   standUp,
-  selectManualOrder,
+  addCombatant,
+  removeCombatant,
+  setSide,
+  setMovementOption,
   startCombat,
   type AttackCommand,
   type BackgroundSummary,
   type MoveCommand,
 } from './engine';
 import { fixedDice } from './dice';
-import { append, createBattle, move, type ActorId, type Battle } from './model';
+import { append, createBattle, type ActorId, type Battle, type Side } from './model';
+import type { CharacterDocument } from './character';
 import { rulings } from './rulings';
 import type { Footprint, Point } from './grid';
 import type { MapDocument } from './map';
@@ -28,7 +32,10 @@ type Step =
   | { type: 'attack'; command: AttackCommand; rolls: DiceRoll[] }
   | { type: 'next-turn'; rolls: DiceRoll[] }
   | { type: 'placement'; actor: ActorId; x: number; y: number }
-  | { type: 'manual-turn'; actor: ActorId }
+  | { type: 'roster-add'; character: CharacterDocument; side: Side; at: Point }
+  | { type: 'roster-remove'; actor: ActorId }
+  | { type: 'skr'; actor: ActorId; option: number }
+  | { type: 'roster-side'; actor: ActorId; side: Side }
   | { type: 'cancel-unstarted' }
   | { type: 'start-combat'; rolls: DiceRoll[] }
   | { type: 'move'; command: MoveCommand; rolls?: DiceRoll[] }
@@ -82,9 +89,8 @@ function outcomeOf(b: Battle) {
  * no part in any calculation) plus door changes, so a replay never depends on current map
  * files. v0.3 replays (standard 20 × 20 scene, no map commands) still import.
  */
-export const REPLAY_FORMAT = 'kadat-client-combat-v0.5';
-const INLINE_SNAPSHOT_FORMAT = 'kadat-client-combat-v0.4';
-const LEGACY_FORMAT = 'kadat-client-combat-v0.3';
+export const REPLAY_FORMAT = 'kadat-client-combat-v0.6';
+/** Step 4: earlier replays recorded the fixed Келус/Пак adapter and cannot be repeated. */
 /** One size limit for replays, used both when saving and when opening (UTF-8 bytes). */
 export const REPLAY_MAX_BYTES = 16 * 1024 * 1024;
 const utf8Bytes = (text: string) => new TextEncoder().encode(text).length;
@@ -93,7 +99,7 @@ export const GEOMETRY_VERSION = 2;
 const BASELINE = 'e98837b92abc74ac501b52c5f2ea2e79b86f96b3';
 
 export interface Replay {
-  format: typeof REPLAY_FORMAT | typeof INLINE_SNAPSHOT_FORMAT | typeof LEGACY_FORMAT;
+  format: typeof REPLAY_FORMAT;
   /** v0.5: every applied map's geometry, each layer stored once. */
   snapshots?: SnapshotStore;
   geometryVersion?: number;
@@ -102,11 +108,19 @@ export interface Replay {
   /** v0.4: state after the last step, checked on import. */
   outcome?: ReturnType<typeof outcomeOf>;
   baseline: string;
+  /** v0.6: participants at the start (characters as they were). */
+  participants?: InitialParticipant[];
   rulings: typeof rulings;
   steps: Step[];
   log: Battle['log'];
 }
 
+export interface InitialParticipant {
+  id: ActorId;
+  character: CharacterDocument;
+  side: Side;
+  at: Point;
+}
 export function exportReplay(b: Battle): Replay {
   const steps: Step[] = [];
   let backgroundOmitted = false;
@@ -151,7 +165,19 @@ export function exportReplay(b: Battle): Replay {
         x: detail.after!.x,
         y: detail.after!.y,
       });
-    if (entry.type === 'manual-turn') steps.push({ type: 'manual-turn', actor: detail.actor });
+    if (entry.type === 'roster-add') {
+      const r = entry.detail as { character: CharacterDocument; side: Side; at: Point };
+      steps.push({ type: 'roster-add', character: r.character, side: r.side, at: r.at });
+    }
+    if (entry.type === 'skr') {
+      const r = entry.detail as { actor: ActorId; option: number };
+      steps.push({ type: 'skr', actor: r.actor, option: r.option });
+    }
+    if (entry.type === 'roster-remove') steps.push({ type: 'roster-remove', actor: detail.actor });
+    if (entry.type === 'roster-side') {
+      const r = entry.detail as { actor: ActorId; side: Side };
+      steps.push({ type: 'roster-side', actor: r.actor, side: r.side });
+    }
     if (entry.type === 'cancel-unstarted') steps.push({ type: 'cancel-unstarted' });
     if (entry.type === 'map-applied') {
       const m = entry.detail as {
@@ -186,6 +212,7 @@ export function exportReplay(b: Battle): Replay {
     outcome: outcomeOf(b),
     snapshots: b.snapshots,
     baseline: BASELINE,
+    participants: (b.log[0]?.detail as { participants?: InitialParticipant[] }).participants ?? [],
     rulings,
     steps,
     log: b.log,
@@ -195,32 +222,32 @@ export function importReplay(value: unknown): Battle {
   const r = value as Replay;
   if (
     !r ||
-    (r.format !== REPLAY_FORMAT &&
-      r.format !== INLINE_SNAPSHOT_FORMAT &&
-      r.format !== LEGACY_FORMAT) ||
+    r.format !== REPLAY_FORMAT ||
+    !Array.isArray(r.participants) ||
     r.baseline !== BASELINE ||
     !Array.isArray(r.steps) ||
     r.steps.length > 1000
   )
     throw new Error('Неподдерживаемый формат replay');
-  if (r.format !== LEGACY_FORMAT && r.geometryVersion !== GEOMETRY_VERSION)
+  if (r.geometryVersion !== GEOMETRY_VERSION)
     throw new Error(
       `Версия правил геометрии в replay (${String(r.geometryVersion)}) не поддерживается; история не заменяется`,
     );
   for (const key of Object.keys(rulings) as (keyof typeof rulings)[])
     if (r.rulings?.[key] !== rulings[key])
       throw new Error('Решения автора в replay отличаются от текущих; автоматической миграции нет');
-  const b = createBattle();
+  const b = createBattle(r.participants);
   const dice = (rolls: DiceRoll[]) => {
     if (!Array.isArray(rolls) || rolls.length > 1000)
       throw new Error('Неверная последовательность');
     return fixedDice(rolls.map((d) => `${d.sides}:${d.value}`).join(','));
   };
   for (const step of r.steps) {
-    if (r.format === LEGACY_FORMAT && (step.type === 'map' || step.type === 'door'))
-      throw new Error('Replay v0.3 не может содержать команды карты');
     if (step.type === 'placement') placeActor(b, step.actor, step.x, step.y);
-    else if (step.type === 'manual-turn') selectManualOrder(b, step.actor);
+    else if (step.type === 'roster-add') addCombatant(b, step.character, step.side, step.at);
+    else if (step.type === 'roster-remove') removeCombatant(b, step.actor);
+    else if (step.type === 'skr') setMovementOption(b, step.actor, step.option);
+    else if (step.type === 'roster-side') setSide(b, step.actor, step.side);
     else if (step.type === 'cancel-unstarted') cancelUnstarted(b);
     else if (step.type === 'move') moveActor(b, step.command, dice(step.rolls ?? []));
     else if (step.type === 'fall') placeFallen(b, step.actor, { x: step.x, y: step.y });
@@ -229,12 +256,7 @@ export function importReplay(value: unknown): Battle {
     else if (step.type === 'map') {
       if (r.format === REPLAY_FORMAT && typeof step.snapshot !== 'string')
         throw new Error('Шаг карты replay без ссылки на снимок');
-      const map =
-        r.format === REPLAY_FORMAT
-          ? loadSnapshot(r.snapshots!, step.snapshot!)
-          : 'map' in step
-            ? step.map
-            : loadSnapshot(r.snapshots!, step.snapshot);
+      const map = loadSnapshot(r.snapshots!, step.snapshot!);
       applyMap(
         b,
         { map, positions: step.positions },
@@ -273,43 +295,6 @@ export function importReplay(value: unknown): Battle {
     );
   return b;
 }
-/** A fully specified local scenario; no claim of canonical battlefield placement. */
-export function demoBattle(pakHits = true): Battle {
-  const b = createBattle();
-  // Explicit setup before either combat action, not free movement during a turn.
-  move(b, 'pak', 6.5, 10.5);
-  attack(
-    b,
-    {
-      id: 'demo-kelus',
-      actor: 'kelus-drakar',
-      target: 'pak',
-      weapon: 'hotshot',
-      targetActivity: 'REST',
-      defense: 'DECLINE',
-    },
-    fixedDice('100:65,10:2,100:20'),
-  );
-  nextTurn(b, fixedDice(''));
-  const reroll = rulings.chainTiming === 'before' ? 4 : 5;
-  attack(
-    b,
-    {
-      id: 'demo-pak',
-      actor: 'pak',
-      target: 'kelus-drakar',
-      weapon: 'pak-chain',
-      targetActivity: 'REST',
-      defense: 'DECLINE',
-    },
-    fixedDice(pakHits ? `100:25,10:3,10:${reroll},100:20` : '100:90'),
-  );
-  return b;
-}
-export function resolvedDemoBattle(): Battle {
-  return demoBattle(false);
-}
-
 /** Saves a replay as JSON text, refusing one larger than the shared limit. */
 export function serializeReplay(b: Battle): string {
   const text = JSON.stringify(exportReplay(b), null, 2);

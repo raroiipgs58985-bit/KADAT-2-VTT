@@ -1,5 +1,5 @@
 import type { DiceRoll } from '@kadat/contracts';
-import { actor, type ActorId, type LogEntry, weapons } from './model';
+import type { ActorId, LogEntry } from './model';
 import { moveModes, type MoveCommand, type AttackCommand } from './engine';
 
 export type JournalTone = 'info' | 'success' | 'warning' | 'author' | 'error';
@@ -23,7 +23,8 @@ const locations: Record<string, string> = {
   'Armor Joints': 'Сочленения брони',
 };
 export const locationName = (location: string) => locations[location] ?? location;
-const name = (id: unknown) => (typeof id === 'string' ? (actor(id as ActorId)?.name ?? id) : '—');
+let nameOf: (id: string) => string = (id) => id;
+const name = (id: unknown) => (typeof id === 'string' ? nameOf(id) : '—');
 const metres = (n: number) => `${Number(n.toFixed(2))} м`;
 const dice = (rolls: unknown) =>
   Array.isArray(rolls) ? (rolls as DiceRoll[]).map((r) => `к${r.sides}=${r.value}`).join(', ') : '';
@@ -31,15 +32,20 @@ const dice = (rolls: unknown) =>
 interface AttackDetail {
   command: AttackCommand;
   rolls: DiceRoll[];
+  weaponName?: string;
+  maxHp?: number;
   result: {
-    damage: { finalDamage: number | null } | null;
-    hit?: { location: string };
+    hits?: { location: string; finalDamage: number; manual?: string[] }[];
   };
   hp: Record<ActorId, number>;
 }
 
 /** Human-readable journal line; the raw structured entry stays available for inspection. */
-export function describeEntry(entry: LogEntry): JournalLine {
+export function describeEntry(
+  entry: LogEntry,
+  names: (id: string) => string = (id) => id,
+): JournalLine {
+  nameOf = names;
   const d = entry.detail as Record<string, unknown>;
   const base = { id: entry.id, type: entry.type, dice: dice(d?.rolls) };
   switch (entry.type) {
@@ -47,7 +53,7 @@ export function describeEntry(entry: LogEntry): JournalLine {
       return {
         ...base,
         title: 'Сцена загружена',
-        summary: 'Профили из канонических таблиц, тестовая расстановка на карте 20 × 20 м.',
+        summary: 'Участники из библиотеки персонажей, тестовая расстановка на карте.',
         tone: 'info',
       };
     case 'placement': {
@@ -111,13 +117,6 @@ export function describeEntry(entry: LogEntry): JournalLine {
         summary: `Первым ходит ${name(d.actor)} (задано вручную, инициатива не бросалась).`,
         tone: 'info',
       };
-    case 'combat-start':
-      return {
-        ...base,
-        title: 'Бой начат',
-        summary: `Раунд 1. Ход: ${name(d.active)}.`,
-        tone: 'success',
-      };
     case 'next-turn':
       return {
         ...base,
@@ -169,16 +168,21 @@ export function describeEntry(entry: LogEntry): JournalLine {
       };
     case 'attack': {
       const a = d as unknown as AttackDetail;
-      const weapon = weapons.find((w) => w.id === a.command.weapon)?.name ?? a.command.weapon;
-      const damage = a.result.damage;
-      const summary = damage
-        ? `Попадание: ${locationName(a.result.hit?.location ?? '?')}, итоговый урон ${damage.finalDamage ?? 0}. ${name(a.command.target)}: ${a.hp[a.command.target]}/${actor(a.command.target).max}.`
+      const weapon = a.weaponName ?? a.command.weapon;
+      const hits = a.result.hits ?? [];
+      const manual = [...new Set(hits.flatMap((h) => h.manual ?? []))];
+      const summary = hits.length
+        ? `${hits.length > 1 ? `Попаданий: ${hits.length}. ` : ''}${hits
+            .map((h) => `${locationName(h.location)} — урон ${h.finalDamage}`)
+            .join('; ')}. ${name(a.command.target)}: ${a.hp[a.command.target]}${
+            a.maxHp ? `/${a.maxHp}` : ''
+          } ран.${manual.length ? ` Ведущему применить: ${manual.join(', ')}.` : ''}`
         : 'Промах — урон не бросается.';
       return {
         ...base,
         title: `${name(a.command.actor)} → ${name(a.command.target)} (${weapon})`,
         summary,
-        tone: damage ? 'success' : 'info',
+        tone: hits.length ? 'success' : 'info',
       };
     }
     case 'CONTEXT_REQUIRED':
@@ -195,6 +199,22 @@ export function describeEntry(entry: LogEntry): JournalLine {
         title: d.authorDecisionRequired ? 'Атака ждёт решения автора' : 'Команда отклонена',
         summary: String(d.reason),
         tone: d.authorDecisionRequired ? 'author' : 'error',
+      };
+    case 'roster-add':
+      return {
+        ...base,
+        title: `Участник: ${String(d.name)}`,
+        summary: d.side === 'b' ? 'Сторона Б.' : 'Сторона А.',
+        tone: 'info',
+      };
+    case 'roster-remove':
+      return { ...base, title: `Убран: ${name(d.actor)}`, summary: '', tone: 'info' };
+    case 'combat-start':
+      return {
+        ...base,
+        title: 'Бой начат',
+        summary: `Инициатива 1к10 + бЛВ. Первым ходит ${name(d.active)}.`,
+        tone: 'info',
       };
     case 'cancel-unstarted':
       return {

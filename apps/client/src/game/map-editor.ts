@@ -17,7 +17,7 @@ import {
   type Vertex,
   type Wall,
 } from './map';
-import { actor, ids, tokenConflicts, type ActorId, type Battle } from './model';
+import { actorIds, actorName, posOf, tokenConflicts, type ActorId, type Battle } from './model';
 import { applyMap } from './engine';
 
 /**
@@ -215,8 +215,11 @@ export const removeDecoration = (d: EditorDraft, id: string): EditorDraft => ({
   map: { ...d.map, decorations: d.map.decorations.filter((x) => x.id !== id) },
 });
 const samePoint = (a: Point, b: Point) => a.x === b.x && a.y === b.y;
-const editedInDraft = (d: EditorDraft, id: ActorId) =>
-  !samePoint(d.positions[id], d.basePositions[id]);
+const editedInDraft = (d: EditorDraft, id: ActorId) => {
+  const p = d.positions[id],
+    base = d.basePositions[id];
+  return !!p && !!base && !samePoint(p, base);
+};
 
 /**
  * Moves a token in the draft. A token not yet edited in the draft is rebased on its current
@@ -248,11 +251,11 @@ export const takeScenePosition = (d: EditorDraft, id: ActorId, scene: Point): Ed
 export function resolveDraftPositions(d: EditorDraft, b: Battle) {
   const positions = {} as Record<ActorId, Point>;
   const stale: { actor: ActorId; draft: Point; scene: Point }[] = [];
-  for (const id of ids) {
+  for (const id of actorIds(b)) {
     const edited = editedInDraft(d, id);
-    positions[id] = edited ? d.positions[id] : b.positions[id];
-    if (edited && !samePoint(b.positions[id], d.basePositions[id]))
-      stale.push({ actor: id, draft: d.positions[id], scene: b.positions[id] });
+    positions[id] = edited ? d.positions[id]! : posOf(b, id);
+    if (edited && !samePoint(posOf(b, id), d.basePositions[id]!))
+      stale.push({ actor: id, draft: d.positions[id]!, scene: posOf(b, id) });
   }
   return { positions, stale };
 }
@@ -282,7 +285,7 @@ export function draftDiffers(d: EditorDraft, b: Battle) {
   return (
     stale.length > 0 ||
     !sameMap(d.map, b.map) ||
-    ids.some((id) => !samePoint(positions[id], b.positions[id]))
+    actorIds(b).some((id) => !samePoint(positions[id]!, posOf(b, id)))
   );
 }
 /** A token was moved both in the draft and in the scene; the GM must choose first. */
@@ -297,7 +300,7 @@ export function applyDraft(b: Battle, d: EditorDraft) {
   const { positions, stale } = resolveDraftPositions(d, b);
   if (stale.length)
     throw new DraftPositionConflict(
-      `Токен перемещён и в черновике, и в расстановке: ${stale.map((s) => actor(s.actor).name).join(', ')}. Выберите, какую позицию оставить.`,
+      `Токен перемещён и в черновике, и в расстановке: ${stale.map((s) => actorName(b, s.actor)).join(', ')}. Выберите, какую позицию оставить.`,
     );
   return applyMap(b, { map: d.map, positions });
 }

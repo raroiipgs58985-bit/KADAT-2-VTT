@@ -1,32 +1,34 @@
 import type {
   BleedingActivity,
-  CalledLocation,
-  Characteristics,
   CombatActionState,
-  CombatActorRuntime,
   CombatSession,
   DamageInput,
   DiceRoll,
   DiceSource,
-  MeleeActorState,
+  FireMode,
   MeleeHitRecord,
-  MeleeWeaponInstance,
   ProtectionRuntimeState,
   ResolutionContext,
-  WeaponInstance,
+  WeaponTraitReference,
   WoundRuntimeState,
   DamageResolutionResult,
 } from '@kadat/contracts';
 import {
+  adjustDamageDice,
+  armourAfterProperties,
   beginActionRound,
   beginActionTurn,
   createActionState,
+  createCombatSession,
   createWoundRuntime,
+  damageBonus,
   damageInputFromHit,
   emptyActionContext,
+  enduranceBonusAfterProperties,
   finishActionTurn,
+  hasTrait,
+  impliedTraits,
   initializeMeleeState,
-  resolveBleedingPulse,
   resolveCombatAction,
   resolveWoundCheck,
   resolveDamageRoll,
@@ -38,26 +40,49 @@ import {
   resolveWoundRoundEnd,
   resolveWoundTurnStart,
   rollDie,
-  suppressionEventFromRanged,
-  suppressionTrigger,
+  strengthRequirement,
 } from '@kadat/rules-engine';
 import {
-  actor,
+  actorIds,
+  actorName,
+  fpOf,
+  posOf,
   append,
-  ids,
+  combatant,
+  maxWounds,
   move,
-  movementProfiles,
   planRoute,
   placementProblemFor,
   sceneGeometry,
   tokenConflicts,
-  weapons,
+  weaponOf,
   type ActorId,
   type Battle,
+  type Side,
   type WeaponId,
 } from './model';
+import {
+  actorRuntime,
+  bonusOf,
+  engineProvenance,
+  engineSource,
+  engineWeapons,
+  release,
+  weaponKind,
+  weaponProblem,
+  type WeaponKind,
+} from './combatants';
+import { weaponById, weaponTraits } from './arsenal';
+import { characterProblems, type CharacterDocument } from './character';
 import { rulings } from './rulings';
-import { cellsOf, validateFootprint, type Footprint } from './grid';
+import {
+  cellKey,
+  cellsOf,
+  footprintForSize,
+  placementProblem,
+  validateFootprint,
+  type Footprint,
+} from './grid';
 import { mapProblems, segmentLine, type MapDocument } from './map';
 import {
   buildGeometry,
@@ -67,22 +92,26 @@ import {
 } from './geometry';
 import { storeSnapshot } from './snapshots';
 
-const source = {
-  kind: 'canonical-profile',
-  id: 'Профили персонажей / Персонажи Вольного торговца B80(note), L54 + direct author rulings',
-};
-const provenance = {
-  source,
-  reason: 'Local profile adapter; author decisions recorded in rulings.ts and README',
-};
-const release = 'local-profile-snapshot-v0.2';
+const source = engineSource;
+const provenance = engineProvenance;
 const ref = (actorId: string) => ({ actorId });
+/** A question to the GM asked in the middle of an action; the answer resumes it (step 4). */
+export interface GmQuestion {
+  /** Stable key: the answer is stored under it in the command. */
+  key: string;
+  text: string;
+  /** Fixed choices; absent — a whole number between min and max. */
+  options?: { label: string; value: number }[];
+  min?: number;
+  max?: number;
+}
 export interface EngineState {
   wounds: WoundRuntimeState;
   protection: ProtectionRuntimeState;
+  /** ОБ lost by armour zones (e.g. «Цепное»), key `${actor}:${zone}`. */
   armorLoss: Record<string, number>;
   committed: string[];
-  pending?: { command: AttackCommand; prefix: DiceRoll[]; reason: string };
+  pending?: { command: AttackCommand; prefix: DiceRoll[]; reason: string; question?: GmQuestion };
   pendingTurn?: { prefix: DiceRoll[]; reason: string; kind?: 'start' };
   /** Committed movement actions; used only to detect a repeated free move in one turn. */
   moves: { turn: number; actor: ActorId; mode: MoveMode }[];
@@ -94,87 +123,41 @@ export interface AttackCommand {
   actor: ActorId;
   target: ActorId;
   weapon: WeaponId;
+  /** Ranged fire mode and declared shots; single shot by default. */
+  mode?: FireMode;
+  shots?: number;
   targetActivity: BleedingActivity;
   modifier?: number;
   defense: 'DECLINE';
+  /** GM answers to questions asked during this attack, by question key. */
+  answers?: Record<string, number>;
 }
 export class ContextRequired extends Error {
   override readonly name = 'ContextRequired';
 }
+/** The action needs a GM answer; dice already rolled are kept and the action resumes. */
+export class QuestionRequired extends ContextRequired {
+  constructor(readonly question: GmQuestion) {
+    super(question.text);
+  }
+}
+function ask(command: AttackCommand, question: GmQuestion): number {
+  const answer = command.answers?.[question.key];
+  if (answer === undefined) throw new QuestionRequired(question);
+  if (!Number.isInteger(answer)) throw new Error('Ответ ведущего должен быть целым числом');
+  return answer;
+}
 const engines = new WeakMap<Battle, EngineState>();
-const KELUS_CHAIN_BOUNDARY =
-  'Нужен полный персональный расчёт меча Келуса с питанием и бонусами; профиль не подменяется.';
-const FIRE_BOUNDARY =
-  'Автоматическое попадание Спрей: Torso. Требуется согласование Огненное (Арсенал D51: игнор брони) и Горение (Механика A17:B17: половина ОБ сочленений); эффекты не пропускаются.';
-const CHAIN_TIMING_BOUNDARY =
-  'Не утверждён порядок потери ОБ относительно текущего урона от Цепного. Попадание и его d100 сохранены.';
 
-function makeWeapon(id: WeaponId, owner: ActorId): WeaponInstance {
+function participants(b: Battle, rolls?: DiceSource): CombatSession {
+  const entries = actorIds(b).map((id) => ({
+    actor: ref(id),
+    agilityBonus: bonusOf(combatant(b, id).character, 'ЛВ'),
+    reactions: { capacity: 1, remaining: 1 },
+  }));
+  if (rolls) return createCombatSession('local-combat', release, entries, rolls).result;
+  // Before the fight: no initiative is rolled yet, the order is the roster order.
   return {
-    id,
-    owner: ref(owner),
-    readied: true,
-    modifications: [],
-    jammed: false,
-    loadedContainerId: `${id}:block`,
-    template: {
-      id: `${id}:profile`,
-      canonical: { releaseId: release, templateId: id, templateVersion: 'personal-v0.2' },
-      provenance,
-      properties: [],
-      effects: [],
-      profile: {
-        weaponClass: 'ОС',
-        optimalRange: 100,
-        classification: 'energy-beam',
-        modes: [{ mode: 'single', maxShots: 1 }],
-        // «Лаз» A1: the las family's own fire-mode modifiers (author ruling 52).
-        modeModifiers: { single: 10, 'short-burst': 5, 'full-auto': 0 },
-        damage: { source, expression: { count: 1, sides: 10, modifier: 4 } },
-        penetration: { source, value: 6 },
-        compatibleAmmoTypes: ['hotshot-block-shot'],
-        compatibleContainerTypes: ['power-block'],
-        capacityReference: source,
-        reload: { source, odCost: 2 },
-        malfunction: 'generic-jam',
-      },
-    },
-  };
-}
-function makeBlade(id: string, owner: ActorId, modifier: number, bb: number): MeleeWeaponInstance {
-  return {
-    id,
-    owner: ref(owner),
-    held: owner === 'pak',
-    readied: owner === 'pak',
-    dropped: false,
-    modifications: [],
-    template: {
-      id: `${id}:profile`,
-      canonical: { releaseId: release, templateId: id, templateVersion: 'personal-v0.2' },
-      provenance,
-      effects: [],
-      profile: {
-        source,
-        family: 'sword',
-        handedness: 'one-handed',
-        validGrips: ['one-handed'],
-        reach: 1,
-        damage: { source, expression: { count: 1, sides: 10, modifier } },
-        penetration: { source, value: bb },
-        parryEligible: true,
-        properties: [],
-      },
-    },
-  };
-}
-export function getEngine(b: Battle): EngineState {
-  const existing = engines.get(b);
-  if (existing) return existing;
-  // Equal sentinel entries only satisfy the accepted session schema. No initiative RNG
-  // is run, no initiative rule is selected. Order is explicitly supplied by the user.
-  const order = [b.active, ...ids.filter((id) => id !== b.active)];
-  const session: CombatSession = {
     id: 'local-combat',
     canonicalReleaseId: release,
     roundNumber: 1,
@@ -184,91 +167,30 @@ export function getEngine(b: Battle): EngineState {
     turn: null,
     turnsStarted: 0,
     conditions: [],
-    initiativeOrder: order.map((id) => ({
-      actor: ref(id),
+    // Equal sentinel entries only satisfy the session schema; the real roll happens at start.
+    initiativeOrder: entries.map((e) => ({
+      ...e,
       agilityBonus: 0,
       roll: { sides: 10, value: 1 },
       initiative: 1,
-      reactions: { capacity: 1, remaining: 1 },
     })),
   };
-  const actors = Object.fromEntries(
-    ids.map((id) => [
-      id,
-      {
-        actor: ref(id),
-        characteristics: Object.fromEntries(
-          Object.entries(actor(id).characteristics).map(([key, c]) => [
-            key,
-            { baseValue: c.value, baseSuper: c.super },
-          ]),
-        ) as Characteristics,
-        movement: movementProfiles[id].skr,
-        fatigue: 0,
-        posture: 'standing',
-        effects: [],
-      } as CombatActorRuntime,
-    ]),
-  );
-  const gun = makeWeapon('hotshot', 'kelus-drakar');
-  let combat = createActionState(
-    session,
-    actors,
-    { hotshot: gun },
-    {
-      'hotshot:block': {
-        id: 'hotshot:block',
-        type: 'power-block',
-        compatibleWeaponTemplateIds: ['hotshot:profile'],
-        capacity: 250,
-        currentRounds: 250,
-        ammo: { source, type: 'hotshot-block-shot', effects: [] },
-        state: 'ready',
-        provenance,
-      },
-    },
-  );
-  const meleeActors = Object.fromEntries(
-    ids.map((id) => [
-      id,
-      {
-        weaponId: id === 'pak' ? 'pak-chain' : 'kelus-chain',
-        stance: 'standard',
-        grip: 'one-handed',
-        sizeCategory: 0,
-        // These skills are never used by the supported simple strike. No untrained
-        // acrobatics value is fabricated for the public contract's mandatory field.
-        skills: {
-          athletics: {
-            baseValue: actor(id).characteristics.СЛ.value,
-            finalSuper: actor(id).characteristics.СЛ.super,
-            provenance,
-          },
-          acrobatics: {
-            baseValue: 0,
-            finalSuper: 0,
-            provenance: {
-              source,
-              reason: 'Unavailable skill sentinel: Acrobatics actions disabled in experiment',
-            },
-          },
-        },
-        meleeOnlyReactionRemaining: 0,
-        palisadeSpent: false,
-      } as MeleeActorState,
-    ]),
-  );
-  combat = initializeMeleeState(combat, meleeActors, {
-    'pak-chain': makeBlade('pak-chain', 'pak', 10, 4),
-    'kelus-chain': makeBlade('kelus-chain', 'kelus-drakar', 5, 2),
-  });
+}
+export function getEngine(b: Battle): EngineState {
+  const existing = engines.get(b);
+  if (existing) return existing;
+  const ids = actorIds(b);
+  const actors = Object.fromEntries(ids.map((id) => [id, actorRuntime(b, id)]));
+  const w = engineWeapons(b);
+  let combat = createActionState(participants(b), actors, w.ranged, w.containers);
+  combat = initializeMeleeState(combat, w.meleeActors, w.melee);
   const state: EngineState = {
     wounds: createWoundRuntime(
       combat,
       Object.fromEntries(
         ids.map((id) => [
           id,
-          { maxWounds: actor(id).max, damageTaken: actor(id).max - actor(id).wounds },
+          { maxWounds: maxWounds(b, id), damageTaken: maxWounds(b, id) - b.hp[id]! },
         ]),
       ),
     ),
@@ -280,6 +202,8 @@ export function getEngine(b: Battle): EngineState {
   engines.set(b, state);
   return state;
 }
+/** Drops the cached engine (roster changed before the fight). */
+export const resetEngine = (b: Battle) => engines.delete(b);
 function context(combat: CombatActionState, id: string, target?: string): ResolutionContext {
   return {
     ...emptyActionContext(ref(id)),
@@ -290,10 +214,11 @@ function context(combat: CombatActionState, id: string, target?: string): Resolu
   };
 }
 function sync(b: Battle, state: EngineState) {
-  for (const id of ids) b.hp[id] = actor(id).max - state.wounds.actors[id]!.damageTaken;
-  b.ammo.hotshot = state.wounds.combat.containers['hotshot:block']!.currentRounds;
+  for (const id of actorIds(b)) b.hp[id] = maxWounds(b, id) - state.wounds.actors[id]!.damageTaken;
+  for (const [id, c] of Object.entries(state.wounds.combat.containers))
+    b.ammo[id.replace(/:mag$/, '')] = c.currentRounds;
   const active = state.wounds.combat.session.activeActor?.actorId;
-  if (active) b.active = active as ActorId;
+  if (active) b.active = active;
   engines.set(b, state);
 }
 function begin(state: EngineState, rng: DiceSource, logs: unknown[]) {
@@ -316,51 +241,49 @@ function begin(state: EngineState, rng: DiceSource, logs: unknown[]) {
     throw new ContextRequired(JSON.stringify(hooked.pendingIntents));
   state.wounds = hooked.state;
 }
-function armorKey(id: string, location: CalledLocation) {
-  return `${id}:${location.includes('Arm') ? 'Arms' : location.includes('Leg') ? 'Legs' : location}`;
-}
-function armor(
-  state: EngineState,
-  target: ActorId,
-  location: CalledLocation,
-  energy: boolean,
-  headRedirect: boolean,
-) {
-  if (location === 'Eyes' || location === 'Armor Joints')
-    throw new ContextRequired('Нужны явные сведения о защите специальной зоны и её округлении.');
-  const values = actor(target)
-    .profile.find((p) => p.label === 'ОБ')!
-    .formattedValue!.split('/')
-    .map(Number);
-  const armorLocation = headRedirect ? 'Torso' : location;
-  const index =
-    armorLocation === 'Head'
-      ? 0
-      : armorLocation === 'Torso'
-        ? 1
-        : armorLocation.includes('Arm')
-          ? 2
-          : 3;
-  const key = armorKey(target, armorLocation);
-  const value = Math.max(0, values[index]! - (state.armorLoss[key] ?? 0)) + (energy ? 3 : 0);
-  return {
-    key,
-    ob: value,
-    baseOB: values[index]!,
-    runtimeLoss: state.armorLoss[key] ?? 0,
-    ceramiteBonus: energy ? 3 : 0,
-    propertySource: target === 'pak' ? 'Арсенал / Броня!C33,B115' : 'Профили / B70 note',
-  };
+
+type Zone = 'head' | 'torso' | 'arms' | 'legs';
+const zoneOf = (location: string): Zone | null =>
+  location === 'Head'
+    ? 'head'
+    : location === 'Torso'
+      ? 'torso'
+      : location.includes('Arm')
+        ? 'arms'
+        : location.includes('Leg')
+          ? 'legs'
+          : null;
+const zoneName: Record<Zone, string> = {
+  head: 'голова',
+  torso: 'торс',
+  arms: 'руки',
+  legs: 'ноги',
+};
+/**
+ * ОБ of the hit location from the character (profile or armour items) minus the loss in this
+ * fight. Eyes and joints without an undersuit — the GM gives the ОБ (ruling 75).
+ */
+function zoneArmour(b: Battle, state: EngineState, command: AttackCommand, location: string) {
+  const c = combatant(b, command.target).character;
+  const zone = zoneOf(location);
+  if (!zone) {
+    const under = Object.values(c.undersuit).filter((v): v is number => v !== null);
+    const hint = under.length ? ` Поддоспешник по зонам: ${under.join('/')}.` : '';
+    const ob = ask(command, {
+      key: `armour:${location}`,
+      text: `${c.name}: попадание в «${location === 'Eyes' ? 'Глаза' : 'Сочленения'}». Сколько ОБ здесь? (решение 75)${hint}`,
+      min: 0,
+      max: 99,
+    });
+    return { key: `${command.target}:${location}`, ob, base: ob, loss: 0, zone: null };
+  }
+  const key = `${command.target}:${zone}`;
+  const base = c.armour[zone];
+  const loss = state.armorLoss[key] ?? 0;
+  return { key, ob: Math.max(0, base - loss), base, loss, zone };
 }
 function protectionFor(state: EngineState, input: DamageInput, ob: number) {
   const id = `armor:${input.target.actorId}:${input.location}`;
-  const armorSource = {
-    kind: 'canonical-profile',
-    id:
-      input.target.actorId === 'pak'
-        ? 'Профили / L44 + Арсенал / Броня!C33,B115'
-        : 'Профили / B70 note',
-  };
   return {
     ...state.protection,
     sources: {
@@ -370,11 +293,8 @@ function protectionFor(state: EngineState, input: DamageInput, ob: number) {
         active: true,
         definition: {
           id,
-          source: armorSource,
-          provenance: {
-            source: armorSource,
-            reason: 'Personal zone OB plus confirmed armor properties and separate runtime loss',
-          },
+          source,
+          provenance: { source, reason: 'Zone ОБ of the character after weapon properties' },
           kind: 'worn-armor' as const,
           ob,
           zones: [input.location],
@@ -405,83 +325,181 @@ function postDamage(
   logs.push(...result.logs);
   if (result.result.status !== 'RESOLVED')
     throw new ContextRequired(JSON.stringify(result.result.pendingIntents));
-  state.wounds = result.state;
+  state.wounds = result.result.status === 'RESOLVED' ? result.state : state.wounds;
   return result.result;
 }
-function tearingBleed(
+const sum = (rolls: readonly DiceRoll[]) => rolls.reduce((s, r) => s + r.value, 0);
+
+/** Properties the polygon does not apply automatically yet: shown to the GM after the hit. */
+const MANUAL_PROPERTIES = new Set([
+  'Деструктор',
+  'Оглушающее',
+  'Ослепляющее',
+  'Шоковое',
+  'Опутывающее',
+  'Контузия',
+  'Калечащее',
+  'Токсичное',
+  'Огненное',
+  'Галлюциногенное',
+  'Проникающее',
+  'Рад',
+  'Мгновенная смерть',
+  'Плавящее',
+  'Взрыв',
+  'Спрей',
+  'Коррозийное',
+  'Гравитонное',
+  'Частичное опутывание',
+]);
+
+/** Damage of one hit: dice, weapon properties, zone armour, endurance and wounds. */
+function resolveHit(
+  b: Battle,
   state: EngineState,
   command: AttackCommand,
-  damage: DamageResolutionResult,
-  reroll: number,
+  hit: DamageInput,
+  info: {
+    kind: WeaponKind;
+    degrees: number;
+    traits: readonly WeaponTraitReference[];
+    weaponClass: string;
+    distance: number;
+    optimalRange: number;
+  },
   rng: DiceSource,
   logs: unknown[],
 ) {
-  if (!damage.finalDamage) return;
-  const target = state.wounds.actors[command.target]!;
-  const injury = target.injuries.find((i) => i.sourceHitId === damage.input.hitId);
-  if (!injury)
-    throw new ContextRequired('Нет Injury для гарантированного кровотечения Разрывного.');
-  if (injury.bleedingSourceIds.length)
-    throw new ContextRequired(
-      'Требуется отношение кровотечения Разрывного к кровотечению той же Injury из таблицы последствий; источники не объединяются и не складываются автоматически.',
-    );
-  const id = `${injury.id}:tearing`;
-  const bleeding = {
-    id,
-    injuryId: injury.id,
-    consequence: injury.consequence,
-    severity:
-      reroll <= 4 ? ('LIGHT' as const) : reroll <= 8 ? ('MEDIUM' as const) : ('HEAVY' as const),
-    location: injury.location,
-    active: true,
-    appliedRound: state.wounds.combat.session.roundNumber,
-    appliedTurn: state.wounds.combat.session.turnsStarted,
-    provenance: {
-      source: { kind: 'canonical', id: 'Арсенал / Свойства оружия!D68' },
-      reason: 'Ранение Разрывным: сила кровотечения по переброшенному кубику',
-    },
+  const attacker = combatant(b, command.actor).character;
+  const target = combatant(b, command.target).character;
+  const traits = info.traits;
+  const sl = bonusOf(attacker, 'СЛ');
+  const armour = zoneArmour(b, state, command, hit.location);
+  const roll = resolveDamageRoll(hit.profile.expression, rng, hit.context).result;
+  const dice = adjustDamageDice(traits, roll.rolls, rng);
+  const bonus = damageBonus(traits, {
+    kind: info.kind,
+    degrees: info.degrees,
+    strengthBonus: sl,
+    distance: info.distance,
+    optimalRange: info.optimalRange,
+    targetWounds: target.wounds,
+    weaponClass: info.weaponClass,
+  });
+  const extra = Array.from({ length: bonus.extraD10 }, () => rollDie(10, rng));
+  const minus = Array.from({ length: bonus.minusD10 }, () => rollDie(10, rng));
+  const notes = [...bonus.notes];
+  let flat = bonus.flat;
+  if (info.kind === 'melee') {
+    // Ruling 74: melee damage adds бСЛ with the Super-characteristic.
+    flat += sl;
+    notes.push(`бСЛ: +${sl}`);
+    if (hasTrait(traits, 'Цепное')) {
+      const half = ask(command, {
+        key: 'chain-half-sl',
+        text: `Цепное: +½ бСЛ к урону. бСЛ ${sl} — сколько прибавить? (округление не утверждено)`,
+        options: [
+          { label: `${Math.floor(sl / 2)} (вниз)`, value: Math.floor(sl / 2) },
+          { label: `${Math.ceil(sl / 2)} (вверх)`, value: Math.ceil(sl / 2) },
+        ],
+      });
+      flat += half;
+      notes.push(`Цепное: +${half}`);
+    }
+  }
+  let total = sum(dice.rolls) + hit.profile.expression.modifier + sum(extra) - sum(minus) + flat;
+  const strength = strengthRequirement(traits, sl);
+  if (strength.halveDamage) {
+    total = Math.ceil(total / 2);
+    notes.push('Сила: бСЛ ниже нужного — урон /2');
+  }
+  total = Math.max(0, total);
+  const penetration = hit.penetration.value * bonus.penetrationMultiplier + bonus.penetrationAdd;
+  // «Цепное»: the armour element loses ОБ equal to ББ at once (rulings 5, 16).
+  if (hasTrait(traits, 'Цепное') && armour.zone) {
+    state.armorLoss[armour.key] = (state.armorLoss[armour.key] ?? 0) + penetration;
+    armour.ob = Math.max(0, armour.base - state.armorLoss[armour.key]!);
+    notes.push(`Цепное: броня (${zoneName[armour.zone]}) −${penetration} ОБ`);
+  }
+  // Лэнс / Примитивное change the armour before ББ; the core subtracts ББ.
+  const ob = armourAfterProperties(traits, {
+    armour: armour.ob,
+    penetration: 0,
+    weaponClass: info.weaponClass,
+  });
+  const vn = target.characteristics.ВН;
+  const rending = enduranceBonusAfterProperties(
+    traits,
+    Math.floor(vn.value / 10) + vn.super,
+    vn.super,
+  );
+  const endurance = {
+    baseValue: vn.value,
+    baseSuper: Math.max(0, vn.super - (Math.floor(vn.value / 10) + vn.super - rending)),
   };
-  // Attach to the real C-2 Injury, never a fabricated consequence catalog row.
-  state.wounds = {
-    ...state.wounds,
-    actors: {
-      ...state.wounds.actors,
-      [command.target]: {
-        ...target,
-        injuries: target.injuries.map((i) =>
-          i.id === injury.id ? { ...i, bleedingSourceIds: [...i.bleedingSourceIds, id] } : i,
-        ),
-        bleeding: [...target.bleeding, bleeding],
+  const input: DamageInput = {
+    ...hit,
+    penetration: { ...hit.penetration, value: penetration },
+    transformations: [
+      ...hit.transformations,
+      ...(total !== roll.rawDamage
+        ? [
+            {
+              id: `${hit.hitId}:properties`,
+              type: 'add' as const,
+              value: total - roll.rawDamage,
+              provenance: { source, reason: notes.join('; ') || 'weapon properties' },
+            },
+          ]
+        : []),
+    ],
+  };
+  const damage = resolveProtectionDamage(
+    {
+      input,
+      state: protectionFor(state, input, ob),
+      endurance,
+      preRolled: roll,
+    },
+    {
+      roll: () => {
+        throw new Error('Unexpected damage reroll');
       },
     },
-  };
-  // The C-2-created sources already pulsed. Pulse only the new property source,
-  // preserving all other sources without executing their immediate loss twice.
-  const original = state.wounds.actors[command.target]!;
-  const scoped = {
-    ...state.wounds,
-    actors: { ...state.wounds.actors, [command.target]: { ...original, bleeding: [bleeding] } },
-  };
-  const pulse = resolveBleedingPulse(
-    {
-      id: `${id}:initial`,
-      actor: ref(command.target),
-      state: scoped,
-      context: context(state.wounds.combat, command.target),
-      facts: { provenance, activity: command.targetActivity },
-    },
-    rng,
   );
-  if (pulse.result.status !== 'RESOLVED')
-    throw new ContextRequired(JSON.stringify(pulse.result.pendingIntents));
-  state.wounds = {
-    ...pulse.state,
-    actors: {
-      ...pulse.state.actors,
-      [command.target]: { ...pulse.state.actors[command.target]!, bleeding: original.bleeding },
+  const manual = traits.filter((t) => MANUAL_PROPERTIES.has(t.name));
+  logs.push(
+    {
+      type: 'hit-damage',
+      location: hit.location,
+      dice: roll.rolls,
+      adjustedDice: dice.rolls,
+      tearing: dice.tearing ?? null,
+      extraD10: extra,
+      minusD10: minus,
+      flat,
+      total,
+      penetration,
+      armour: { ...armour, afterProperties: ob },
+      notes,
+      manualProperties: manual,
     },
+    ...damage.logs,
+  );
+  if (damage.result.status !== 'RESOLVED')
+    throw new ContextRequired(JSON.stringify(damage.result.status));
+  state.protection = damage.state;
+  const wound = postDamage(state, damage.result, command, rng, logs);
+  return {
+    location: hit.location,
+    total,
+    penetration,
+    armour: ob,
+    finalDamage: damage.result.finalDamage ?? 0,
+    notes,
+    manual: manual.map((t) => (t.value === undefined ? t.name : `${t.name} (${t.value})`)),
+    wound,
   };
-  logs.push(...pulse.logs);
 }
 
 function resolve(
@@ -491,35 +509,32 @@ function resolve(
   rng: DiceSource,
   logs: unknown[],
 ) {
-  if (
-    !ids.includes(command.actor) ||
-    !ids.includes(command.target) ||
-    command.actor === command.target
-  )
-    throw new Error('Неверные участники атаки');
+  combatant(b, command.actor);
+  combatant(b, command.target);
+  if (command.actor === command.target) throw new Error('Неверные участники атаки');
   if (command.defense !== 'DECLINE')
     throw new ContextRequired(
-      'Нужно явное решение цели об отказе от реакции; автоматического отказа нет.',
+      'Реакции цели (уклонение, парирование) в полигоне пока не подключены.',
     );
-  const selected = weapons.find((w) => w.id === command.weapon && w.owner === command.actor);
-  if (!selected) throw new Error('Оружие не принадлежит атакующему');
-  if (command.weapon !== 'hotshot' && command.weapon !== 'pak-chain')
-    throw new ContextRequired(
-      command.weapon === 'kelus-chain' ? KELUS_CHAIN_BOUNDARY : FIRE_BOUNDARY,
-    );
+  const selected = weaponOf(b, command.weapon);
+  if (!selected || selected.owner !== command.actor)
+    throw new Error('Оружие не принадлежит атакующему');
+  const problem = weaponProblem(selected.arsenal);
+  if (problem) throw new Error(`${selected.name}: ${problem}`);
+  const arsenalWeapon = selected.arsenal!;
+  if (state.wounds.combat.session.phase === 'ready')
+    throw new Error('Бой ещё не начат: нажмите «Начать бой»');
   begin(state, rng, logs);
   if (state.wounds.combat.session.activeActor?.actorId !== command.actor)
-    throw new Error(
-      'Передайте ход штатной кнопкой. Очередь задана вручную, свободных дополнительных атак нет.',
-    );
+    throw new Error('Сейчас ход другого персонажа');
   if (state.wounds.actors[command.actor]!.life.status !== 'ALIVE')
-    throw new ContextRequired('Действия в Agony/Death не разрешаются этим прототипом.');
-  const p = b.positions[command.actor],
-    q = b.positions[command.target],
+    throw new ContextRequired('Действия в агонии и после смерти не разрешаются.');
+  const p = posOf(b, command.actor)!,
+    q = posOf(b, command.target)!,
     distance = Math.hypot(p.x - q.x, p.y - q.y);
   let ctx = context(state.wounds.combat, command.actor, command.target);
   if (command.modifier !== undefined) {
-    if (!Number.isInteger(command.modifier)) throw new Error('GM modifier must be an integer');
+    if (!Number.isInteger(command.modifier)) throw new Error('Модификатор должен быть целым');
     ctx = {
       ...ctx,
       modifiers: [
@@ -529,14 +544,26 @@ function resolve(
           source: { kind: 'gm', id: 'local modifier input' },
           provenance: {
             source: { kind: 'gm', id: 'local modifier input' },
-            reason: 'Explicit numeric modifier supplied in prototype control',
+            reason: 'Modifier set by the GM',
           },
         },
       ],
     };
   }
-  let hit: DamageInput, degrees: number;
-  if (command.weapon === 'hotshot') {
+  const kind = weaponKind(arsenalWeapon);
+  const traits = impliedTraits(weaponTraits(arsenalWeapon).traits);
+  const info = {
+    kind,
+    traits,
+    weaponClass: arsenalWeapon.weaponClass,
+    distance,
+    optimalRange: arsenalWeapon.range.meters!,
+  };
+  const hits: DamageInput[] = [];
+  let attack: unknown, degrees: number;
+  if (kind === 'ranged') {
+    const mode = command.mode ?? 'single';
+    const shots = mode === 'single' ? 1 : (command.shots ?? 1);
     const resolved = resolveWoundAwareAction(state.wounds, 'НС', ctx, (combat, context) =>
       resolveRangedAttack(
         combat,
@@ -545,9 +572,9 @@ function resolve(
           type: 'ranged-attack',
           actor: ref(command.actor),
           target: ref(command.target),
-          weaponId: 'hotshot',
-          mode: 'single',
-          shotsRequested: 1,
+          weaponId: command.weapon,
+          mode,
+          shotsRequested: shots,
           distance,
           dodgeable: true,
           context,
@@ -558,30 +585,9 @@ function resolve(
     state.wounds = resolved.state;
     logs.push(resolved.projectionLog, ...resolved.resolution.logs);
     const result = resolved.resolution.result;
-    const suppression = suppressionTrigger(
-      suppressionEventFromRanged({
-        attackId: command.id,
-        sourceActor: ref(command.actor),
-        primaryTarget: ref(command.target),
-        weapon: source,
-        provenance,
-        weaponClass: 'BASIC',
-        result,
-      }),
-    );
-    if (suppression.triggered)
-      throw new ContextRequired(
-        'Сработал канонический триггер подавления (3+ степени): требуется подключение контекста подавления и персональных талантов. Результат проверки сохранён, подавление не пропускается.',
-      );
-    if (!result.hits.length)
-      return {
-        status: 'RESOLVED',
-        attack: result,
-        damage: null,
-        reaction: 'explicitly declined in local scenario',
-      };
-    hit = damageInputFromHit(result.hits[0]!);
+    attack = result;
     degrees = result.check.totalDegrees;
+    hits.push(...result.hits.map((h) => damageInputFromHit(h)));
   } else {
     const resolved = resolveWoundAwareAction(state.wounds, 'НР', ctx, (combat, context) =>
       resolveMeleeAttack(
@@ -593,7 +599,7 @@ function resolve(
           origin: 'NORMAL',
           base: 'simple',
           technique: 'normal',
-          weaponId: 'pak-chain',
+          weaponId: command.weapon,
           targets: [{ actor: ref(command.target), distance }],
           context,
         },
@@ -603,166 +609,18 @@ function resolve(
     state.wounds = resolved.state;
     logs.push(resolved.projectionLog, ...resolved.resolution.logs);
     const target = resolved.resolution.result.targets[0]!;
-    if (!target.hit)
-      return {
-        status: 'RESOLVED',
-        attack: target.check,
-        damage: null,
-        reaction: 'explicitly declined in local scenario',
-      };
-    hit = damageInputFromHit(target.hit as MeleeHitRecord);
+    attack = target.check;
     degrees = target.check.totalDegrees;
+    if (target.hit) hits.push(damageInputFromHit(target.hit as MeleeHitRecord));
   }
-  if (command.weapon === 'pak-chain' && rulings.chainTiming === null)
-    throw new ContextRequired(CHAIN_TIMING_BOUNDARY);
-  if (hit.location === 'Eyes')
-    throw new ContextRequired(
-      'Попадание Eyes сохранено: нужны сведения о шлеме и округлении ОБ линз; автоматического выбора нет.',
-    );
-  let redirected = false;
-  if (hit.location === 'Head') {
-    const value = rollDie(10, rng).value;
-    redirected = value >= 7;
-    logs.push({
-      type: 'gorget',
-      roll: { sides: 10, value },
-      threshold: 7,
-      useTorsoArmor: redirected,
-      bodyLocationRemains: hit.location,
-      source:
-        command.target === 'pak'
-          ? 'Арсенал / Броня!C33 (Горжет 7), правило: Профили B70 note'
-          : 'Персонажи Вольного торговца!B70 note',
-    });
-  }
-  const roll = resolveDamageRoll(hit.profile.expression, rng, hit.context).result;
-  let effectiveDie = roll.rolls[0]!.value,
-    reroll = 0;
-  if (command.weapon === 'pak-chain') {
-    reroll = rollDie(10, rng).value;
-    effectiveDie = reroll;
-    logs.push({
-      type: 'tearing-reroll',
-      discarded: roll.rolls[0],
-      replacement: { sides: 10, value: reroll },
-      source: 'Арсенал / Свойства оружия!D68',
-    });
-    if (roll.critical && reroll !== 10)
-      throw new ContextRequired(
-        'Нужно решение: критический максимум на отброшенном кубике Разрывного. Оба броска сохранены.',
-      );
-  } else effectiveDie = Math.max(rulings.provenMinimum, effectiveDie);
-  // Reuse the accepted Core to build/validate DamageRoll and its critical marker.
-  // This source returns the already derived die; it consumes no new random roll.
-  const effectiveRoll = resolveDamageRoll(
-    hit.profile.expression,
-    { roll: () => effectiveDie },
-    hit.context,
-  ).result;
-  const bb = command.weapon === 'pak-chain' && degrees >= 3 ? 8 : hit.penetration.value;
-  const laserBonus = command.weapon === 'hotshot' ? Math.floor(degrees / 2) : 0;
-  hit = {
-    ...hit,
-    penetration: { ...hit.penetration, value: bb },
-    transformations: [
-      ...hit.transformations,
-      ...(laserBonus
-        ? [
-            {
-              id: `${hit.hitId}:master`,
-              type: 'add' as const,
-              value: laserBonus,
-              provenance: {
-                source: { kind: 'canonical', id: 'Профили / Таланты (обновлены)!K62' },
-                reason: 'Мастер Лаз-оружия; floor(степени/2) author ruling',
-              },
-            },
-          ]
-        : []),
-    ],
-  };
-  const armorBefore = armor(
-    state,
-    command.target,
-    hit.location,
-    command.weapon === 'hotshot',
-    redirected,
+  const damage = hits.map((hit) =>
+    resolveHit(b, state, command, hit, { ...info, degrees }, rng, logs),
   );
-  if (command.weapon === 'pak-chain' && rulings.chainTiming === 'before')
-    state.armorLoss[armorBefore.key] = (state.armorLoss[armorBefore.key] ?? 0) + bb;
-  const current = armor(
-    state,
-    command.target,
-    hit.location,
-    command.weapon === 'hotshot',
-    redirected,
-  );
-  const damage = resolveProtectionDamage(
-    {
-      input: hit,
-      state: protectionFor(state, hit, current.ob),
-      endurance: state.wounds.combat.actors[command.target]!.characteristics.ВН!,
-      preRolled: effectiveRoll,
-    },
-    {
-      roll: () => {
-        throw new Error('Unexpected damage reroll');
-      },
-    },
-  );
-  logs.push(
-    {
-      type: 'personal-weapon-calculation',
-      rawDamageDice: roll.rolls,
-      effectiveDamageDice: effectiveRoll.rolls,
-      provenMinimum: command.weapon === 'hotshot' ? 5 : null,
-      laserMaster: { degrees, bonus: laserBonus, rounding: 'floor' },
-      penetration: bb,
-      armorBefore: armorBefore.ob,
-      armorForCurrentHit: current.ob,
-      armorCalculation: current,
-      source: provenance,
-    },
-    ...damage.logs,
-  );
-  if (damage.result.status !== 'RESOLVED')
-    throw new ContextRequired(JSON.stringify(damage.result.status));
-  state.protection = damage.state;
-  const wound = postDamage(state, damage.result, command, rng, logs);
-  if (
-    command.target === 'pak' &&
-    wound.injuriesCreated.some((i) => i.features.some((f) => /amput|limb-loss/.test(f.type)))
-  )
-    throw new ContextRequired(
-      'Требуется композиция автоматических жгутов Медслоя (5) Пака с ампутацией и кровотечением; автоматическое игнорирование запрещено.',
-    );
-  if (
-    command.target === 'kelus-drakar' &&
-    (wound.conditionsCreatedOrUpdated.some((c) => c.type === 'Stunned') ||
-      (wound.injuriesCreated.some((i) => i.features.length) &&
-        (hit.location.includes('Arm') || hit.location.includes('Leg'))))
-  )
-    throw new ContextRequired(
-      'Нужна персональная интеграция Стальной челюсти / Адамантиевого скелета для этого последствия Келуса; эффекты не игнорируются.',
-    );
-  if (command.weapon === 'pak-chain') {
-    tearingBleed(state, command, damage.result, reroll, rng, logs);
-    if (rulings.chainTiming === 'after')
-      state.armorLoss[armorBefore.key] = (state.armorLoss[armorBefore.key] ?? 0) + bb;
-    logs.push({
-      type: 'chain-armor-loss',
-      key: armorBefore.key,
-      bb,
-      timing: rulings.chainTiming,
-      totalLoss: state.armorLoss[armorBefore.key],
-    });
-  }
   return {
     status: 'RESOLVED',
-    hit,
-    damage: damage.result,
-    wound,
-    reaction: 'explicitly declined in local scenario',
+    attack,
+    hits: damage,
+    reaction: 'declined',
   };
 }
 
@@ -772,7 +630,7 @@ function resolve(
  * a closed door or a vision-blocking obstacle stops before any dice; nothing is guessed.
  */
 export function attackLineProblem(b: Battle, attacker: ActorId, target: ActorId): string | null {
-  const blocker = sightLineBlocker(b.positions[attacker], b.positions[target], sceneGeometry(b));
+  const blocker = sightLineBlocker(posOf(b, attacker), posOf(b, target), sceneGeometry(b));
   return blocker
     ? `Ждёт решения автора: линия атаки проходит через ${blocker.label}. Правила линии видимости и атаки сквозь преграды ещё не утверждены (этапы 5–6).`
     : null;
@@ -785,7 +643,17 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
     resume &&
     (!current.pending ||
       !(
-        ['id', 'actor', 'target', 'weapon', 'targetActivity', 'modifier', 'defense'] as const
+        [
+          'id',
+          'actor',
+          'target',
+          'weapon',
+          'mode',
+          'shots',
+          'targetActivity',
+          'modifier',
+          'defense',
+        ] as const
       ).every((key) => current.pending!.command[key] === command[key]))
   )
     throw new Error('Pending command differs');
@@ -827,6 +695,8 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
     append(b, 'attack', {
       command,
       rolls: used,
+      weaponName: weaponOf(b, command.weapon)?.name ?? command.weapon,
+      maxHp: maxWounds(b, command.target),
       result,
       coreLogs: logs,
       committed: true,
@@ -843,7 +713,12 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
       throw error;
     }
     const reason = String(error instanceof Error ? error.message : error);
-    current.pending = { command: structuredClone(command), prefix: used, reason };
+    current.pending = {
+      command: structuredClone(command),
+      prefix: used,
+      reason,
+      ...(error instanceof QuestionRequired ? { question: error.question } : {}),
+    };
     engines.set(b, current);
     append(b, 'CONTEXT_REQUIRED', {
       command,
@@ -855,10 +730,11 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
     return { status: 'CONTEXT_REQUIRED' as const, reason };
   }
 }
-export function resumeAttack(b: Battle, source: DiceSource) {
+/** Continues the saved attack; `answers` carry the GM's answers to the question asked. */
+export function resumeAttack(b: Battle, source: DiceSource, answers: Record<string, number> = {}) {
   const p = getEngine(b).pending;
   if (!p) throw new Error('Нет pending-команды');
-  return attack(b, p.command, source, true);
+  return attack(b, { ...p.command, answers: { ...p.command.answers, ...answers } }, source, true);
 }
 export function nextTurn(b: Battle, source: DiceSource) {
   const current = getEngine(b);
@@ -909,18 +785,102 @@ export function nextTurn(b: Battle, source: DiceSource) {
     return { status: 'CONTEXT_REQUIRED' as const, reason };
   }
 }
-export function selectManualOrder(b: Battle, selected: ActorId) {
-  const state = getEngine(b);
-  if (
-    state.wounds.combat.session.phase !== 'ready' ||
-    state.committed.length ||
-    state.pending ||
-    state.pendingTurn
-  )
-    throw new Error('Начальная ручная очередь уже задана. Используйте «Передать ход».');
-  b.active = selected;
+/**
+ * Adds a character from the library to the battle before the fight, on the first free cells
+ * near `at` (or anywhere on the map). The same character may be added several times (NPC
+ * squads); each copy gets its own id.
+ */
+export function addCombatant(
+  b: Battle,
+  character: CharacterDocument,
+  side: Side,
+  at?: { x: number; y: number },
+): ActorId {
+  if (combatStarted(b)) throw new Error('Участников добавляют до начала боя');
+  const problems = characterProblems(character);
+  if (problems.length) throw new Error(`Персонаж не готов: ${problems.join('; ')}`);
+  let id = character.id;
+  for (let n = 2; b.roster[id]; n++) id = `${character.id}-${n}`;
+  const copies = Object.values(b.roster).filter((c) => c.character.id === character.id).length;
+  const name = copies ? `${character.name} ${copies + 1}` : character.name;
+  const footprint = footprintForSize(character.size);
+  const spot = freeSpot(b, footprint, at);
+  if (!spot) throw new Error('На карте нет свободного места для токена');
+  b.roster[id] = { id, character: { ...structuredClone(character), name }, side };
+  b.positions[id] = spot;
+  b.footprints[id] = footprint;
+  b.hp[id] = character.wounds;
+  character.weapons.forEach((w, i) => {
+    b.ammo[`${id}:${i}`] = (w.ref ? weaponById(w.ref)?.magazine : null) ?? null;
+  });
   engines.delete(b);
-  append(b, 'manual-turn', { actor: selected });
+  append(b, 'roster-add', { actor: id, name, side, at: spot, character });
+  return id;
+}
+/** First free placement for a footprint, nearest to `near` (the map centre by default). */
+function freeSpot(b: Battle, f: Footprint, near?: { x: number; y: number }) {
+  const target = near ?? { x: b.map.cols / 2, y: b.map.rows / 2 };
+  let best: { x: number; y: number } | null = null,
+    bestD = Infinity;
+  for (let row = 0; row + f.height <= b.map.rows; row++)
+    for (let col = 0; col + f.width <= b.map.cols; col++) {
+      const c = { x: col + f.width / 2, y: row + f.height / 2 };
+      const d = Math.hypot(c.x - target.x, c.y - target.y);
+      if (d >= bestD) continue;
+      const others = new Set<string>();
+      for (const id of actorIds(b))
+        for (const cell of cellsOf(posOf(b, id), fpOf(b, id))) others.add(cellKey(cell));
+      if (placementProblem(c, f, others, b.map) ?? footprintGeometryProblem(c, f, sceneGeometry(b)))
+        continue;
+      best = c;
+      bestD = d;
+    }
+  return best;
+}
+export function removeCombatant(b: Battle, id: ActorId) {
+  if (combatStarted(b)) throw new Error('Участников убирают до начала боя');
+  combatant(b, id);
+  delete b.roster[id];
+  delete b.positions[id];
+  delete b.footprints[id];
+  delete b.hp[id];
+  for (const k of Object.keys(b.ammo)) if (k.startsWith(`${id}:`)) delete b.ammo[k];
+  if (b.active === id) b.active = actorIds(b)[0] ?? '';
+  engines.delete(b);
+  append(b, 'roster-remove', { actor: id });
+}
+/**
+ * Switches the participant's СКР option (ruling 3: chosen by the player, switched by the GM or
+ * the player at any time, e.g. from 5 to 4). The engine uses the new СКР from now on.
+ */
+export function setMovementOption(b: Battle, id: ActorId, option: number) {
+  const c = combatant(b, id);
+  const options = c.character.movement.options;
+  if (!Number.isInteger(option) || option < 0 || option >= options.length)
+    throw new Error('Нет такого варианта СКР');
+  const before = options[c.character.movement.current]!;
+  b.roster[id] = {
+    ...c,
+    character: { ...c.character, movement: { ...c.character.movement, current: option } },
+  };
+  const state = engines.get(b);
+  if (state) {
+    const runtime = state.wounds.combat.actors[id]!;
+    const combat = {
+      ...state.wounds.combat,
+      actors: {
+        ...state.wounds.combat.actors,
+        [id]: { ...runtime, movement: options[option]!.skr },
+      },
+    };
+    engines.set(b, { ...state, wounds: { ...state.wounds, combat } });
+  }
+  append(b, 'skr', { actor: id, option, from: before, to: options[option] });
+}
+export function setSide(b: Battle, id: ActorId, side: Side) {
+  const c = combatant(b, id);
+  b.roster[id] = { ...c, side };
+  append(b, 'roster-side', { actor: id, side });
 }
 export function cancelUnstarted(b: Battle) {
   const state = getEngine(b);
@@ -1071,7 +1031,7 @@ export function moveActor(b: Battle, command: MoveCommand, source: DiceSource = 
     },
   };
   try {
-    if (!ids.includes(command.actor)) throw new Error('Неизвестный персонаж');
+    combatant(b, command.actor);
     const mode = moveModes.find((m) => m.mode === command.mode);
     if (!mode) throw new Error('Неизвестный режим движения');
     if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
@@ -1085,7 +1045,7 @@ export function moveActor(b: Battle, command: MoveCommand, source: DiceSource = 
       throw new Error('Сцена изменилась после предпросмотра: выберите точку назначения заново');
     const authorBlock = authorBoundary(state, command.actor, command.mode);
     if (authorBlock) throw new RuleDecisionRequired(authorBlock);
-    const from = b.positions[command.actor];
+    const from = posOf(b, command.actor);
     if (points.length === 1 && x === from.x && y === from.y)
       throw new Error('Точка назначения совпадает с текущей позицией');
     const plan = planRoute(b, command.actor, points);
@@ -1149,7 +1109,7 @@ export function moveActor(b: Battle, command: MoveCommand, source: DiceSource = 
       from,
       to: fell ? null : { x, y },
       route: points,
-      cells: fell ? [] : cellsOf({ x, y }, b.footprints[command.actor]),
+      cells: fell ? [] : cellsOf({ x, y }, fpOf(b, command.actor)),
       distance: plan.meters,
       difficult: plan.difficult,
       cost: plan.cost,
@@ -1196,7 +1156,7 @@ export function placeFallen(b: Battle, actor: ActorId, at: { x: number; y: numbe
   };
   const fall = next.pendingFall!;
   delete next.pendingFall;
-  const before = b.positions[actor];
+  const before = posOf(b, actor);
   b.positions[actor] = { x: at.x, y: at.y };
   sync(b, next);
   append(b, 'fall-placed', {
@@ -1204,7 +1164,7 @@ export function placeFallen(b: Battle, actor: ActorId, at: { x: number; y: numbe
     commandId: fall.commandId,
     zone: fall.zone,
     before,
-    after: b.positions[actor],
+    after: posOf(b, actor),
     posture: 'prone',
   });
 }
@@ -1232,6 +1192,12 @@ export function startCombat(b: Battle, source: DiceSource) {
     logs: unknown[] = [];
   delete state.pendingTurn;
   try {
+    // Initiative: 1к10 + бЛВ, equal results re-rolled (ruling 20).
+    if (state.wounds.combat.session.phase === 'ready') {
+      const session = participants(b, tape);
+      state.wounds = { ...state.wounds, combat: { ...state.wounds.combat, session } };
+      logs.push({ type: 'initiative', order: session.initiativeOrder });
+    }
     begin(state, tape, logs);
     sync(b, state);
     append(b, 'combat-start', { coreLogs: logs, rolls: used, active: b.active });
@@ -1287,8 +1253,15 @@ export function turnInfo(b: Battle) {
     reactions: Object.fromEntries(
       session.initiativeOrder.map((e) => [e.actor.actorId, e.reactions.remaining]),
     ) as Record<ActorId, number>,
+    initiative: Object.fromEntries(
+      session.initiativeOrder.map((e) => [e.actor.actorId, e.initiative]),
+    ) as Record<ActorId, number>,
     pending: state.pending
-      ? { reason: state.pending.reason, savedDice: state.pending.prefix.length }
+      ? {
+          reason: state.pending.reason,
+          savedDice: state.pending.prefix.length,
+          question: state.pending.question ?? null,
+        }
       : null,
     pendingTurn: state.pendingTurn
       ? { reason: state.pendingTurn.reason, kind: state.pendingTurn.kind ?? 'next' }
@@ -1300,8 +1273,8 @@ export function actorStatus(b: Battle, id: ActorId) {
   const wounds = state.wounds.actors[id]!;
   const runtime = state.wounds.combat.actors[id]!;
   return {
-    wounds: b.hp[id],
-    maxWounds: actor(id).max,
+    wounds: b.hp[id] ?? 0,
+    maxWounds: maxWounds(b, id),
     blood: wounds.blood,
     life: wounds.life.status,
     injuries: wounds.injuries.map((i) => ({
@@ -1329,31 +1302,27 @@ export function actorStatus(b: Battle, id: ActorId) {
   };
 }
 export type WeaponSupport = { level: 'supported' | 'partial' | 'blocked'; note: string };
-/** Honest status of every personal weapon in this adapter; mirrors the boundaries in `resolve`. */
-export function weaponSupport(id: WeaponId): WeaponSupport {
-  switch (id) {
-    case 'hotshot':
-      return {
-        level: 'supported',
-        note: 'Одиночный выстрел разрешается Core полностью. Результат с 3+ степенями останавливается на подавлении: его контекст ещё не подключён.',
-      };
-    case 'pak-chain':
-      return {
-        level: 'partial',
-        note: `Простой удар: промах разрешается полностью. Попадание останавливается — ${CHAIN_TIMING_BOUNDARY}`,
-      };
-    case 'kelus-chain':
-      return { level: 'blocked', note: KELUS_CHAIN_BOUNDARY };
-    default:
-      return { level: 'blocked', note: FIRE_BOUNDARY };
-  }
+/** Whether the combat engine can use a participant's weapon, and why not. */
+export function weaponSupport(b: Battle, id: WeaponId): WeaponSupport {
+  const w = weaponOf(b, id);
+  const problem = w ? weaponProblem(w.arsenal) : 'Нет такого оружия';
+  if (problem) return { level: 'blocked', note: problem };
+  const unread = weaponTraits(w!.arsenal!).unread;
+  const manual = weaponTraits(w!.arsenal!).traits.filter((t) => MANUAL_PROPERTIES.has(t.name));
+  const notes = [
+    ...(unread.length ? [`Не прочитано: ${unread.join(', ')}`] : []),
+    ...(manual.length ? [`Применяет ведущий: ${manual.map((t) => t.name).join(', ')}`] : []),
+  ];
+  return notes.length
+    ? { level: 'partial', note: notes.join('. ') }
+    : { level: 'supported', note: 'Свойства оружия учитываются автоматически.' };
 }
 
 /** «Встать» (1 ОД) through the accepted Core; available only when the actor is not standing. */
 export function standUp(b: Battle, command: { id: string; actor: ActorId }) {
   const state = getEngine(b);
   try {
-    if (!ids.includes(command.actor)) throw new Error('Неизвестный персонаж');
+    combatant(b, command.actor);
     if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
     movementGate(state, command.actor);
     const runtime = state.wounds.combat.actors[command.actor]!;
@@ -1395,10 +1364,10 @@ export function standUp(b: Battle, command: { id: string; actor: ActorId }) {
  */
 export function setFootprint(b: Battle, id: ActorId, footprint: Footprint) {
   if (combatStarted(b)) throw new Error('Площадь токена меняется только до начала боя.');
-  if (!ids.includes(id)) throw new Error('Неизвестный персонаж');
+  combatant(b, id);
   validateFootprint(footprint);
-  const old = b.footprints[id];
-  const center = b.positions[id];
+  const old = fpOf(b, id);
+  const center = posOf(b, id);
   const anchor = { col: center.x - old.width / 2, row: center.y - old.height / 2 };
   const next = { x: anchor.col + footprint.width / 2, y: anchor.row + footprint.height / 2 };
   const problem = placementProblemFor(b, id, next, footprint);
@@ -1407,7 +1376,7 @@ export function setFootprint(b: Battle, id: ActorId, footprint: Footprint) {
   b.positions[id] = next;
   append(b, 'footprint', {
     actor: id,
-    footprint: b.footprints[id],
+    footprint: fpOf(b, id),
     center: next,
     cells: cellsOf(next, footprint),
   });
@@ -1419,11 +1388,10 @@ export class MapApplyRejected extends Error {
   constructor(
     readonly mapProblems: string[],
     readonly tokenProblems: { actor: ActorId; problem: string }[],
+    nameOf: (id: ActorId) => string = (id) => id,
   ) {
     super(
-      [...mapProblems, ...tokenProblems.map((t) => `${actor(t.actor).name}: ${t.problem}`)].join(
-        ' ',
-      ),
+      [...mapProblems, ...tokenProblems.map((t) => `${nameOf(t.actor)}: ${t.problem}`)].join(' '),
     );
   }
 }
@@ -1447,14 +1415,15 @@ export function applyMap(
   const conflicts = problems.some((p) => /Ширина|Высота/.test(p))
     ? []
     : tokenConflicts(map, positions, b.footprints);
-  if (problems.length || conflicts.length) throw new MapApplyRejected(problems, conflicts);
-  const repositioned = ids
-    .filter((id) => positions[id].x !== b.positions[id].x || positions[id].y !== b.positions[id].y)
+  if (problems.length || conflicts.length)
+    throw new MapApplyRejected(problems, conflicts, (id) => actorName(b, id));
+  const repositioned = actorIds(b)
+    .filter((id) => positions[id]!.x !== posOf(b, id).x || positions[id]!.y !== posOf(b, id).y)
     .map((id) => ({
       actor: id,
-      from: b.positions[id],
-      to: positions[id],
-      cells: cellsOf(positions[id], b.footprints[id]),
+      from: posOf(b, id),
+      to: positions[id]!,
+      cells: cellsOf(positions[id]!, fpOf(b, id)),
     }));
   b.map = map;
   b.mapRevision += 1;
@@ -1524,10 +1493,10 @@ export function setDoorOpen(b: Battle, doorId: string, open: boolean, by?: Actor
   }
   if (!open) {
     const g = buildGeometry(b.map, { ...b.doors, [doorId]: false });
-    for (const id of ids) {
-      const problem = footprintGeometryProblem(b.positions[id], b.footprints[id], g);
+    for (const id of actorIds(b)) {
+      const problem = footprintGeometryProblem(posOf(b, id), fpOf(b, id), g);
       if (problem)
-        throw new Error(`Нельзя закрыть дверь: ${actor(id).name} стоит в проёме (${problem})`);
+        throw new Error(`Нельзя закрыть дверь: ${actorName(b, id)} стоит в проёме (${problem})`);
     }
   }
   if (freeAction) {

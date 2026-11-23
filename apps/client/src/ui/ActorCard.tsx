@@ -1,7 +1,8 @@
 import { actorStatus, weaponSupport } from '../game/engine';
+import { armourZoneName, ARMOUR_ZONES } from '../game/character';
 import { area, footprintPresets, sameFootprint, type Footprint } from '../game/grid';
 import { locationName } from '../game/journal';
-import { actor, movementProfiles, weapons, type ActorId, type Battle } from '../game/model';
+import { battleWeapons, combatant, fpOf, type ActorId, type Battle } from '../game/model';
 
 const lifeLabel: Record<string, string> = {
   ALIVE: 'В строю',
@@ -26,27 +27,26 @@ export function ActorCard({
   id,
   setup,
   onFootprint,
+  onSkr,
 }: {
   battle: Battle;
   id: ActorId;
   setup: boolean;
   onFootprint: (footprint: Footprint) => void;
+  /** Ruling 3: the player or the GM switches the СКР option, also during the fight. */
+  onSkr: (option: number) => void;
 }) {
-  const footprint = battle.footprints[id];
+  const footprint = fpOf(battle, id);
   const presetId = footprintPresets.find((p) => sameFootprint(p.footprint, footprint))?.id ?? '1x1';
-  const profile = actor(id);
+  const c = combatant(battle, id);
+  const profile = c.character;
   const status = actorStatus(battle, id);
-  const move = movementProfiles[id];
-  const own = weapons.filter((w) => w.owner === id);
-  const details = profile.profile.filter(
-    (p) => !['ОБ', 'БВ', 'Раны', 'Движение'].includes(p.label),
-  );
-  const field = (label: string) => profile.profile.find((p) => p.label === label);
+  const own = battleWeapons(battle, id);
 
   return (
     <article className="actor-card" aria-label={`Персонаж ${profile.name}`}>
       <header className="actor-head">
-        <div className={`avatar ${id === 'pak' ? 'side-b' : 'side-a'}`}>{profile.name[0]}</div>
+        <div className={`avatar ${c.side === 'b' ? 'side-b' : 'side-a'}`}>{profile.name[0]}</div>
         <div>
           <h2>{profile.name}</h2>
           <p className="muted">
@@ -143,35 +143,57 @@ export function ActorCard({
       <section className="detail">
         <h3>Характеристики</h3>
         <dl className="stats">
-          {Object.entries(profile.characteristics).map(([key, c]) => (
+          {Object.entries(profile.characteristics).map(([key, v]) => (
             <div key={key}>
               <dt>{key}</dt>
-              <dd>{c.raw}</dd>
+              <dd>
+                {v.value}
+                {v.super ? ` (+${v.super} Сверх)` : ''}
+              </dd>
             </div>
           ))}
         </dl>
         <dl className="facts">
           <div>
-            <dt>ОБ (голова/торс/руки/ноги)</dt>
-            <dd>{field('ОБ')?.formattedValue}</dd>
-          </div>
-          <div>
-            <dt>БВ</dt>
-            <dd>{field('БВ')?.formattedValue}</dd>
-          </div>
-          <div>
-            <dt>СКР в движке</dt>
-            <dd title={`${move.source}: ${move.profileText}`}>{status.movement} м</dd>
+            <dt>ОБ</dt>
+            <dd>
+              {ARMOUR_ZONES.map((z) => `${armourZoneName[z]} ${profile.armour[z]}`).join(', ')}
+            </dd>
           </div>
         </dl>
-        {move.openQuestion && <p className="note-author">{move.openQuestion}</p>}
+      </section>
+
+      <section>
+        <h3>Движение</h3>
+        <dl className="facts">
+          <div>
+            <dt>СКР</dt>
+            <dd>
+              {profile.movement.options.length > 1 ? (
+                <select
+                  aria-label="Вариант СКР"
+                  value={profile.movement.current}
+                  onChange={(e) => onSkr(Number(e.target.value))}
+                >
+                  {profile.movement.options.map((o, i) => (
+                    <option key={i} value={i}>
+                      {o.label}: {o.skr} м
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                `${status.movement} м`
+              )}
+            </dd>
+          </div>
+        </dl>
       </section>
 
       <section>
         <h3>Оружие</h3>
         <ul className="weapons">
           {own.map((w) => {
-            const support = weaponSupport(w.id);
+            const support = weaponSupport(battle, w.id);
             const ammo = battle.ammo[w.id];
             return (
               <li key={w.id}>
@@ -182,8 +204,11 @@ export function ActorCard({
                   </span>
                 </div>
                 <div className="muted small">
-                  {ammo === null ? 'без боезапаса' : `боезапас ${ammo} / ${w.capacity}`}
+                  {ammo === null || ammo === undefined
+                    ? 'без магазина'
+                    : `боезапас ${ammo} / ${w.capacity}`}
                 </div>
+                {support.level !== 'supported' && <div className="muted small">{support.note}</div>}
               </li>
             );
           })}
@@ -191,14 +216,24 @@ export function ActorCard({
       </section>
 
       <details className="profile-details detail">
-        <summary>Навыки, таланты, импланты и снаряжение</summary>
-        {details.map((p) => (
-          <div key={p.label} className="profile-entry">
-            <strong>{p.label.replace(/:$/, '')}</strong>
-            <p>{p.formattedValue}</p>
-            {p.note && <p className="muted small pre">{p.note}</p>}
+        <summary>Навыки, таланты и особенности</summary>
+        <div className="profile-entry">
+          <strong>Навыки</strong>
+          <p>
+            {profile.skills
+              .map((sk) => `${sk.name}${sk.bonus ? ` +${sk.bonus}` : ''}`)
+              .join(', ') || '—'}
+          </p>
+        </div>
+        <div className="profile-entry">
+          <strong>Таланты</strong>
+          <p>{profile.talents.join(', ') || '—'}</p>
+        </div>
+        {profile.traits && (
+          <div className="profile-entry">
+            <p className="muted small pre">{profile.traits}</p>
           </div>
-        ))}
+        )}
       </details>
     </article>
   );

@@ -15,7 +15,7 @@ const provenance = {
 };
 const started = () => {
   const b = createBattle();
-  startCombat(b, fixedDice(''));
+  startCombat(b, fixedDice('10:9,10:2'));
   return b;
 };
 /** Mutates the adapter runtime the same way Core's addWoundEffects / Prone condition do. */
