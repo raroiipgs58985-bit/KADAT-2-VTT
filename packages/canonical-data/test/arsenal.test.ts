@@ -83,7 +83,46 @@ describe('Arsenal dataset', () => {
     const lasgun = data.weapons.find((x) => x.name === 'Лазган')!;
     expect(lasgun.properties.map((p) => p.property)).toEqual(['Регулировка мощности', 'Надежное']);
   });
-  it('a value Excel turned into a date is reported, not used', () => {
-    expect(data.issues.some((i) => /стала датой/.test(i.message))).toBe(true);
+});
+
+describe('Author corrections of 23.11.2026 (decisions 54–58)', () => {
+  const data = importArsenal(snapshot);
+  it('properties missing from the sheet are added with the author as source', () => {
+    for (const n of ['Проверенное', 'Навесное', 'Ослепляющее'])
+      expect(data.properties.find((p) => p.name === n)?.source).toEqual({
+        author: 'Решение автора 23.11.2026',
+      });
+    const w = data.weapons.find((x) => x.name === 'Хот-шот лазган')!;
+    expect(w.properties.find((p) => p.name === 'Проверенное')?.property).toBe('Проверенное');
+  });
+  it('misspelt property names resolve to the correct ones', () => {
+    const all = data.weapons.flatMap((w) => w.properties);
+    expect(all.some((p) => p.name === 'Калечашее')).toBe(false);
+    expect(
+      all.filter((p) => p.raw.startsWith('Калечашее')).every((p) => p.property === 'Калечащее'),
+    ).toBe(true);
+  });
+  it('«(опц)» marks an optional property', () => {
+    const p = data.weapons.flatMap((w) => w.properties).find((x) => x.raw.includes('(опц)'))!;
+    expect(p).toMatchObject({ name: 'Калечащее', optional: true, property: 'Калечащее' });
+  });
+  it('a cap «3-/-/-» covers only the head; power armour has an undersuit layer', () => {
+    expect(data.armour.find((a) => a.name === 'Флак фуражка')!.armour).toEqual({
+      head: 3,
+      torso: null,
+      arms: null,
+      legs: null,
+    });
+    const t = data.armour.find((a) => a.name === 'Терминаторский доспех Индоминус')!;
+    expect(t.armour).toEqual({ head: 20, torso: 20, arms: 20, legs: 20 });
+    expect(t.underlayer).toEqual({ head: 5, torso: 6, arms: 5, legs: 5 });
+  });
+  it('the Power scythe range is restored to «1-3»', () => {
+    expect(data.weapons.find((w) => w.name === 'Силовая коса')!.range).toEqual({
+      meters: 3,
+      text: '1-3',
+      formula: false,
+    });
+    expect(data.issues.some((i) => /стала датой/.test(i.message))).toBe(false);
   });
 });

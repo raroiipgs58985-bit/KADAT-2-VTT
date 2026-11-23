@@ -3,6 +3,14 @@
  * source files → import/validation → canonical dataset). Pure: no file system, no Excel.
  * Values are taken as written; what cannot be read is reported, never guessed.
  */
+import {
+  AUTHOR,
+  CELL_CORRECTIONS,
+  EXTRA_PROPERTIES,
+  normaliseArmourText,
+  PROPERTY_ALIASES,
+} from './corrections.js';
+
 export type Cell = string | number;
 export interface ArsenalSnapshot {
   readonly source: {
@@ -25,6 +33,8 @@ export interface PropertyRef {
   readonly param: string | null;
   /** Name of the matching entry of «Свойства оружия», or null when not found there. */
   readonly property: string | null;
+  /** Marked «(опц)»: an optional property (see «Опционально»). */
+  readonly optional: boolean;
 }
 export interface DamageSpec {
   readonly count: number;
@@ -86,6 +96,13 @@ export interface ArsenalArmour {
     readonly legs: number | null;
   } | null;
   readonly armourText: string;
+  /** Second layer written after the main one (power armour): the undersuit (decision 56). */
+  readonly underlayer: {
+    readonly head: number | null;
+    readonly torso: number | null;
+    readonly arms: number | null;
+    readonly legs: number | null;
+  } | null;
   readonly maxAgility: string | null;
   readonly autosenses: string | null;
   readonly properties: readonly PropertyRef[];
@@ -108,7 +125,7 @@ export interface ArsenalProperty {
   readonly abbreviation: string | null;
   readonly description: string;
   readonly effect: string;
-  readonly source: SourceRef;
+  readonly source: SourceRef | { readonly author: string };
 }
 export interface ImportIssue extends SourceRef {
   readonly message: string;
@@ -122,6 +139,8 @@ export interface ArsenalDataset {
   readonly armour: readonly ArsenalArmour[];
   readonly fields: readonly ArsenalField[];
   readonly issues: readonly ImportIssue[];
+  /** Author corrections applied on import (src/corrections.ts). */
+  readonly corrections: readonly string[];
 }
 
 const WEAPON_SHEETS = [
@@ -239,9 +258,12 @@ function makeResolver(properties: readonly ArsenalProperty[]) {
     byName.set(norm(p.name), p.name);
     if (p.abbreviation) byName.set(norm(p.abbreviation), p.name);
   }
+  const aliases = new Map(Object.entries(PROPERTY_ALIASES).map(([k, v]) => [norm(k), v]));
   return (raw: string): PropertyRef => {
-    const { name, param } = parsePropertyItem(raw);
-    return { raw, name, param, property: byName.get(norm(name)) ?? null };
+    const optional = /\(\s*опц\.?\s*\)\s*$/i.test(raw);
+    const parsed = parsePropertyItem(optional ? raw.replace(/\(\s*опц\.?\s*\)\s*$/i, '') : raw);
+    const name = aliases.get(norm(parsed.name)) ?? parsed.name;
+    return { raw, name, param: parsed.param, property: byName.get(norm(name)) ?? null, optional };
   };
 }
 
@@ -288,8 +310,20 @@ export function parseFamilyModes(text: string): ArsenalWeapon['modeModifiers'] {
     : null;
 }
 
-export function importArsenal(snapshot: ArsenalSnapshot): ArsenalDataset {
+export function importArsenal(original: ArsenalSnapshot): ArsenalDataset {
   const issues: ImportIssue[] = [];
+  const corrections: string[] = [];
+  const sheets: Record<string, Cell[][]> = Object.fromEntries(
+    Object.entries(original.sheets).map(([k, rows]) => [k, rows.map((r) => [...r])]),
+  );
+  for (const c of CELL_CORRECTIONS) {
+    const row = sheets[c.sheet]?.[c.row - 1];
+    if (!row) continue;
+    while (row.length < c.column) row.push('');
+    row[c.column - 1] = c.value;
+    corrections.push(`${c.sheet}, строка ${c.row}: ${c.reason}`);
+  }
+  const snapshot = { ...original, sheets };
   const sheet = (name: string) => {
     const rows = snapshot.sheets[name];
     if (!rows) {
@@ -298,7 +332,16 @@ export function importArsenal(snapshot: ArsenalSnapshot): ArsenalDataset {
     }
     return rows;
   };
-  const properties = propertyEntries(sheet('Свойства оружия'), 'Свойства оружия');
+  const properties = [
+    ...propertyEntries(sheet('Свойства оружия'), 'Свойства оружия'),
+    ...EXTRA_PROPERTIES.map((p) => ({ ...p, abbreviation: null, source: { author: AUTHOR } })),
+  ];
+  corrections.push(
+    `Добавлены свойства: ${EXTRA_PROPERTIES.map((p) => p.name).join(', ')}`,
+    `Исправлены опечатки: ${Object.entries(PROPERTY_ALIASES)
+      .map(([a, b]) => `${a} → ${b}`)
+      .join(', ')}`,
+  );
   const resolve = makeResolver(properties);
   const ids = new Set<string>();
   const idFor = (sheetName: string, name: string, row: number) => {
@@ -420,11 +463,15 @@ export function importArsenal(snapshot: ArsenalSnapshot): ArsenalDataset {
       const c: Columns = cols;
       const title = at(r, c.name),
         text = at(r, c.armour);
-      const zones = text.split('/').map((s) => s.trim());
-      const parsed =
-        zones.length === 4 && zones.every((z) => z === '' || z === '-' || /^\d+$/.test(z))
+      const zonesOf = (t: string) => {
+        const zones = t.split('/').map((s) => s.trim());
+        return zones.length === 4 && zones.every((z) => z === '' || z === '-' || /^\d+$/.test(z))
           ? zones.map((z) => (/^\d+$/.test(z) ? Number(z) : null))
           : null;
+      };
+      const normalised = text.includes('/') && text.length <= 30 ? normaliseArmourText(text) : null;
+      const parsed = normalised ? zonesOf(normalised.main) : null;
+      const under = normalised?.under ? zonesOf(normalised.under) : null;
       if (!title || !parsed) {
         // Rows of other tables inside the sheet (critical effects …) have no «a/b/c/d» value.
         if (title && text.includes('/') && text.length <= 30)
@@ -441,6 +488,9 @@ export function importArsenal(snapshot: ArsenalSnapshot): ArsenalDataset {
         group,
         armour: { head: parsed[0]!, torso: parsed[1]!, arms: parsed[2]!, legs: parsed[3]! },
         armourText: text,
+        underlayer: under
+          ? { head: under[0]!, torso: under[1]!, arms: under[2]!, legs: under[3]! }
+          : null,
         maxAgility: at(r, c.maxAg) || null,
         autosenses: at(r, c.senses) || null,
         // Armour traits (Флак, Керамит, Жёсткий …) are not weapon properties: kept as written.
@@ -480,5 +530,6 @@ export function importArsenal(snapshot: ArsenalSnapshot): ArsenalDataset {
     armour,
     fields,
     issues,
+    corrections,
   };
 }
