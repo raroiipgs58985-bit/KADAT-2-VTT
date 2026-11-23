@@ -12,6 +12,7 @@ import { weaponTraits } from './arsenal';
 import type { ArsenalWeapon } from '../../../../packages/canonical-data/src/arsenal';
 import { battleWeapons, combatant, actorIds, type ActorId, type Battle } from './model';
 import { currentSkr, type CharacterDocument } from './character';
+import { canonicalTalents } from './talents';
 
 /**
  * Builds the rules-engine runtime of every participant from its character (step 4): the
@@ -47,7 +48,7 @@ export function actorRuntime(b: Battle, id: ActorId): CombatActorRuntime {
     fatigue: 0,
     posture: 'standing',
     effects: [],
-    talents: [...c.talents],
+    talents: canonicalTalents(c.talents),
   } as CombatActorRuntime;
 }
 

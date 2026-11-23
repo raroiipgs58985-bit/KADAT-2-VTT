@@ -221,3 +221,15 @@ describe('Talent «Бугрящиеся бицепсы»', () => {
     expect(res.check.modifiers.some((m) => m.id === 'ranged:unbraced-heavy')).toBe(false);
   });
 });
+
+describe('Old talent names (ruling 80)', () => {
+  it('Келус «Бугрящиеся мышцы» counts as «Бугрящиеся бицепсы»', () => {
+    const b = createBattle();
+    expect(b.roster['kelus-drakar']!.character.talents).toContain('Бугрящиеся мышцы');
+    expect(heavyFromHands(b, 'kelus-drakar')).toBe(true);
+    startCombat(b, fixedDice('10:9,10:2'));
+    expect(getEngine(b).wounds.combat.actors['kelus-drakar']!.talents).toContain(
+      'Бугрящиеся бицепсы',
+    );
+  });
+});
