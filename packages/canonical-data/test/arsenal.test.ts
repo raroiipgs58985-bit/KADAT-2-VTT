@@ -126,3 +126,18 @@ describe('Author corrections of 23.11.2026 (decisions 54–58)', () => {
     expect(data.issues.some((i) => /стала датой/.test(i.message))).toBe(false);
   });
 });
+
+describe('Author decisions 60–61', () => {
+  const data = importArsenal(snapshot);
+  const refs = data.weapons.flatMap((w) => w.properties);
+  it('variant spellings resolve to one property', () => {
+    expect(refs.find((p) => p.name === 'Деструктор' && p.raw.startsWith('Дес'))?.property).toBe(
+      'Деструктор',
+    );
+    expect(refs.find((p) => p.raw.startsWith('Кон'))?.property).toBe('Контузия');
+  });
+  it('«СП» on a shield is the power field armour trait; «бСЛх2» is described', () => {
+    expect(refs.find((p) => p.raw.startsWith('СП ('))?.armourTrait).toBe('Силовое поле');
+    expect(refs.find((p) => p.raw === 'бСЛх2')?.property).toBe('бСЛх2');
+  });
+});

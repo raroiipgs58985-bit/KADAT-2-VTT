@@ -10,6 +10,7 @@ import {
   normaliseArmourText,
   PROPERTY_ALIASES,
   ATTACHMENT_ALIASES,
+  ARMOUR_TRAIT_ALIASES,
 } from './corrections.js';
 
 export type Cell = string | number;
@@ -36,6 +37,8 @@ export interface PropertyRef {
   readonly property: string | null;
   /** Name of the matching attachment of «Дополнения к оружию», when it is one. */
   readonly attachment: string | null;
+  /** Name of the matching armour trait of «Броня» (Силовое поле on shields …), when it is one. */
+  readonly armourTrait: string | null;
   /** Marked «(опц)»: an optional property (see «Опционально»). */
   readonly optional: boolean;
 }
@@ -325,7 +328,12 @@ function armourTraitEntries(
 function makeResolver(
   properties: readonly ArsenalProperty[],
   attachments: readonly ArsenalAttachment[] = [],
+  armourTraits: readonly ArsenalArmourTrait[] = [],
 ) {
+  const traitByName = new Map<string, string>();
+  for (const t of armourTraits) traitByName.set(norm(t.name), t.name);
+  for (const [short, full] of Object.entries(ARMOUR_TRAIT_ALIASES))
+    if (traitByName.has(norm(full))) traitByName.set(norm(short), full);
   const attachmentByName = new Map<string, string>();
   for (const a of attachments) attachmentByName.set(norm(a.name), a.name);
   for (const [short, full] of Object.entries(ATTACHMENT_ALIASES))
@@ -346,6 +354,7 @@ function makeResolver(
       param: parsed.param,
       property: byName.get(norm(name)) ?? null,
       attachment: attachmentByName.get(norm(name)) ?? null,
+      armourTrait: traitByName.get(norm(name)) ?? null,
       optional,
     };
   };
@@ -427,7 +436,8 @@ export function importArsenal(original: ArsenalSnapshot): ArsenalDataset {
       .join(', ')}`,
   );
   const attachments = attachmentEntries(sheet('Дополнения к оружию'), 'Дополнения к оружию');
-  const resolve = makeResolver(properties, attachments);
+  const armourTraits = armourTraitEntries(sheet('Броня'), 'Броня');
+  const resolve = makeResolver(properties, attachments, armourTraits);
   const ids = new Set<string>();
   const idFor = (sheetName: string, name: string, row: number) => {
     const base = `${sheetName.trim()}:${name}`;
@@ -439,7 +449,7 @@ export function importArsenal(original: ArsenalSnapshot): ArsenalDataset {
   const props = (text: string, src: SourceRef, check = true) =>
     splitProperties(text.replace(AMMO_NOTE, '')).map((raw) => {
       const ref = resolve(raw);
-      if (check && !ref.property && !ref.attachment)
+      if (check && !ref.property && !ref.attachment && !ref.armourTrait)
         issues.push({
           ...src,
           message: `Свойство «${raw}» не найдено ни в «Свойствах оружия», ни в «Дополнениях к оружию»`,
@@ -618,7 +628,7 @@ export function importArsenal(original: ArsenalSnapshot): ArsenalDataset {
     armour,
     fields,
     attachments,
-    armourTraits: armourTraitEntries(sheet('Броня'), 'Броня'),
+    armourTraits,
     issues,
     corrections,
   };

@@ -14,6 +14,28 @@ export const PROPERTY_ALIASES: Readonly<Record<string, string>> = {
   Ослепляещее: 'Ослепляющее',
   'Частичтное Опутывание': 'Частичное опутывание',
   'Частичтное опутывание': 'Частичное опутывание',
+  // Variant spellings confirmed by the author (decision 60).
+  Надёжный: 'Надежное',
+  Надежный: 'Надежное',
+  Одноразовый: 'Одноразовое',
+  Оглушительное: 'Оглушающее',
+  Ослепительное: 'Ослепляющее',
+  ОстрОпутывание: 'Острое опутывание',
+  Опутывание: 'Опутывающее',
+  Гальв: 'Гальваническое',
+  Дест: 'Деструктор',
+  Бат: 'Батарея',
+  Кон: 'Контузия',
+  // Same kind of variant spelling (decision 60 applied by analogy; listed in the report).
+  Гиростаб: 'Гиро-стабилизация',
+  Осадный: 'Осадное',
+  Огненный: 'Огненное',
+};
+
+/** Abbreviations read from context (decision 61): power field on shields and power armour,
+ * doubled Strength bonus on power fists and hammers. */
+export const ARMOUR_TRAIT_ALIASES: Readonly<Record<string, string>> = {
+  СП: 'Силовое поле',
 };
 
 /** Properties used in the Arsenal but missing from «Свойства оружия» (decision 54). */
@@ -35,6 +57,12 @@ export const EXTRA_PROPERTIES: readonly {
     hasParam: false,
     description: 'Стрельба по навесной траектории.',
     effect: 'Может стрелять через препятствия по навесной траектории.',
+  },
+  {
+    name: 'бСЛх2',
+    hasParam: false,
+    description: 'Удвоенный бонус Силы.',
+    effect: 'В расчёте урона бонус Силы (бСЛ) учитывается ×2.',
   },
   {
     name: 'Ослепляющее',
