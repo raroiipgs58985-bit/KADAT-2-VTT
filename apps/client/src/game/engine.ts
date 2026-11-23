@@ -18,6 +18,7 @@ import type {
 } from '@kadat/contracts';
 import {
   adjustDamageDice,
+  planDeath,
   dropWeapon as coreDropWeapon,
   pickUpWeapon as corePickUpWeapon,
   putInHand,
@@ -282,7 +283,9 @@ function context(combat: CombatActionState, id: string, target?: string): Resolu
   };
 }
 function sync(b: Battle, state: EngineState) {
-  for (const id of actorIds(b)) b.hp[id] = maxWounds(b, id) - state.wounds.actors[id]!.damageTaken;
+  // Ruling 83: wounds never show below 0 (at 0 the character is in Agony).
+  for (const id of actorIds(b))
+    b.hp[id] = Math.max(0, maxWounds(b, id) - state.wounds.actors[id]!.damageTaken);
   for (const w of Object.values(state.wounds.combat.weapons)) {
     const c = w.loadedContainerId ? state.wounds.combat.containers[w.loadedContainerId] : undefined;
     b.ammo[w.id] = c ? c.currentRounds : 0;
@@ -435,6 +438,24 @@ function postDamage(
   if (result.result.status !== 'RESOLVED')
     throw new ContextRequired(intentText(result.result.pendingIntents));
   state.wounds = result.result.status === 'RESOLVED' ? result.state : state.wounds;
+  // Ruling 83: wounds down to 0 — Agony as for the consequence «СМЕРТЬ» (2 × бВН rounds).
+  const w = state.wounds.actors[command.target];
+  if (w && w.life.status === 'ALIVE' && w.damageTaken >= w.maxWounds) {
+    const vn = state.wounds.combat.actors[command.target]!.characteristics.ВН!;
+    const bVN = Math.floor(vn.baseValue / 10) + vn.baseSuper;
+    const planned = planDeath(
+      state.wounds,
+      ref(command.target),
+      bVN,
+      {
+        source: { kind: 'author-ruling', id: 'Решение 83: раны 0 — агония' },
+        reason: 'Wounds reached 0: Agony as for the consequence «СМЕРТЬ»',
+      },
+      null,
+    );
+    state.wounds = planned.state;
+    logs.push({ type: 'zero-wounds-agony', actor: command.target, bVN });
+  }
   return result.result;
 }
 const sum = (rolls: readonly DiceRoll[]) => rolls.reduce((s, r) => s + r.value, 0);

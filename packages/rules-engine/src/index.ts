@@ -67,7 +67,7 @@ export { planWoundCondition, removeWoundCondition } from './wound-conditions.js'
 export { resolveFatigueGain } from './wound-fatigue.js';
 export { bloodThresholds } from './wound-blood.js';
 export { resolveBleedingPulse } from './wound-bleeding.js';
-export { resolveWoundRoundEnd, resolveStabilization } from './wound-life.js';
+export { planDeath, resolveWoundRoundEnd, resolveStabilization } from './wound-life.js';
 export { resolvePostDamage, consequenceZoneFor } from './wound-resolution.js';
 export { resolveWoundAwareAction } from './wound-action-context.js';
 

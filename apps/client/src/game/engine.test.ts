@@ -602,3 +602,22 @@ describe('The target decides its reaction after being hit', () => {
     expect(attack(b, cmd, fixedDice('100:95')).status).toBe('RESOLVED');
   });
 });
+
+describe('Wounds down to 0 (ruling 83)', () => {
+  it('the target falls into Agony for 2 × бВН rounds; wounds show 0', () => {
+    const b = started();
+    const hp = b.hp.pak!;
+    const st = getEngine(b);
+    // Put Пак one wound from 0, then any damaging shot ends in Agony.
+    st.wounds = {
+      ...st.wounds,
+      actors: {
+        ...st.wounds.actors,
+        pak: { ...st.wounds.actors.pak!, damageTaken: hp - 1 },
+      },
+    };
+    attack(b, shot({ id: 'last' }), { roll: (sides: number) => (sides === 100 ? 45 : 5) });
+    expect(b.hp.pak).toBe(0);
+    expect(actorStatus(b, 'pak').life).toBe('AGONY');
+  });
+});
