@@ -1150,6 +1150,8 @@ await page.getByRole('button', { name: 'Вид: игрок' }).click();
   );
   await page.getByRole('tab', { name: 'Атака' }).click();
   await page.getByRole('combobox', { name: 'Оружие' }).selectOption({ label: 'Цепной меч' });
+  if (await page.getByRole('button', { name: /Взять в руки/ }).count())
+    await page.getByRole('button', { name: /Взять в руки/ }).click();
   await page.evaluate(() => document.querySelector('details.dice')?.setAttribute('open', ''));
   await page.locator('.dice select').selectOption('fixed');
   await page.locator('.dice textarea').fill('100:35,10:3,10:7,10:3,10:7');
@@ -1168,6 +1170,8 @@ await page.getByRole('button', { name: 'Вид: игрок' }).click();
   await page.getByRole('button', { name: 'Передать ход' }).click();
   await page.getByRole('tab', { name: 'Атака' }).click();
   await page.getByRole('combobox', { name: 'Оружие' }).selectOption({ label: 'Цепной меч' });
+  if (await page.getByRole('button', { name: /Взять в руки/ }).count())
+    await page.getByRole('button', { name: /Взять в руки/ }).click();
   await page.locator('.dice textarea').fill('100:20');
   await page.getByRole('button', { name: 'Атаковать' }).click();
   const question = page.getByRole('alertdialog', { name: 'Вопрос ведущему' });

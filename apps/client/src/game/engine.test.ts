@@ -19,6 +19,11 @@ import {
   resumeAttack,
   turnAction,
   weaponState,
+  takeWeapon,
+  dropWeapon,
+  weaponInHand,
+  reloadCost,
+  readyCost,
   type AttackCommand,
 } from './engine';
 import { fixedDice } from './dice';
@@ -93,7 +98,10 @@ describe('Attack with an Arsenal weapon', () => {
 
 describe('Melee and GM questions', () => {
   it('Цепной меч: бСЛ + Сверх (ruling 74), ½ бСЛ rounded up (ruling 77), armour loses ББ first', () => {
-    const b = started((x) => placeActor(x, 'pak', 6.5, 10.5));
+    const b = started((x) => {
+      placeActor(x, 'pak', 6.5, 10.5);
+      takeWeapon(x, { id: 'sword', actor: 'kelus-drakar', weapon: 'kelus-drakar:1' });
+    });
     const r = attack(
       b,
       shot({ id: 'cut', weapon: 'kelus-drakar:1' }),
@@ -121,7 +129,10 @@ describe('Melee and GM questions', () => {
     expect(b.ammo['kelus-drakar:0']).toBe(53);
   });
   it('a hit to the eyes asks the GM for the ОБ (ruling 75)', () => {
-    const b = started((x) => placeActor(x, 'pak', 6.5, 10.5));
+    const b = started((x) => {
+      placeActor(x, 'pak', 6.5, 10.5);
+      takeWeapon(x, { id: 'sword', actor: 'kelus-drakar', weapon: 'kelus-drakar:1' });
+    });
     attack(b, shot({ id: 'eye', weapon: 'kelus-drakar:1' }), fixedDice('100:20'));
     expect(turnInfo(b).pending?.question?.key).toBe('armour:Eyes');
   });
@@ -277,7 +288,10 @@ describe('Reactions of the target', () => {
     expect(turnInfo(b).reactions.pak).toBe(0);
   });
   it('Parry needs a melee weapon in hand of the target', () => {
-    const b = started((x) => placeActor(x, 'pak', 6.5, 10.5));
+    const b = started((x) => {
+      placeActor(x, 'pak', 6.5, 10.5);
+      takeWeapon(x, { id: 'sword', actor: 'kelus-drakar', weapon: 'kelus-drakar:1' });
+    });
     expect(() =>
       attack(b, shot({ id: 'p', weapon: 'kelus-drakar:1', defense: 'PARRY' }), fixedDice('100:35')),
     ).toThrow(/Парировать нечем/);
@@ -298,6 +312,7 @@ describe('Reactions of the target', () => {
         id: 'kelus-drakar',
       },
     ]);
+    takeWeapon(b, { id: 'sword', actor: 'kelus-drakar', weapon: 'kelus-drakar:1' });
     startCombat(b, fixedDice('10:9,10:2'));
     // Келус has «Парирование» +10: НР 40 + 10 + Сбалансированное 10 = 60.
     const r = attack(
@@ -350,13 +365,11 @@ describe('Turn actions', () => {
     ).result.attack.check;
     expect(check.modifiers.find((m) => m.id === 'ranged:aim')?.value).toBe(10);
   });
-  it('reload takes the weapon ОД and refills the magazine; it may go on next turn', () => {
+  it('reload refills the magazine; «Быстрая перезарядка» of Келус makes it 1 ОД (ruling 81)', () => {
     const b = started();
     attack(b, shot({ id: 's1' }), fixedDice('100:90'));
     expect(b.ammo['kelus-drakar:0']).toBe(53);
-    nextTurn(b, fixedDice(''));
-    nextTurn(b, fixedDice(''));
-    // Хот-шот лазган: перезарядка 2 ОД.
+    expect(reloadCost(b, 'kelus-drakar', 'kelus-drakar:0')).toBe('1 ОД');
     turnAction(b, {
       id: 'reload-1',
       actor: 'kelus-drakar',
@@ -366,27 +379,69 @@ describe('Turn actions', () => {
     expect(b.ammo['kelus-drakar:0']).toBe(60);
     expect(turnInfo(b).od).toBe(0);
   });
-  it('a reload longer than the OD left continues next turn', () => {
-    const b = started();
-    attack(b, shot({ id: 's1' }), fixedDice('100:90'));
-    turnAction(b, {
-      id: 'reload-a',
-      actor: 'kelus-drakar',
-      type: 'reload',
-      weapon: 'kelus-drakar:0',
-    });
-    expect(weaponState(b, 'kelus-drakar:0').reloading).toBe('1 из 2 ОД');
-    expect(b.ammo['kelus-drakar:0']).toBe(53);
+  it('without the talent a 2-ОД reload started with 1 ОД left continues next turn', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const gun = matchWeaponByName('Хот-шот лазган')!;
+    const trooper = {
+      ...emptyCharacter('trooper', 'Боец'),
+      weapons: [{ name: gun.name, ref: gun.id }],
+    };
+    const b = createBattle([
+      { character: trooper, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'trooper' },
+      { character: characterFromProfile('pak'), side: 'b', at: { x: 15.5, y: 10.5 }, id: 'pak' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    attack(b, shot({ id: 's1', actor: 'trooper', weapon: 'trooper:0' }), fixedDice('100:90'));
+    turnAction(b, { id: 'reload-a', actor: 'trooper', type: 'reload', weapon: 'trooper:0' });
+    expect(weaponState(b, 'trooper:0').reloading).toBe('1 из 2 ОД');
+    expect(b.ammo['trooper:0']).toBe(53);
     nextTurn(b, fixedDice(''));
     nextTurn(b, fixedDice(''));
-    turnAction(b, {
-      id: 'reload-b',
-      actor: 'kelus-drakar',
-      type: 'reload',
-      weapon: 'kelus-drakar:0',
-    });
-    expect(b.ammo['kelus-drakar:0']).toBe(60);
-    expect(weaponState(b, 'kelus-drakar:0').reloading).toBeNull();
+    turnAction(b, { id: 'reload-b', actor: 'trooper', type: 'reload', weapon: 'trooper:0' });
+    expect(b.ammo['trooper:0']).toBe(60);
+    expect(weaponState(b, 'trooper:0').reloading).toBeNull();
+  });
+  it('a weapon not in hand cannot attack; «Быстрое выхватывание» of Келус takes it for СД', () => {
+    const b = started((x) => placeActor(x, 'pak', 6.5, 10.5));
+    expect(weaponInHand(b, 'kelus-drakar:0')).toBe(true);
+    expect(weaponInHand(b, 'kelus-drakar:1')).toBe(false);
+    expect(() =>
+      attack(b, shot({ id: 'no-sword', weapon: 'kelus-drakar:1' }), fixedDice('100:35')),
+    ).toThrow();
+    expect(readyCost(b, 'kelus-drakar')).toBe('СД');
+    takeWeapon(b, { id: 'swap', actor: 'kelus-drakar', weapon: 'kelus-drakar:1' });
+    expect(turnInfo(b).od).toBe(2);
+    expect(weaponInHand(b, 'kelus-drakar:1')).toBe(true);
+    expect(weaponInHand(b, 'kelus-drakar:0')).toBe(false);
+    // The single Free Action of the turn is spent: dropping now is refused.
+    expect(() =>
+      dropWeapon(b, { id: 'drop', actor: 'kelus-drakar', weapon: 'kelus-drakar:1' }),
+    ).toThrow(/Free Action/);
+  });
+  it('without the talent changing weapons costs 1 ОД; dropping is a Free Action (ruling 81)', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const gun = matchWeaponByName('Хот-шот лазган')!;
+    const sword = matchWeaponByName('Цепной меч')!;
+    const trooper = {
+      ...emptyCharacter('trooper', 'Боец'),
+      weapons: [
+        { name: gun.name, ref: gun.id },
+        { name: sword.name, ref: sword.id },
+      ],
+    };
+    const b = createBattle([
+      { character: trooper, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'trooper' },
+      { character: characterFromProfile('pak'), side: 'b', at: { x: 15.5, y: 10.5 }, id: 'pak' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    expect(readyCost(b, 'trooper')).toBe('1 ОД');
+    takeWeapon(b, { id: 'swap', actor: 'trooper', weapon: 'trooper:1' });
+    expect(turnInfo(b).od).toBe(1);
+    dropWeapon(b, { id: 'drop', actor: 'trooper', weapon: 'trooper:1' });
+    expect(turnInfo(b).od).toBe(1);
+    expect(weaponInHand(b, 'trooper:1')).toBe(false);
+    const replayed = importReplay(JSON.parse(JSON.stringify(exportReplay(b))));
+    expect(weaponInHand(replayed, 'trooper:1')).toBe(false);
   });
   it('a jam (96+) is cleared with 2 ОД and an НС test', () => {
     const b = started();

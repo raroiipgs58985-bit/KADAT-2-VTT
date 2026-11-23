@@ -299,6 +299,23 @@ export function describeEntry(
         tone: 'success',
       };
     }
+    case 'take-weapon':
+      return {
+        ...base,
+        title: `${name((d.command as { actor: string }).actor)} берёт ${String(d.weaponName)}`,
+        summary: `Оружие в руках (${String(d.cost)}). Остальное убрано.`,
+        tone: 'success',
+      };
+    case 'drop-weapon':
+      return {
+        ...base,
+        title: `${name((d.command as { actor: string }).actor)} бросает ${String(d.weaponName)}`,
+        summary: 'Оружие брошено на пол (СД).',
+        tone: 'info',
+      };
+    case 'take-weapon-rejected':
+    case 'drop-weapon-rejected':
+      return { ...base, title: 'Не удалось', summary: String(d.reason), tone: 'warning' };
     case 'turn-action-rejected':
       return {
         ...base,

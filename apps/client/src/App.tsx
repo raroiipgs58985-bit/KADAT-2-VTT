@@ -13,6 +13,11 @@ import {
   nextTurn,
   placeActor,
   resumeAttack,
+  takeWeapon,
+  dropWeapon,
+  weaponInHand,
+  readyCost,
+  combatStarted,
   turnAction,
   braceWeapon,
   weaponBraced,
@@ -958,6 +963,16 @@ export function App() {
                     actor={info.active}
                     canAct={canAct}
                     od={info.od}
+                    onTake={(id) =>
+                      run((b) =>
+                        takeWeapon(b, { id: commandId('take'), actor: info.active, weapon: id }),
+                      )
+                    }
+                    onDrop={(id) =>
+                      run((b) =>
+                        dropWeapon(b, { id: commandId('drop'), actor: info.active, weapon: id }),
+                      )
+                    }
                     onAction={(type, weapon) =>
                       run((b) =>
                         turnAction(
@@ -982,6 +997,13 @@ export function App() {
                     attackedThisTurn={info.attacked}
                     battle={battle}
                     braced={(id) => weaponBraced(battle, id)}
+                    inHand={(id) => weaponInHand(battle, id)}
+                    readyCost={combatStarted(battle) ? readyCost(battle, info.active) : 'до боя'}
+                    onTake={(id) =>
+                      run((b) =>
+                        takeWeapon(b, { id: commandId('take'), actor: info.active, weapon: id }),
+                      )
+                    }
                     fromHands={heavyFromHands(battle, info.active)}
                     onBrace={(id) =>
                       run((b) =>

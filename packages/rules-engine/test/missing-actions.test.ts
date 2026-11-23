@@ -247,3 +247,81 @@ test('talents survive clearing transient state at turn boundaries', async () => 
   };
   expect(clearTransient(runtime as never, ['aim']).talents).toEqual(['Спринт']);
 });
+
+describe('Changing weapons and rapid reload (ruling 81)', () => {
+  const twoGuns = async () => {
+    const { b1State } = await import('./b1-fixtures.js');
+    const { putInHand } = await import('../src/index.js');
+    const state = b1State();
+    const gun = state.weapons['gun:A']!;
+    const second = { ...gun, id: 'gun2:A' };
+    return putInHand({ ...state, weapons: { ...state.weapons, 'gun2:A': second } }, 'A', 'gun:A');
+  };
+  test('changing weapons costs 1 ОД; only the new weapon is in hand', async () => {
+    const { readyWeapon } = await import('../src/index.js');
+    const { action } = await import('./b1-fixtures.js');
+    const state = await twoGuns();
+    const r = readyWeapon(state, {
+      ...action('swap', 'ready-weapon'),
+      type: 'ready-weapon',
+      weaponId: 'gun2:A',
+    });
+    expect(r.state.session.turn?.od).toBe(1);
+    expect(r.state.weapons['gun2:A']!.readied).toBe(true);
+    expect(r.state.weapons['gun:A']!.readied).toBe(false);
+  });
+  test('«Быстрое выхватывание»: the change is the turn’s Free Action', async () => {
+    const { readyWeapon } = await import('../src/index.js');
+    const { action } = await import('./b1-fixtures.js');
+    const base = await twoGuns();
+    const state = {
+      ...base,
+      actors: { ...base.actors, A: { ...base.actors.A!, talents: ['Быстрое выхватывание'] } },
+    };
+    const r = readyWeapon(state, {
+      ...action('swap', 'ready-weapon'),
+      type: 'ready-weapon',
+      weaponId: 'gun2:A',
+    });
+    expect(r.state.session.turn?.od).toBe(2);
+    expect(r.result.free).toBe(true);
+    expect(() =>
+      readyWeapon(r.state, {
+        ...action('swap2', 'ready-weapon'),
+        type: 'ready-weapon',
+        weaponId: 'gun:A',
+      }),
+    ).toThrow(/Free Action already used/);
+  });
+  test('dropping the weapon in hand is a Free Action; it is no longer in hand', async () => {
+    const { dropWeapon } = await import('../src/index.js');
+    const { action } = await import('./b1-fixtures.js');
+    const state = await twoGuns();
+    const r = dropWeapon(state, {
+      ...action('drop', 'drop-weapon'),
+      type: 'drop-weapon',
+      weaponId: 'gun:A',
+    });
+    expect(r.state.session.turn?.od).toBe(2);
+    expect(r.state.weapons['gun:A']!.readied).toBe(false);
+  });
+  test('«Быстрая перезарядка»: a 1-ОД reload becomes the Free Action', async () => {
+    const { reloadWeapon } = await import('../src/index.js');
+    const { action, b1State } = await import('./b1-fixtures.js');
+    const s0 = b1State();
+    const spare = { ...s0.containers['mag:A']!, id: 'mag2:A' };
+    const state = {
+      ...s0,
+      containers: { ...s0.containers, 'mag2:A': spare },
+      actors: { ...s0.actors, A: { ...s0.actors.A!, talents: ['Быстрая перезарядка'] } },
+    };
+    const r = reloadWeapon(state, {
+      ...action('reload', 'reload'),
+      type: 'reload',
+      weaponId: 'gun:A',
+      containerId: 'mag2:A',
+    });
+    expect(r.result.loaded).toBe(true);
+    expect(r.state.session.turn?.od).toBe(2);
+  });
+});

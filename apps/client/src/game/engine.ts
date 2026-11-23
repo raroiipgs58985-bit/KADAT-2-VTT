@@ -15,6 +15,11 @@ import type {
 } from '@kadat/contracts';
 import {
   adjustDamageDice,
+  dropWeapon as coreDropWeapon,
+  putInHand,
+  readyWeapon as coreReadyWeapon,
+  QUICK_DRAW_TALENT,
+  RAPID_RELOAD_TALENT,
   clearMalfunction,
   reloadWeapon as coreReloadWeapon,
   HEAVY_FROM_HANDS_TALENT,
@@ -218,6 +223,15 @@ export function getEngine(b: Battle): EngineState {
   const w = engineWeapons(b);
   let combat = createActionState(participants(b), actors, w.ranged, w.containers);
   combat = initializeMeleeState(combat, w.meleeActors, w.melee);
+  // In hand at the start: the first usable weapon of each participant (ruling 81 — others
+  // are put away and taken for 1 ОД).
+  for (const id of ids) {
+    const first = Object.keys(w.ranged)
+      .concat(Object.keys(w.melee).filter((m) => w.melee[m]!.template.profile.family !== 'natural'))
+      .filter((wid) => wid.startsWith(`${id}:`))
+      .sort((a, b) => Number(a.split(':')[1]) - Number(b.split(':')[1]))[0];
+    combat = putInHand(combat, id, first ?? null);
+  }
   const state: EngineState = {
     wounds: createWoundRuntime(
       combat,
@@ -1125,6 +1139,11 @@ const coreMessages: [RegExp, string][] = [
   ],
   [/Weapon is already braced/, 'Оружие уже установлено на опору'],
   [/not in an appropriate jammed state/, 'Оружие не заклинило'],
+  [
+    /Invalid actor\/target\/selected weapon|Melee weapon is not owned\/held\/readied|Invalid actor\/selected weapon/,
+    'Оружие не в руках: сначала «Взять в руки» (1 ОД, решение 81)',
+  ],
+  [/Weapon is not in hand/, 'Это оружие не в руках'],
   [/Parry requires an eligible weapon/, 'Этим оружием нельзя парировать'],
   [/Incoming action is not dodgeable/, 'От этой атаки нельзя уклониться'],
   [/Dodge prohibited by effect/, 'Уклонение запрещено состоянием цели'],
@@ -1608,6 +1627,104 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
   }
 }
 
+/** Whether the weapon is in the owner's hands now (ruling 81). */
+export function weaponInHand(b: Battle, weaponId: WeaponId): boolean {
+  const combat = getEngine(b).wounds.combat;
+  const ranged = combat.weapons[weaponId];
+  if (ranged) return ranged.readied;
+  return !!combat.melee?.weapons[weaponId]?.held;
+}
+export const weaponDropped = (b: Battle, weaponId: WeaponId) =>
+  !!getEngine(b).wounds.combat.melee?.weapons[weaponId]?.dropped;
+const hasTalentNamed = (b: Battle, actorId: ActorId, talent: string) =>
+  canonicalTalents(b.roster[actorId]?.character.talents ?? []).includes(talent);
+/** Cost of taking a weapon in hand: 1 ОД, or СД with «Быстрое выхватывание» (ruling 81). */
+export const readyCost = (b: Battle, actorId: ActorId) =>
+  hasTalentNamed(b, actorId, QUICK_DRAW_TALENT) ? 'СД' : '1 ОД';
+/** Reload cost with «Быстрая перезарядка» (−1 ОД, 1 ОД → СД). */
+export function reloadCost(b: Battle, actorId: ActorId, weaponId: WeaponId): string {
+  const base = getEngine(b).wounds.combat.weapons[weaponId]?.template.profile.reload.odCost ?? 1;
+  const n = hasTalentNamed(b, actorId, RAPID_RELOAD_TALENT) ? base - 1 : base;
+  return n <= 0 ? 'СД' : `${n} ОД`;
+}
+/**
+ * Take a weapon in hand (ruling 81). Before the fight it is free (setting up); in the fight it
+ * costs 1 ОД, or the Free Action with «Быстрое выхватывание».
+ */
+export function takeWeapon(b: Battle, command: { id: string; actor: ActorId; weapon: WeaponId }) {
+  const state = getEngine(b);
+  try {
+    combatant(b, command.actor);
+    if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
+    let combat: CombatActionState;
+    let cost = 'до боя';
+    if (!combatStarted(b)) combat = putInHand(state.wounds.combat, command.actor, command.weapon);
+    else {
+      movementGate(state, command.actor);
+      const r = coreReadyWeapon(state.wounds.combat, {
+        id: command.id,
+        type: 'ready-weapon',
+        actor: ref(command.actor),
+        weaponId: command.weapon,
+        context: context(state.wounds.combat, command.actor),
+      });
+      combat = r.state;
+      cost = r.result.free ? 'СД' : '1 ОД';
+    }
+    const next = structuredClone(state);
+    next.wounds = { ...next.wounds, combat };
+    // Setting up before the fight does not start it (combatStarted looks at committed ids).
+    if (cost !== 'до боя') next.committed.push(command.id);
+    sync(b, next);
+    append(b, 'take-weapon', {
+      command,
+      weaponName: weaponOf(b, command.weapon)?.name ?? command.weapon,
+      cost,
+      committed: true,
+    });
+    return { status: 'RESOLVED' as const };
+  } catch (error) {
+    append(b, 'take-weapon-rejected', {
+      command,
+      reason: explainEngineError(error),
+      committed: false,
+    });
+    throw error;
+  }
+}
+/** Drop the weapon in hand on the floor — the turn's Free Action (ruling 81). */
+export function dropWeapon(b: Battle, command: { id: string; actor: ActorId; weapon: WeaponId }) {
+  const state = getEngine(b);
+  try {
+    combatant(b, command.actor);
+    if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
+    movementGate(state, command.actor);
+    const r = coreDropWeapon(state.wounds.combat, {
+      id: command.id,
+      type: 'drop-weapon',
+      actor: ref(command.actor),
+      weaponId: command.weapon,
+      context: context(state.wounds.combat, command.actor),
+    });
+    const next = structuredClone(state);
+    next.wounds = { ...next.wounds, combat: r.state };
+    next.committed.push(command.id);
+    sync(b, next);
+    append(b, 'drop-weapon', {
+      command,
+      weaponName: weaponOf(b, command.weapon)?.name ?? command.weapon,
+      committed: true,
+    });
+    return { status: 'RESOLVED' as const };
+  } catch (error) {
+    append(b, 'drop-weapon-rejected', {
+      command,
+      reason: explainEngineError(error),
+      committed: false,
+    });
+    throw error;
+  }
+}
 /** Magazine, jam and reload progress of a ranged weapon now. */
 export function weaponState(b: Battle, weaponId: WeaponId) {
   const combat = getEngine(b).wounds.combat;

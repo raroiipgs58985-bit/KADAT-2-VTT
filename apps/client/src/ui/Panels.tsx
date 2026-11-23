@@ -5,6 +5,10 @@ import {
   weaponSupport,
   attackLineProblem,
   weaponState,
+  weaponInHand,
+  weaponDropped,
+  readyCost,
+  reloadCost,
   type TurnActionType,
   type MoveMode,
   type MoveOption,
@@ -346,6 +350,10 @@ export function AttackPanel(props: {
   battle: Battle;
   /** The selected weapon stands on a support («Бой» A55). */
   braced: (weaponId: string) => boolean;
+  /** Weapon in hand (ruling 81) and the cost of taking another. */
+  inHand: (weaponId: string) => boolean;
+  readyCost: string;
+  onTake: (weaponId: string) => void;
   /** Talent «Бугрящиеся бицепсы»: heavy weapons from the hands without penalties. */
   fromHands: boolean;
   onBrace: (weaponId: string) => void;
@@ -427,6 +435,18 @@ export function AttackPanel(props: {
           <p className="muted small">Выстрелов: {mode.maxShots} (темп оружия, решение 78)</p>
         </div>
       )}
+      {weapon && !props.inHand(weapon.id) && (
+        <div className="stack">
+          <p className="weapon-note badge-partial">Это оружие не в руках.</p>
+          <button
+            type="button"
+            disabled={!props.canAct && props.readyCost !== 'до боя'}
+            onClick={() => props.onTake(weapon.id)}
+          >
+            Взять в руки ({props.readyCost})
+          </button>
+        </div>
+      )}
       {heavy && weapon && (
         <div className="stack">
           <p className="muted small">
@@ -494,6 +514,7 @@ export function AttackPanel(props: {
           props.attackedThisTurn ||
           support.level === 'blocked' ||
           !form.target ||
+          (!!weapon && !props.inHand(weapon.id)) ||
           lineProblem !== null
         }
       >
@@ -513,7 +534,12 @@ export function ActionsPanel(props: {
   canAct: boolean;
   od: number | null;
   onAction: (type: TurnActionType, weapon?: WeaponId) => void;
+  onTake: (weapon: WeaponId) => void;
+  onDrop: (weapon: WeaponId) => void;
 }) {
+  const all = battleWeapons(props.battle, props.actor).filter(
+    (w) => w.arsenal && !weaponProblem(w.arsenal),
+  );
   const ranged = battleWeapons(props.battle, props.actor).filter(
     (w) => w.arsenal && !weaponProblem(w.arsenal) && weaponKind(w.arsenal) === 'ranged',
   );
@@ -544,7 +570,34 @@ export function ActionsPanel(props: {
           Выжидание <span className="muted small">1 ОД</span>
         </button>
       </div>
-      {ranged.length > 0 && <h3>Оружие</h3>}
+      {all.length > 0 && <h3>В руках</h3>}
+      {all.map((w) => {
+        const held = weaponInHand(props.battle, w.id);
+        return (
+          <div key={`hand-${w.id}`} className="weapon-actions">
+            <div>
+              <strong>{w.name}</strong>
+              <span className="muted small">
+                {' '}
+                · {held ? 'в руках' : weaponDropped(props.battle, w.id) ? 'на полу' : 'убрано'}
+              </span>
+            </div>
+            <div className="row">
+              {held ? (
+                <button type="button" disabled={!props.canAct} onClick={() => props.onDrop(w.id)}>
+                  Бросить на пол <span className="muted small">СД</span>
+                </button>
+              ) : (
+                <button type="button" disabled={!props.canAct} onClick={() => props.onTake(w.id)}>
+                  Взять в руки{' '}
+                  <span className="muted small">{readyCost(props.battle, props.actor)}</span>
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      {ranged.length > 0 && <h3>Перезарядка</h3>}
       {ranged.map((w) => {
         const st = state(w.id);
         return (
@@ -564,7 +617,8 @@ export function ActionsPanel(props: {
                 disabled={!props.canAct || od < 1 || st.rounds === w.capacity}
                 onClick={() => props.onAction('reload', w.id)}
               >
-                Перезарядить <span className="muted small">{w.arsenal?.reload?.od ?? 1} ОД</span>
+                Перезарядить{' '}
+                <span className="muted small">{reloadCost(props.battle, props.actor, w.id)}</span>
               </button>
               {st.jammed && (
                 <button
