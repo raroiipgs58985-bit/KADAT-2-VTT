@@ -1056,6 +1056,35 @@ check(await page.locator('.vitals').first().isVisible(), 'simple view keeps woun
 await page.screenshot({ path: `${out}/04c-simple-view.png` });
 await page.getByRole('button', { name: 'Подробно' }).click();
 
+// 7c. Character editor (step 3): from a profile, into the library and a file, back to the scene.
+{
+  await page.getByRole('button', { name: 'Персонажи' }).click();
+  check(
+    await page.locator('[data-testid="character-editor"]').isVisible(),
+    'character editor opens',
+  );
+  await page.locator('summary', { hasText: 'Из профиля таблицы' }).click();
+  await page.getByRole('button', { name: 'Пак', exact: true }).click();
+  check(
+    (await page.getByLabel('СЛ: значение').inputValue()) !== '',
+    'profile characteristics filled',
+  );
+  await page.getByRole('button', { name: 'Сохранить в библиотеку' }).click();
+  check((await page.locator('.char-items li').count()) >= 1, 'character stored in the library');
+  const saved = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Сохранить в файл' }).click();
+  // Headless Chromium here drops Cyrillic file names; the content is what matters.
+  const savedFile = JSON.parse(
+    (await import('node:fs')).readFileSync(await (await saved).path(), 'utf8'),
+  );
+  check(
+    savedFile.documentType === 'kadat-character' && savedFile.character.name === 'Пак',
+    'character file saved with the character',
+  );
+  await page.getByRole('button', { name: 'К сцене' }).click();
+  check(await page.locator('svg.map').isVisible(), 'back to the scene');
+}
+
 // 8. Phone layout renders without horizontal overflow.
 await page.setViewportSize({ width: 390, height: 844 });
 const overflow = await page.evaluate(

@@ -96,6 +96,8 @@ import {
 } from './ui/Panels';
 import { commandFeedback } from './ui/feedback';
 import { combatStore, useCombat } from './ui/store';
+import { CharacterEditor } from './ui/CharacterEditor';
+import { saveTextFile } from './ui/download';
 import { stage3Stand } from './game/scenarios';
 import {
   TacticalMap,
@@ -130,6 +132,8 @@ export function App() {
   const [moveMode, setMoveModeRaw] = useState<MoveMode | null>(null);
   /** Clicked route points (author ruling 8); null — a click moves at once. */
   const [route, setRoute] = useState<Point[] | null>(null);
+  /** Main view: the battle scene or the character editor (rulings 47–51). */
+  const [view, setView] = useState<'scene' | 'characters'>('scene');
   const setMoveMode = (m: MoveMode | null) => {
     setMoveModeRaw(m);
     setRoute(null);
@@ -140,7 +144,10 @@ export function App() {
     fixed: '100:45,10:2,100:20',
     seed: 12345,
   });
-  const [toast, setToast] = useState<{ text: string; tone: JournalTone } | null>(null);
+  /** `full` — show the whole text (messages that are not mirrored in the journal). */
+  const [toast, setToast] = useState<{ text: string; tone: JournalTone; full?: boolean } | null>(
+    null,
+  );
   const [setupMode, setSetupMode] = useState<'editor' | 'placement'>('placement');
   const [history, setHistory] = useState<EditorHistory | null>(null);
   const [tool, setTool] = useState<EditorTool>('brush');
@@ -240,13 +247,9 @@ export function App() {
     if (!draft) return;
     try {
       const text = serializeMapFile(draft.map);
-      const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${draft.map.name.trim().replace(/[\\/:*?"<>|]+/g, '_') || 'map'}${MAP_FILE_EXTENSION}`;
-      link.click();
-      URL.revokeObjectURL(url);
-      setToast({ text: `Карта сохранена в файл ${link.download}.`, tone: 'success' });
+      const name = `${draft.map.name.trim().replace(/[\\/:*?"<>|]+/g, '_') || 'map'}${MAP_FILE_EXTENSION}`;
+      saveTextFile(name, text);
+      setToast({ text: `Карта сохранена в файл ${name}.`, tone: 'success' });
     } catch (error) {
       fail(error);
     }
@@ -405,7 +408,7 @@ export function App() {
   };
 
   return (
-    <div className={details ? 'app show-details' : 'app'}>
+    <div className={`app view-${view}${details ? ' show-details' : ''}`}>
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
@@ -421,6 +424,14 @@ export function App() {
           </div>
         </div>
         <nav className="header-actions" aria-label="Сессия">
+          <button
+            type="button"
+            aria-pressed={view === 'characters'}
+            className={view === 'characters' ? 'chosen' : ''}
+            onClick={() => setView((v) => (v === 'characters' ? 'scene' : 'characters'))}
+          >
+            Персонажи
+          </button>
           <details className="menu">
             <summary>Сценарии</summary>
             <div
@@ -486,12 +497,7 @@ export function App() {
                 fail(error);
                 return;
               }
-              const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-              const link = document.createElement('a');
-              link.href = url;
-              link.download = 'kadat-combat-replay.json';
-              link.click();
-              URL.revokeObjectURL(url);
+              saveTextFile('kadat-combat-replay.json', text);
             }}
           >
             Скачать replay
@@ -536,422 +542,434 @@ export function App() {
 
       {toast && (
         <div className={`toast tone-${toast.tone}`} role="status">
-          <span>{details ? toast.text : shortText(toast.text)}</span>
+          <span>{details || toast.full ? toast.text : shortText(toast.text)}</span>
           <button type="button" aria-label="Закрыть" onClick={() => setToast(null)}>
             ×
           </button>
         </div>
       )}
 
-      <main className="layout">
-        <aside className="column left">
-          <TurnBar
-            battle={battle}
-            info={info}
-            startBlocked={
-              mode === 'editor' ? 'Перейдите в режим «Расстановка», чтобы начать бой.' : null
-            }
-            onStart={() => run((b) => startCombat(b, source()))}
-            onNextTurn={() => run((b) => nextTurn(b, source()))}
-            onOrder={(id) => run((b) => selectManualOrder(b, id))}
-          />
-          <PendingBanner
-            info={info}
-            onResume={() =>
-              run((b) => (info.pending ? resumeAttack(b, source()) : nextTurn(b, source())))
-            }
-            onCancel={() => run((b) => cancelUnstarted(b))}
-          />
-          <div className="panel">
-            <div className="actor-tabs" role="tablist" aria-label="Персонажи">
-              {ids.map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected === id}
-                  className={selected === id ? 'chosen' : ''}
-                  onClick={() => setSelected(id)}
-                >
-                  {id === 'pak' ? 'Пак' : 'Келус'}
-                </button>
-              ))}
-            </div>
-            <ActorCard
+      {view === 'characters' ? (
+        <CharacterEditor
+          onClose={() => setView('scene')}
+          notify={(text, tone) => setToast({ text, tone, full: true })}
+        />
+      ) : (
+        <main className="layout">
+          <aside className="column left">
+            <TurnBar
               battle={battle}
-              id={selected}
-              setup={mode === 'placement'}
-              onFootprint={(f) => run((b) => setFootprint(b, selected, f))}
-            />
-          </div>
-        </aside>
-
-        <section className="column center">
-          <div className="mode-switch" role="tablist" aria-label="Режим сцены">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'editor'}
-              className={mode === 'editor' ? 'chosen' : ''}
-              disabled={info.started}
-              title={info.started ? 'Во время боя карту менять нельзя' : undefined}
-              onClick={enterEditor}
-            >
-              Редактор карты{dirty ? ' •' : ''}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'placement'}
-              className={mode === 'placement' ? 'chosen' : ''}
-              disabled={info.started}
-              onClick={() => setSetupMode('placement')}
-            >
-              Расстановка
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'combat'}
-              className={mode === 'combat' ? 'chosen' : ''}
-              disabled={!info.started}
-              title={info.started ? undefined : 'Бой начинается кнопкой «Начать бой» в расстановке'}
-            >
-              Бой
-            </button>
-            <span className="muted small map-name detail">
-              {battle.map.name} · {battle.map.cols} × {battle.map.rows} · ревизия{' '}
-              {battle.mapRevision}
-            </span>
-          </div>
-          <TacticalMap
-            battle={battle}
-            version={version}
-            mode={mode}
-            map={shownMap}
-            positions={draft ? resolveDraftPositions(draft, battle).positions : battle.positions}
-            conflicts={
-              new Set([
-                ...problems.tokens.map((t) => t.actor),
-                ...problems.stale.map((t) => t.actor),
-              ])
-            }
-            selected={selected}
-            activeActor={info.active}
-            turnActive={info.turnActive && !busy}
-            moveIntent={mode === 'combat' ? moveIntent : null}
-            attackLine={
-              mode === 'combat' && canAct && tab === 'attack'
-                ? { from: info.active, to: form.target }
-                : null
-            }
-            wounds={wounds}
-            tool={tool}
-            floorColour={colour}
-            onSelect={setSelected}
-            onMove={onMove}
-            onRoutePoint={(p) => setRoute((r) => [...(r ?? []), p])}
-            fallActor={mode === 'combat' ? fallActor : null}
-            onPlaceFall={(id, p) => run((b) => placeFallen(b, id, p))}
-            onPlace={(id, x, y) => run((b) => placeActor(b, id, x, y))}
-            onDraftPlace={(id, x, y) =>
-              edit((d) => placeToken(d, id, { x, y }, battle.positions[id]))
-            }
-            onPaint={(cells, c) => edit((d) => paint(d, cells, c))}
-            backgroundUrl={backgroundUrl}
-            selectedObject={editing ? selectedObject : null}
-            onSelectObject={setSelectedObject}
-            onAddRect={(kind, a, c) => {
-              if (kind === 'decoration')
-                edit((d) =>
-                  addDecoration(d, {
-                    id: commandId('dec'),
-                    ...rectOf(a, c),
-                    color: colour,
-                    label: newDecorationLabel.trim(),
-                  }),
-                );
-              else if (kind === 'obstacle')
-                editMap((m) =>
-                  addObstacle(m, {
-                    id: commandId('obs'),
-                    ...rectOf(a, c),
-                    label: newObstacle.label.trim(),
-                    blocksMovement: newObstacle.blocksMovement,
-                    blocksVision: newObstacle.blocksVision,
-                    notes: '',
-                  }),
-                );
-              else
-                editMap((m) =>
-                  addZone(m, {
-                    id: commandId('zone'),
-                    ...rectOf(a, c),
-                    label: 'Трудный ландшафт',
-                    modifier: 0,
-                  }),
-                );
-            }}
-            onAddWall={(points) =>
-              editMap(
-                (m) => addWall(m, { id: commandId('wall'), points }),
-                `Стена добавлена: ${points.length - 1} отр.`,
-              )
-            }
-            onAddDoor={(from, to) => {
-              const host = draft && hostWall(draft.map, from, to);
-              if (!host) {
-                setToast({
-                  text: 'Дверь не добавлена: проём должен лежать на одном прямом участке существующей стены.',
-                  tone: 'warning',
-                });
-                return;
+              info={info}
+              startBlocked={
+                mode === 'editor' ? 'Перейдите в режим «Расстановка», чтобы начать бой.' : null
               }
-              editMap(
-                (m) =>
-                  addDoor(m, {
-                    id: commandId('door'),
-                    wallId: host.id,
-                    from,
-                    to,
-                    open: false,
-                    blocksMovement: true,
-                    blocksVision: true,
-                    locked: false,
-                    lockModifier: 0,
-                    lockOd: 0,
-                  }),
-                'Дверь добавлена (закрыта; флаги — в панели).',
-              );
-            }}
-            onToggleDoor={(id) =>
-              run((b) =>
-                setDoorOpen(b, id, !(b.doors[id] ?? b.map.doors.find((d) => d.id === id)!.open)),
-              )
-            }
-            doorStates={draft ? {} : battle.doors}
-            onMoveWallEnd={(id, end, to) =>
-              editMap(
-                (m) => moveWallEnd(m, id, end, to),
-                `Конец стены перенесён в (${to.x}; ${to.y}).`,
-                'Конец стены не перенесён',
-              )
-            }
-            onMoveBackground={(dx, dy) =>
-              edit((d) =>
-                d.map.background
-                  ? updateBackground(d, { x: d.map.background.x + dx, y: d.map.background.y + dy })
-                  : d,
-              )
-            }
-            calibrationPoints={calibrationPoints}
-            onCalibrationPoint={(pt) =>
-              setCalibrationPoints((pts) => (pts.length >= 2 ? [pt] : [...pts, pt]))
-            }
-          />
-        </section>
-
-        <aside className="column right">
-          {editing && history ? (
-            <EditorPanel
-              history={history}
-              appliedName={battle.map.name}
-              problems={problems}
-              dirty={dirty}
-              tool={tool}
-              colour={colour}
-              onTool={setTool}
-              onColour={setColour}
-              onRename={(name) => edit((d) => rename(d, name))}
-              onResize={(cols, rows) => edit((d) => resize(d, cols, rows))}
-              onNewEmpty={(name, cols, rows) => {
-                edit((d) => newEmpty(d, commandId('map'), name, cols, rows));
-                setCalibrationPoints([]);
-                setSelectedDecorationId(null);
-              }}
-              onEraseOutside={() => edit(eraseOutside)}
-              onKeepDraft={(id) => edit((d) => keepDraftPosition(d, id, battle.positions[id]))}
-              onTakeScene={(id) => edit((d) => takeScenePosition(d, id, battle.positions[id]))}
-              background={history.present.map.background}
-              onLoadBackground={loadBackground}
-              onUpdateBackground={(patch) => edit((d) => updateBackground(d, patch))}
-              onRemoveBackground={() => {
-                edit((d) => setBackground(d, null));
-                setCalibrationPoints([]);
-              }}
-              calibrationPoints={calibrationPoints.length}
-              onCalibrate={calibrate}
-              onResetCalibration={() => setCalibrationPoints([])}
-              selectedDecoration={selectedDecoration}
-              selectedObject={selectedObject}
-              map={history.present.map}
-              newObstacle={newObstacle}
-              onNewObstacle={setNewObstacle}
-              onUpdateDoor={(id, patch) => editMap((m) => updateDoor(m, id, patch))}
-              onUpdateObstacle={(id, patch) => editMap((m) => updateObstacle(m, id, patch))}
-              onUpdateZone={(id, patch) => editMap((m) => updateZone(m, id, patch))}
-              onDeleteObject={(o) => {
-                if (o.kind === 'wall') editMap((m) => removeWall(m, o.id));
-                else if (o.kind === 'door') editMap((m) => removeDoor(m, o.id));
-                else if (o.kind === 'obstacle') editMap((m) => removeObstacle(m, o.id));
-                else if (o.kind === 'zone') editMap((m) => removeZone(m, o.id));
-                setSelectedObject(null);
-              }}
-              newDecorationLabel={newDecorationLabel}
-              onNewDecorationLabel={setNewDecorationLabel}
-              onUpdateDecoration={(patch) =>
-                selectedDecorationId &&
-                edit((d) => updateDecoration(d, selectedDecorationId, patch))
-              }
-              onRemoveDecoration={() => {
-                if (!selectedDecorationId) return;
-                edit((d) => removeDecoration(d, selectedDecorationId));
-                setSelectedDecorationId(null);
-              }}
-              onSaveFile={saveMapFile}
-              onOpenFile={openMapFile}
-              onUndo={() => setHistory((h) => (h ? undo(h) : h))}
-              onRedo={() => setHistory((h) => (h ? redo(h) : h))}
-              onApply={applyEditorDraft}
-              onDiscard={() => setHistory(startEditing(battle))}
+              onStart={() => run((b) => startCombat(b, source()))}
+              onNextTurn={() => run((b) => nextTurn(b, source()))}
+              onOrder={(id) => run((b) => selectManualOrder(b, id))}
             />
-          ) : !info.started ? (
-            <section className="panel setup-guide" data-testid="setup-guide">
-              <span className="eyebrow">Подготовка к бою</span>
-              <ol>
-                <li>Перетащите токены на нужные клетки.</li>
-                <li>Щелчок по двери открывает или закрывает её.</li>
-                <li>Площадь токена задаётся по Размеру в карточке персонажа слева.</li>
-                <li>
-                  Выберите, кто ходит первым, и нажмите <strong>«Начать бой»</strong> слева.
-                </li>
-              </ol>
-              <p className="muted small">
-                Карту и окружение меняет вкладка «Редактор карты» над картой.
-              </p>
-            </section>
-          ) : (
-            <section className="panel actions">
-              <div className="tabs" role="tablist" aria-label="Действия">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === 'move'}
-                  className={tab === 'move' ? 'chosen' : ''}
-                  onClick={() => setTab('move')}
-                >
-                  Движение
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === 'attack'}
-                  className={tab === 'attack' ? 'chosen' : ''}
-                  onClick={() => {
-                    setTab('attack');
-                    setMoveMode(null);
-                  }}
-                >
-                  Атака
-                </button>
+            <PendingBanner
+              info={info}
+              onResume={() =>
+                run((b) => (info.pending ? resumeAttack(b, source()) : nextTurn(b, source())))
+              }
+              onCancel={() => run((b) => cancelUnstarted(b))}
+            />
+            <div className="panel">
+              <div className="actor-tabs" role="tablist" aria-label="Персонажи">
+                {ids.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected === id}
+                    className={selected === id ? 'chosen' : ''}
+                    onClick={() => setSelected(id)}
+                  >
+                    {id === 'pak' ? 'Пак' : 'Келус'}
+                  </button>
+                ))}
               </div>
-              {fallActor && (
-                <p className="note-warning" data-testid="fall-note">
-                  {actor(fallActor).name} упал на трудной местности. Щёлкните на карте клетку, где
-                  он лежит.
-                </p>
-              )}
-              {info.started && selected !== info.active && (
-                <p className="muted small">
-                  Выбран персонаж не в свой ход — действия доступны только активному участнику.
-                </p>
-              )}
-              {tab === 'move' ? (
-                <MovePanel
-                  options={options}
-                  selectedMode={moveMode}
-                  onSelectMode={setMoveMode}
-                  onMoveTo={(x, y) => onMove(selected, x, y)}
-                  position={battle.positions[selected]}
-                  canAct={canAct}
-                  posture={actorStatus(battle, selected).posture}
-                  footprint={battle.footprints[selected]}
-                  mapSize={battle.map}
-                  route={route}
-                  routePlan={
-                    routePlan
-                      ? {
-                          meters: routePlan.meters,
-                          difficult: routePlan.difficult,
-                          cost: routePlan.cost,
-                          reason: routePlan.problem
-                            ? routePlan.problem.reason
-                            : chosen && routePlan.cost > (chosen.maxDistance ?? 0) + 1e-9
-                              ? 'Не хватает дистанции для этого режима'
-                              : null,
-                        }
-                      : null
-                  }
-                  onRouteMode={(on) => setRoute(on ? [] : null)}
-                  onRouteUndo={() => setRoute((r) => (r ? r.slice(0, -1) : r))}
-                  onRouteGo={() => {
-                    if (!route?.length) return;
-                    const last = route.at(-1)!;
-                    onMove(selected, last.x, last.y, previewRevision, route);
-                  }}
-                  onStand={() =>
-                    run((b) => standUp(b, { id: commandId('stand'), actor: selected }))
-                  }
-                />
-              ) : (
-                <AttackPanel
-                  attacker={info.active}
-                  form={form}
-                  onChange={setForm}
-                  canAct={canAct}
-                  attackedThisTurn={info.attacked}
-                  battle={battle}
-                  onAttack={() =>
-                    run((b) =>
-                      attack(
-                        b,
-                        {
-                          id: commandId('attack'),
-                          actor: info.active,
-                          target: form.target,
-                          weapon: form.weapon,
-                          targetActivity: form.activity,
-                          modifier: form.modifier,
-                          defense: 'DECLINE',
-                        },
-                        source(),
-                      ),
-                    )
-                  }
-                />
-              )}
-            </section>
-          )}
-          {!editing && (
-            <DoorsPanel
-              doors={battle.map.doors.map((d, i) => ({
-                id: d.id,
-                label: `Дверь ${i + 1} (${d.from.x}; ${d.from.y})`,
-                open: battle.doors[d.id] ?? d.open,
-                locked: doorLocked(battle, d.id),
-              }))}
-              combat={info.started}
-              activeName={actor(info.active).name}
-              canAct={info.turnActive && !busy && !fallActor}
-              onCharacter={(id, open) => run((b) => setDoorOpen(b, id, open, info.active))}
-              onGm={(id, open) => run((b) => setDoorOpen(b, id, open))}
-              onLock={(id, locked) => run((b) => setDoorLocked(b, id, locked))}
+              <ActorCard
+                battle={battle}
+                id={selected}
+                setup={mode === 'placement'}
+                onFootprint={(f) => run((b) => setFootprint(b, selected, f))}
+              />
+            </div>
+          </aside>
+
+          <section className="column center">
+            <div className="mode-switch" role="tablist" aria-label="Режим сцены">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === 'editor'}
+                className={mode === 'editor' ? 'chosen' : ''}
+                disabled={info.started}
+                title={info.started ? 'Во время боя карту менять нельзя' : undefined}
+                onClick={enterEditor}
+              >
+                Редактор карты{dirty ? ' •' : ''}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === 'placement'}
+                className={mode === 'placement' ? 'chosen' : ''}
+                disabled={info.started}
+                onClick={() => setSetupMode('placement')}
+              >
+                Расстановка
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === 'combat'}
+                className={mode === 'combat' ? 'chosen' : ''}
+                disabled={!info.started}
+                title={
+                  info.started ? undefined : 'Бой начинается кнопкой «Начать бой» в расстановке'
+                }
+              >
+                Бой
+              </button>
+              <span className="muted small map-name detail">
+                {battle.map.name} · {battle.map.cols} × {battle.map.rows} · ревизия{' '}
+                {battle.mapRevision}
+              </span>
+            </div>
+            <TacticalMap
+              battle={battle}
+              version={version}
+              mode={mode}
+              map={shownMap}
+              positions={draft ? resolveDraftPositions(draft, battle).positions : battle.positions}
+              conflicts={
+                new Set([
+                  ...problems.tokens.map((t) => t.actor),
+                  ...problems.stale.map((t) => t.actor),
+                ])
+              }
+              selected={selected}
+              activeActor={info.active}
+              turnActive={info.turnActive && !busy}
+              moveIntent={mode === 'combat' ? moveIntent : null}
+              attackLine={
+                mode === 'combat' && canAct && tab === 'attack'
+                  ? { from: info.active, to: form.target }
+                  : null
+              }
+              wounds={wounds}
+              tool={tool}
+              floorColour={colour}
+              onSelect={setSelected}
+              onMove={onMove}
+              onRoutePoint={(p) => setRoute((r) => [...(r ?? []), p])}
+              fallActor={mode === 'combat' ? fallActor : null}
+              onPlaceFall={(id, p) => run((b) => placeFallen(b, id, p))}
+              onPlace={(id, x, y) => run((b) => placeActor(b, id, x, y))}
+              onDraftPlace={(id, x, y) =>
+                edit((d) => placeToken(d, id, { x, y }, battle.positions[id]))
+              }
+              onPaint={(cells, c) => edit((d) => paint(d, cells, c))}
+              backgroundUrl={backgroundUrl}
+              selectedObject={editing ? selectedObject : null}
+              onSelectObject={setSelectedObject}
+              onAddRect={(kind, a, c) => {
+                if (kind === 'decoration')
+                  edit((d) =>
+                    addDecoration(d, {
+                      id: commandId('dec'),
+                      ...rectOf(a, c),
+                      color: colour,
+                      label: newDecorationLabel.trim(),
+                    }),
+                  );
+                else if (kind === 'obstacle')
+                  editMap((m) =>
+                    addObstacle(m, {
+                      id: commandId('obs'),
+                      ...rectOf(a, c),
+                      label: newObstacle.label.trim(),
+                      blocksMovement: newObstacle.blocksMovement,
+                      blocksVision: newObstacle.blocksVision,
+                      notes: '',
+                    }),
+                  );
+                else
+                  editMap((m) =>
+                    addZone(m, {
+                      id: commandId('zone'),
+                      ...rectOf(a, c),
+                      label: 'Трудный ландшафт',
+                      modifier: 0,
+                    }),
+                  );
+              }}
+              onAddWall={(points) =>
+                editMap(
+                  (m) => addWall(m, { id: commandId('wall'), points }),
+                  `Стена добавлена: ${points.length - 1} отр.`,
+                )
+              }
+              onAddDoor={(from, to) => {
+                const host = draft && hostWall(draft.map, from, to);
+                if (!host) {
+                  setToast({
+                    text: 'Дверь не добавлена: проём должен лежать на одном прямом участке существующей стены.',
+                    tone: 'warning',
+                  });
+                  return;
+                }
+                editMap(
+                  (m) =>
+                    addDoor(m, {
+                      id: commandId('door'),
+                      wallId: host.id,
+                      from,
+                      to,
+                      open: false,
+                      blocksMovement: true,
+                      blocksVision: true,
+                      locked: false,
+                      lockModifier: 0,
+                      lockOd: 0,
+                    }),
+                  'Дверь добавлена (закрыта; флаги — в панели).',
+                );
+              }}
+              onToggleDoor={(id) =>
+                run((b) =>
+                  setDoorOpen(b, id, !(b.doors[id] ?? b.map.doors.find((d) => d.id === id)!.open)),
+                )
+              }
+              doorStates={draft ? {} : battle.doors}
+              onMoveWallEnd={(id, end, to) =>
+                editMap(
+                  (m) => moveWallEnd(m, id, end, to),
+                  `Конец стены перенесён в (${to.x}; ${to.y}).`,
+                  'Конец стены не перенесён',
+                )
+              }
+              onMoveBackground={(dx, dy) =>
+                edit((d) =>
+                  d.map.background
+                    ? updateBackground(d, {
+                        x: d.map.background.x + dx,
+                        y: d.map.background.y + dy,
+                      })
+                    : d,
+                )
+              }
+              calibrationPoints={calibrationPoints}
+              onCalibrationPoint={(pt) =>
+                setCalibrationPoints((pts) => (pts.length >= 2 ? [pt] : [...pts, pt]))
+              }
             />
-          )}
-          {!editing && details && <DicePanel dice={dice} onChange={setDice} />}
-          <CombatLog battle={battle} />
-        </aside>
-      </main>
+          </section>
+
+          <aside className="column right">
+            {editing && history ? (
+              <EditorPanel
+                history={history}
+                appliedName={battle.map.name}
+                problems={problems}
+                dirty={dirty}
+                tool={tool}
+                colour={colour}
+                onTool={setTool}
+                onColour={setColour}
+                onRename={(name) => edit((d) => rename(d, name))}
+                onResize={(cols, rows) => edit((d) => resize(d, cols, rows))}
+                onNewEmpty={(name, cols, rows) => {
+                  edit((d) => newEmpty(d, commandId('map'), name, cols, rows));
+                  setCalibrationPoints([]);
+                  setSelectedDecorationId(null);
+                }}
+                onEraseOutside={() => edit(eraseOutside)}
+                onKeepDraft={(id) => edit((d) => keepDraftPosition(d, id, battle.positions[id]))}
+                onTakeScene={(id) => edit((d) => takeScenePosition(d, id, battle.positions[id]))}
+                background={history.present.map.background}
+                onLoadBackground={loadBackground}
+                onUpdateBackground={(patch) => edit((d) => updateBackground(d, patch))}
+                onRemoveBackground={() => {
+                  edit((d) => setBackground(d, null));
+                  setCalibrationPoints([]);
+                }}
+                calibrationPoints={calibrationPoints.length}
+                onCalibrate={calibrate}
+                onResetCalibration={() => setCalibrationPoints([])}
+                selectedDecoration={selectedDecoration}
+                selectedObject={selectedObject}
+                map={history.present.map}
+                newObstacle={newObstacle}
+                onNewObstacle={setNewObstacle}
+                onUpdateDoor={(id, patch) => editMap((m) => updateDoor(m, id, patch))}
+                onUpdateObstacle={(id, patch) => editMap((m) => updateObstacle(m, id, patch))}
+                onUpdateZone={(id, patch) => editMap((m) => updateZone(m, id, patch))}
+                onDeleteObject={(o) => {
+                  if (o.kind === 'wall') editMap((m) => removeWall(m, o.id));
+                  else if (o.kind === 'door') editMap((m) => removeDoor(m, o.id));
+                  else if (o.kind === 'obstacle') editMap((m) => removeObstacle(m, o.id));
+                  else if (o.kind === 'zone') editMap((m) => removeZone(m, o.id));
+                  setSelectedObject(null);
+                }}
+                newDecorationLabel={newDecorationLabel}
+                onNewDecorationLabel={setNewDecorationLabel}
+                onUpdateDecoration={(patch) =>
+                  selectedDecorationId &&
+                  edit((d) => updateDecoration(d, selectedDecorationId, patch))
+                }
+                onRemoveDecoration={() => {
+                  if (!selectedDecorationId) return;
+                  edit((d) => removeDecoration(d, selectedDecorationId));
+                  setSelectedDecorationId(null);
+                }}
+                onSaveFile={saveMapFile}
+                onOpenFile={openMapFile}
+                onUndo={() => setHistory((h) => (h ? undo(h) : h))}
+                onRedo={() => setHistory((h) => (h ? redo(h) : h))}
+                onApply={applyEditorDraft}
+                onDiscard={() => setHistory(startEditing(battle))}
+              />
+            ) : !info.started ? (
+              <section className="panel setup-guide" data-testid="setup-guide">
+                <span className="eyebrow">Подготовка к бою</span>
+                <ol>
+                  <li>Перетащите токены на нужные клетки.</li>
+                  <li>Щелчок по двери открывает или закрывает её.</li>
+                  <li>Площадь токена задаётся по Размеру в карточке персонажа слева.</li>
+                  <li>
+                    Выберите, кто ходит первым, и нажмите <strong>«Начать бой»</strong> слева.
+                  </li>
+                </ol>
+                <p className="muted small">
+                  Карту и окружение меняет вкладка «Редактор карты» над картой.
+                </p>
+              </section>
+            ) : (
+              <section className="panel actions">
+                <div className="tabs" role="tablist" aria-label="Действия">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === 'move'}
+                    className={tab === 'move' ? 'chosen' : ''}
+                    onClick={() => setTab('move')}
+                  >
+                    Движение
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === 'attack'}
+                    className={tab === 'attack' ? 'chosen' : ''}
+                    onClick={() => {
+                      setTab('attack');
+                      setMoveMode(null);
+                    }}
+                  >
+                    Атака
+                  </button>
+                </div>
+                {fallActor && (
+                  <p className="note-warning" data-testid="fall-note">
+                    {actor(fallActor).name} упал на трудной местности. Щёлкните на карте клетку, где
+                    он лежит.
+                  </p>
+                )}
+                {info.started && selected !== info.active && (
+                  <p className="muted small">
+                    Выбран персонаж не в свой ход — действия доступны только активному участнику.
+                  </p>
+                )}
+                {tab === 'move' ? (
+                  <MovePanel
+                    options={options}
+                    selectedMode={moveMode}
+                    onSelectMode={setMoveMode}
+                    onMoveTo={(x, y) => onMove(selected, x, y)}
+                    position={battle.positions[selected]}
+                    canAct={canAct}
+                    posture={actorStatus(battle, selected).posture}
+                    footprint={battle.footprints[selected]}
+                    mapSize={battle.map}
+                    route={route}
+                    routePlan={
+                      routePlan
+                        ? {
+                            meters: routePlan.meters,
+                            difficult: routePlan.difficult,
+                            cost: routePlan.cost,
+                            reason: routePlan.problem
+                              ? routePlan.problem.reason
+                              : chosen && routePlan.cost > (chosen.maxDistance ?? 0) + 1e-9
+                                ? 'Не хватает дистанции для этого режима'
+                                : null,
+                          }
+                        : null
+                    }
+                    onRouteMode={(on) => setRoute(on ? [] : null)}
+                    onRouteUndo={() => setRoute((r) => (r ? r.slice(0, -1) : r))}
+                    onRouteGo={() => {
+                      if (!route?.length) return;
+                      const last = route.at(-1)!;
+                      onMove(selected, last.x, last.y, previewRevision, route);
+                    }}
+                    onStand={() =>
+                      run((b) => standUp(b, { id: commandId('stand'), actor: selected }))
+                    }
+                  />
+                ) : (
+                  <AttackPanel
+                    attacker={info.active}
+                    form={form}
+                    onChange={setForm}
+                    canAct={canAct}
+                    attackedThisTurn={info.attacked}
+                    battle={battle}
+                    onAttack={() =>
+                      run((b) =>
+                        attack(
+                          b,
+                          {
+                            id: commandId('attack'),
+                            actor: info.active,
+                            target: form.target,
+                            weapon: form.weapon,
+                            targetActivity: form.activity,
+                            modifier: form.modifier,
+                            defense: 'DECLINE',
+                          },
+                          source(),
+                        ),
+                      )
+                    }
+                  />
+                )}
+              </section>
+            )}
+            {!editing && (
+              <DoorsPanel
+                doors={battle.map.doors.map((d, i) => ({
+                  id: d.id,
+                  label: `Дверь ${i + 1} (${d.from.x}; ${d.from.y})`,
+                  open: battle.doors[d.id] ?? d.open,
+                  locked: doorLocked(battle, d.id),
+                }))}
+                combat={info.started}
+                activeName={actor(info.active).name}
+                canAct={info.turnActive && !busy && !fallActor}
+                onCharacter={(id, open) => run((b) => setDoorOpen(b, id, open, info.active))}
+                onGm={(id, open) => run((b) => setDoorOpen(b, id, open))}
+                onLock={(id, locked) => run((b) => setDoorLocked(b, id, locked))}
+              />
+            )}
+            {!editing && details && <DicePanel dice={dice} onChange={setDice} />}
+            <CombatLog battle={battle} />
+          </aside>
+        </main>
+      )}
     </div>
   );
 }

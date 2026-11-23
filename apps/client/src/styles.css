@@ -1414,3 +1414,83 @@ button.primary:hover:not(:disabled) {
     display: none;
   }
 }
+
+/* Character editor (step 3) */
+.character-editor {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 820px);
+  gap: 14px;
+  align-items: start;
+  justify-content: center;
+}
+.char-list-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.char-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.char-items button {
+  width: 100%;
+  display: grid;
+  text-align: left;
+  gap: 2px;
+}
+.char-items button.chosen {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.char-form {
+  display: grid;
+  gap: 10px;
+}
+.char-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+}
+.char-stat input {
+  padding: 6px 8px;
+}
+.char-stat {
+  display: grid;
+  grid-template-columns: 30px minmax(60px, 1fr) 52px;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.char-stat-name {
+  font-weight: 700;
+  color: var(--accent);
+}
+.char-super {
+  color: var(--author);
+}
+.char-row {
+  align-items: end;
+}
+.char-actions {
+  position: sticky;
+  bottom: 0;
+  padding: 10px 0 2px;
+  background: linear-gradient(180deg, transparent, var(--panel) 30%);
+}
+@media (max-width: 760px) {
+  .character-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* In the character editor the save buttons sit at the bottom: show messages under the header. */
+.app.view-characters .toast {
+  top: 72px;
+  bottom: auto;
+}

@@ -115,3 +115,8 @@ export {
   conditionModifiers,
   type CombatCondition,
 } from './combat-conditions.js';
+export {
+  skillCheckValue,
+  type SkillCheckValue as SkillTestValue,
+  type SkillLevel,
+} from './skills.js';
