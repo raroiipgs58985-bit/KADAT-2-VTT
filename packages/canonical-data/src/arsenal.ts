@@ -9,6 +9,7 @@ import {
   EXTRA_PROPERTIES,
   normaliseArmourText,
   PROPERTY_ALIASES,
+  ATTACHMENT_ALIASES,
 } from './corrections.js';
 
 export type Cell = string | number;
@@ -33,6 +34,8 @@ export interface PropertyRef {
   readonly param: string | null;
   /** Name of the matching entry of «Свойства оружия», or null when not found there. */
   readonly property: string | null;
+  /** Name of the matching attachment of «Дополнения к оружию», when it is one. */
+  readonly attachment: string | null;
   /** Marked «(опц)»: an optional property (see «Опционально»). */
   readonly optional: boolean;
 }
@@ -127,6 +130,15 @@ export interface ArsenalProperty {
   readonly effect: string;
   readonly source: SourceRef | { readonly author: string };
 }
+/** «Дополнения к оружию»: attachments and modifications (Оптика, ЛЦУ, Глушитель …). */
+export interface ArsenalAttachment {
+  readonly name: string;
+  readonly group: string | null;
+  readonly weaponType: string;
+  readonly description: string;
+  readonly effect: string;
+  readonly source: SourceRef;
+}
 export interface ImportIssue extends SourceRef {
   readonly message: string;
 }
@@ -138,6 +150,7 @@ export interface ArsenalDataset {
   readonly weapons: readonly ArsenalWeapon[];
   readonly armour: readonly ArsenalArmour[];
   readonly fields: readonly ArsenalField[];
+  readonly attachments: readonly ArsenalAttachment[];
   readonly issues: readonly ImportIssue[];
   /** Author corrections applied on import (src/corrections.ts). */
   readonly corrections: readonly string[];
@@ -252,7 +265,42 @@ function propertyEntries(rows: readonly (readonly Cell[])[], sheet: string): Ars
   return out;
 }
 
-function makeResolver(properties: readonly ArsenalProperty[]) {
+function attachmentEntries(rows: readonly (readonly Cell[])[], sheet: string): ArsenalAttachment[] {
+  const out: ArsenalAttachment[] = [];
+  let group: string | null = null,
+    started = false;
+  rows.forEach((r, i) => {
+    if (norm(str(r[0])) === 'мод') {
+      started = true;
+      return;
+    }
+    if (!started) return;
+    if (onlyFirst(r)) {
+      group = str(r[0]);
+      return;
+    }
+    const name = str(r[0]) || (out.at(-1)?.name ?? '');
+    if (!name || !str(r[1])) return;
+    out.push({
+      name,
+      group,
+      weaponType: str(r[1]),
+      description: str(r[2]),
+      effect: str(r[5]),
+      source: { sheet, row: i + 1 },
+    });
+  });
+  return out;
+}
+
+function makeResolver(
+  properties: readonly ArsenalProperty[],
+  attachments: readonly ArsenalAttachment[] = [],
+) {
+  const attachmentByName = new Map<string, string>();
+  for (const a of attachments) attachmentByName.set(norm(a.name), a.name);
+  for (const [short, full] of Object.entries(ATTACHMENT_ALIASES))
+    if (attachmentByName.has(norm(full))) attachmentByName.set(norm(short), full);
   const byName = new Map<string, string>();
   for (const p of properties) {
     byName.set(norm(p.name), p.name);
@@ -263,7 +311,14 @@ function makeResolver(properties: readonly ArsenalProperty[]) {
     const optional = /\(\s*опц\.?\s*\)\s*$/i.test(raw);
     const parsed = parsePropertyItem(optional ? raw.replace(/\(\s*опц\.?\s*\)\s*$/i, '') : raw);
     const name = aliases.get(norm(parsed.name)) ?? parsed.name;
-    return { raw, name, param: parsed.param, property: byName.get(norm(name)) ?? null, optional };
+    return {
+      raw,
+      name,
+      param: parsed.param,
+      property: byName.get(norm(name)) ?? null,
+      attachment: attachmentByName.get(norm(name)) ?? null,
+      optional,
+    };
   };
 }
 
@@ -342,7 +397,8 @@ export function importArsenal(original: ArsenalSnapshot): ArsenalDataset {
       .map(([a, b]) => `${a} → ${b}`)
       .join(', ')}`,
   );
-  const resolve = makeResolver(properties);
+  const attachments = attachmentEntries(sheet('Дополнения к оружию'), 'Дополнения к оружию');
+  const resolve = makeResolver(properties, attachments);
   const ids = new Set<string>();
   const idFor = (sheetName: string, name: string, row: number) => {
     const base = `${sheetName.trim()}:${name}`;
@@ -354,8 +410,11 @@ export function importArsenal(original: ArsenalSnapshot): ArsenalDataset {
   const props = (text: string, src: SourceRef, check = true) =>
     splitProperties(text.replace(AMMO_NOTE, '')).map((raw) => {
       const ref = resolve(raw);
-      if (check && !ref.property)
-        issues.push({ ...src, message: `Свойство «${raw}» не найдено в листе «Свойства оружия»` });
+      if (check && !ref.property && !ref.attachment)
+        issues.push({
+          ...src,
+          message: `Свойство «${raw}» не найдено ни в «Свойствах оружия», ни в «Дополнениях к оружию»`,
+        });
       return ref;
     });
 
@@ -529,6 +588,7 @@ export function importArsenal(original: ArsenalSnapshot): ArsenalDataset {
     weapons,
     armour,
     fields,
+    attachments,
     issues,
     corrections,
   };

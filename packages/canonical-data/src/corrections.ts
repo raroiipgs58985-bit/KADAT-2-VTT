@@ -76,3 +76,14 @@ export function normaliseArmourText(text: string): { main: string; under: string
   };
   return { main: fix(main), under: under ? fix(under) : null };
 }
+
+/**
+ * Short names of attachments used in the property columns → the attachment of «Дополнения к
+ * оружию». Proposed by the agent from the obvious spelling; listed for the author to confirm.
+ */
+export const ATTACHMENT_ALIASES: Readonly<Record<string, string>> = {
+  Оптика: 'Оптический прицел',
+  Омни: 'Омни-прицел',
+  Омниприцел: 'Омни-прицел',
+  'Предсказатель движения': 'Предсказатель движений',
+};
