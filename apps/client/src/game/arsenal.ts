@@ -23,12 +23,46 @@ export function searchArsenal<T extends { name: string; sheet: string; group: st
 ): T[] {
   const words = norm(query).split(' ').filter(Boolean);
   if (!words.length) return [];
+  const hay = (x: T) => norm(`${x.name} ${x.sheet} ${x.group ?? ''}`);
+  const exact = items.filter((x) => words.every((w) => hay(x).includes(w)));
+  if (exact.length) return exact.slice(0, limit);
+  // Nothing found: forgive one wrong, missing or extra letter in a word of 4+ letters.
   return items
     .filter((x) => {
-      const hay = norm(`${x.name} ${x.sheet} ${x.group ?? ''}`);
-      return words.every((w) => hay.includes(w));
+      const tokens = hay(x)
+        .split(/[\s()\-,.]+/)
+        .filter(Boolean);
+      return words.every((w) =>
+        w.length >= 4
+          ? tokens.some(
+              (t) => t.includes(w) || oneEditAway(w, t.slice(0, w.length + 1)) || oneEditAway(w, t),
+            )
+          : tokens.some((t) => t.includes(w)),
+      );
     })
     .slice(0, limit);
+}
+/** True when `a` becomes `b` by changing, adding or removing at most one letter. */
+export function oneEditAway(a: string, b: string): boolean {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0,
+    j = 0,
+    edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i++;
+      j++;
+      continue;
+    }
+    if (++edits > 1) return false;
+    if (a.length > b.length) i++;
+    else if (b.length > a.length) j++;
+    else {
+      i++;
+      j++;
+    }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
 }
 
 /** The Arsenal weapon whose name equals `name` exactly (ignoring case, spaces, ё); null if

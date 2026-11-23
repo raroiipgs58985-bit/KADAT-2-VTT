@@ -14,6 +14,21 @@ if (import.meta.env.DEV)
       }),
   };
 
+// Number fields on phones: a tap selects the old value (typing replaces it instead of giving
+// «040»), and leading zeros are dropped when the field is left.
+const isNumberInput = (t: EventTarget | null): t is HTMLInputElement =>
+  t instanceof HTMLInputElement && t.type === 'number';
+document.addEventListener('focusin', (e) => {
+  if (isNumberInput(e.target)) {
+    const input = e.target;
+    setTimeout(() => input.select(), 0);
+  }
+});
+document.addEventListener('focusout', (e) => {
+  if (isNumberInput(e.target) && /^-?0\d/.test(e.target.value))
+    e.target.value = String(Number(e.target.value));
+});
+
 const root = document.getElementById('root');
 
 if (!root) {

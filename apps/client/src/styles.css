@@ -38,6 +38,10 @@
 body {
   margin: 0;
   min-height: 100vh;
+  /* Set here too: a page host may reset the body colour and font. */
+  color: var(--text);
+  color-scheme: dark;
+  font-size: 15px;
   background: radial-gradient(1200px 600px at 60% -10%, #16202b 0%, transparent 60%), var(--bg);
 }
 h1,
@@ -1481,8 +1485,10 @@ button.primary:hover:not(:disabled) {
 .char-actions {
   position: sticky;
   bottom: 0;
-  padding: 10px 0 2px;
-  background: linear-gradient(180deg, transparent, var(--panel) 30%);
+  z-index: 2;
+  padding: 10px 0 calc(8px + env(safe-area-inset-bottom, 0px));
+  background: var(--panel);
+  border-top: 1px solid var(--line);
 }
 @media (max-width: 760px) {
   .character-editor {

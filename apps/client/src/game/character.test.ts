@@ -173,3 +173,18 @@ describe('Arsenal properties for the rules engine', () => {
     expect(all.some((x) => x.unread.length > 0)).toBe(true);
   });
 });
+
+describe('Arsenal search on a phone', () => {
+  it('forgives one wrong letter when nothing matches exactly', async () => {
+    const { arsenal, searchArsenal, oneEditAway } = await import('./arsenal');
+    expect(oneEditAway('лазоан', 'лазган')).toBe(true);
+    expect(oneEditAway('лазган', 'лазган')).toBe(true);
+    expect(oneEditAway('лаз', 'болт')).toBe(false);
+    expect(searchArsenal(arsenal.weapons, 'Лазоан').some((w) => w.name === 'Лазган')).toBe(true);
+    expect(
+      searchArsenal(arsenal.weapons, 'лазган').every((w) =>
+        /лазган/i.test(`${w.name} ${w.sheet} ${w.group ?? ''}`),
+      ),
+    ).toBe(true);
+  });
+});
