@@ -138,12 +138,15 @@ export function prepareRangedAttack(
   if (!called && request.calledLocation)
     throw new Error('Ordinary attack cannot select a location');
   const range = resolveRange(request.distance, effective.profile.optimalRange);
+  const familyModifier = effective.profile.modeModifiers?.[request.mode];
   const modeModifier =
-    request.mode === 'single'
-      ? 10
-      : request.mode === 'full-auto' && effective.profile.classification === 'kinetic'
-        ? -10
-        : 0;
+    familyModifier !== undefined
+      ? familyModifier
+      : request.mode === 'single'
+        ? 10
+        : request.mode === 'full-auto' && effective.profile.classification === 'kinetic'
+          ? -10
+          : 0;
   const dualTalent = (actor.talents ?? []).includes('Парное оружие (Стрелковое)');
   const modifiers = [
     ...request.context.modifiers,

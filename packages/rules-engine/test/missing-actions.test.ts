@@ -217,3 +217,19 @@ describe('Overpenetration — «Раны и лечение» A2–A3, ruling 38'
     ).toBe(0);
   });
 });
+
+describe('Weapon family fire-mode modifiers — «Лаз» A1, ruling 52', () => {
+  const las = { modeModifiers: { single: 10, 'short-burst': 5, 'full-auto': 0 } };
+  test('a las weapon short burst gets +5 instead of the general +0', () => {
+    const r = shot(
+      withWeapon(b1State(), las),
+      attack('b', { mode: 'short-burst', shotsRequested: 3 }),
+      50,
+    );
+    expect(r.result.modeModifier).toBe(5);
+  });
+  test('without a family row the general modifiers apply (long burst kinetic −10)', () => {
+    const r = shot(b1State(), attack('a', { mode: 'full-auto', shotsRequested: 10 }), 50);
+    expect(r.result.modeModifier).toBe(-10);
+  });
+});

@@ -24,6 +24,12 @@ export interface RangedWeaponProfile {
   readonly optimalRange: number;
   readonly classification: 'kinetic' | 'energy-beam';
   readonly modes: readonly { readonly mode: FireMode; readonly maxShots: number }[];
+  /**
+   * Fire-mode modifiers of the weapon family from its Arsenal sheet header (e.g. «Лаз» A1:
+   * single +10, short burst +5, long +0). They replace the general ones of «Бой» A58–A60
+   * (author ruling 52). Absent — the general modifiers apply.
+   */
+  readonly modeModifiers?: Readonly<Partial<Record<FireMode, number>>>;
   readonly damage: DamageProfileReference;
   readonly penetration: PenetrationReference;
   readonly compatibleAmmoTypes: readonly string[];

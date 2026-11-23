@@ -128,6 +128,8 @@ function makeWeapon(id: WeaponId, owner: ActorId): WeaponInstance {
         optimalRange: 100,
         classification: 'energy-beam',
         modes: [{ mode: 'single', maxShots: 1 }],
+        // «Лаз» A1: the las family's own fire-mode modifiers (author ruling 52).
+        modeModifiers: { single: 10, 'short-burst': 5, 'full-auto': 0 },
         damage: { source, expression: { count: 1, sides: 10, modifier: 4 } },
         penetration: { source, value: 6 },
         compatibleAmmoTypes: ['hotshot-block-shot'],
