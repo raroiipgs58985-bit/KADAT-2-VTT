@@ -2,7 +2,7 @@
  * Character for combat (author rulings 47–51): only what the fight needs. A ready character
  * is saved to a file and taken into new sessions without re-creating it.
  */
-export const CHARACTER_SCHEMA_VERSION = 1;
+export const CHARACTER_SCHEMA_VERSION = 2;
 export const CHARACTER_FILE_TYPE = 'kadat-character';
 export const CHARACTERISTICS = ['НС', 'НР', 'СЛ', 'ВН', 'ЛВ', 'ИН', 'СВ', 'ВС', 'ОЩ'] as const;
 export type CharacteristicKey = (typeof CHARACTERISTICS)[number];
@@ -44,6 +44,8 @@ export interface CharacterDocument {
   readonly talents: readonly string[];
   /** Weapons from the Arsenal (ruling 48): `ref` is the Arsenal record once it is loaded. */
   readonly weapons: readonly { readonly name: string; readonly ref: string | null }[];
+  /** Armour items from the Arsenal (v2); `armour` above holds the ОБ used in combat. */
+  readonly armourItems: readonly { readonly name: string; readonly ref: string | null }[];
   /** «Особенности», implants and other combat-relevant text kept as written. */
   readonly traits: string;
   readonly notes: string;
@@ -80,6 +82,7 @@ export function emptyCharacter(id: string, name = 'Новый персонаж')
     skills: [],
     talents: [],
     weapons: [],
+    armourItems: [],
     traits: '',
     notes: '',
   };
@@ -147,6 +150,17 @@ export function characterProblems(c: CharacterDocument): string[] {
     )
   )
     p.push('Оружие: до 80 записей');
+  if (
+    !Array.isArray(c.armourItems) ||
+    c.armourItems.length > L.maxListItems ||
+    c.armourItems.some(
+      (w) =>
+        !text(w.name, L.maxItemText) ||
+        !w.name.trim() ||
+        !(w.ref === null || text(w.ref, L.maxItemText)),
+    )
+  )
+    p.push('Броня: до 80 предметов');
   if (!text(c.traits, L.maxText)) p.push('Особенности слишком длинные');
   if (!text(c.notes, L.maxText)) p.push('Заметки слишком длинные');
   return p;

@@ -1069,6 +1069,12 @@ await page.getByRole('button', { name: 'Подробно' }).click();
     (await page.getByLabel('СЛ: значение').inputValue()) !== '',
     'profile characteristics filled',
   );
+  await page.getByLabel('Найти оружие в Арсенале').fill('лазпистолет');
+  await page.locator('.arsenal-results button').first().click();
+  check(
+    (await page.locator('.arsenal-items').first().textContent()).includes('Лазпистолет'),
+    'a weapon picked from the Arsenal',
+  );
   await page.getByRole('button', { name: 'Сохранить в библиотеку' }).click();
   check((await page.locator('.char-items li').count()) >= 1, 'character stored in the library');
   const saved = page.waitForEvent('download');

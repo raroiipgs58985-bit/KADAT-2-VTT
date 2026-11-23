@@ -13,6 +13,7 @@ import {
   splitProfileList,
   type CharacterDocument,
 } from './character';
+import { matchArmourByName, matchWeaponByName } from './arsenal';
 
 /** Character file `*.kadat-character.json` (ruling 51: kept in a file on the computer). */
 export class CharacterFileError extends Error {
@@ -32,6 +33,7 @@ const KEYS = [
   'skills',
   'talents',
   'weapons',
+  'armourItems',
   'traits',
   'notes',
 ] as const;
@@ -67,16 +69,26 @@ export function parseCharacterFile(text: string): CharacterDocument {
     throw new CharacterFileError(
       'Это не файл персонажа KADAT (нет documentType: "kadat-character")',
     );
-  if (root.schemaVersion !== CHARACTER_SCHEMA_VERSION)
+  if (root.schemaVersion !== 1 && root.schemaVersion !== CHARACTER_SCHEMA_VERSION)
     throw new CharacterFileError(
       `Версия файла персонажа ${String(root.schemaVersion)} не поддерживается`,
     );
   exactKeys(root, ['documentType', 'schemaVersion', 'character'], 'файле');
-  const c = root.character;
-  if (!isObject(c)) throw new CharacterFileError('Нет описания персонажа');
-  exactKeys(c, KEYS, 'персонаже');
-  if (c.schemaVersion !== CHARACTER_SCHEMA_VERSION)
+  const raw = root.character;
+  if (!isObject(raw)) throw new CharacterFileError('Нет описания персонажа');
+  if (raw.schemaVersion !== root.schemaVersion)
     throw new CharacterFileError('Версия в персонаже не совпадает с версией файла');
+  // Version 1 had no armour items: upgrade with an empty list.
+  const c: Record<string, unknown> =
+    root.schemaVersion === 1
+      ? (exactKeys(
+          raw,
+          KEYS.filter((k) => k !== 'armourItems'),
+          'персонаже',
+        ),
+        { ...raw, schemaVersion: CHARACTER_SCHEMA_VERSION, armourItems: [] })
+      : raw;
+  exactKeys(c, KEYS, 'персонаже');
   const doc = c as unknown as CharacterDocument;
   const problems = characterProblems(doc);
   if (problems.length) throw new CharacterFileError(`Персонаж повреждён: ${problems.join('; ')}`);
@@ -110,6 +122,18 @@ export function characterFromProfile(actorId: string): CharacterDocument {
   const armour = parseProfileArmour(field(a, 'ОБ') ?? '');
   const sizeMatch = /Размер\s*\((-?\d+)\)/.exec(field(a, 'Особенности') ?? '');
   const skills = splitProfileList(field(a, 'Навыки') ?? '').map(parseProfileSkill);
+  // Equipment names that equal one Arsenal record exactly become weapons or armour items.
+  const equipment = field(a, 'Снаряжение') ?? '';
+  const weapons: { name: string; ref: string | null }[] = [];
+  const armourItems: { name: string; ref: string | null }[] = [];
+  const unmatched: string[] = [];
+  for (const item of splitProfileList(equipment.replace(/^[-–]\s*/gm, ''))) {
+    const w = matchWeaponByName(item);
+    const ar = w ? null : matchArmourByName(item);
+    if (w) weapons.push({ name: w.name, ref: w.id });
+    else if (ar) armourItems.push({ name: ar.name, ref: ar.id });
+    else unmatched.push(item);
+  }
   const traits = [field(a, 'Особенности'), field(a, 'Импланты')]
     .filter((x) => x && x !== '_')
     .map((x, i) => `${i ? 'Импланты' : 'Особенности'}: ${x}`)
@@ -126,9 +150,12 @@ export function characterFromProfile(actorId: string): CharacterDocument {
       (s, i) => skills.findIndex((x) => x.name.toLowerCase() === s.name.toLowerCase()) === i,
     ),
     talents: splitProfileList(field(a, 'Таланты') ?? ''),
-    weapons: [],
+    weapons,
+    armourItems,
     traits,
-    notes: `Снаряжение (сверить с Арсеналом): ${field(a, 'Снаряжение') ?? '—'}`,
+    notes:
+      `Снаряжение по профилю: ${equipment || '—'}` +
+      (unmatched.length ? `\nНе найдено в Арсенале однозначно: ${unmatched.join(', ')}` : ''),
   };
 }
 export const PROFILE_CHARACTERS = data.actors.map((a) => ({ id: a.id, name: a.name }));

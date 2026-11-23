@@ -10,6 +10,13 @@ import {
   splitProfileList,
 } from './character';
 import { characterFromProfile, parseCharacterFile, serializeCharacter } from './character-file';
+import {
+  armourFromItems,
+  arsenal,
+  matchArmourByName,
+  searchArsenal,
+  weaponSummary,
+} from './arsenal';
 
 describe('Profile text as written in the sheets', () => {
   it('characteristics «42 (4)» and «40 (4+1Сверх)»', () => {
@@ -83,5 +90,45 @@ describe('Character file', () => {
   });
   it('an invalid character is not saved', () => {
     expect(() => serializeCharacter({ ...emptyCharacter('x'), name: ' ' })).toThrow(/Нужно имя/);
+  });
+});
+
+describe('Characters and the Arsenal (step 3)', () => {
+  it('profile equipment that equals one Arsenal record becomes a weapon with its reference', () => {
+    const k = characterFromProfile('kelus-drakar');
+    expect(k.weapons).toEqual([
+      { name: 'Хот-шот лазган', ref: 'Лаз:Хот-шот лазган' },
+      { name: 'Цепной меч', ref: 'ХТХ и примитив:Цепной меч' },
+    ]);
+    expect(k.notes).toMatch(/Не найдено в Арсенале однозначно: Тычковый кинжал/);
+  });
+  it('a version 1 file opens and gets an empty armour list', () => {
+    const v2 = JSON.parse(serializeCharacter(characterFromProfile('pak')));
+    const { armourItems: _drop, ...rest } = v2.character;
+    void _drop;
+    const v1 = { ...v2, schemaVersion: 1, character: { ...rest, schemaVersion: 1 } };
+    const opened = parseCharacterFile(JSON.stringify(v1));
+    expect(opened.schemaVersion).toBe(2);
+    expect(opened.armourItems).toEqual([]);
+  });
+  it('search finds by words; summaries read the profile', () => {
+    const hits = searchArsenal(arsenal.weapons, 'хот лазган');
+    expect(hits.map((w) => w.name)).toContain('Хот-шот лазган');
+    expect(weaponSummary(hits.find((w) => w.name === 'Хот-шот лазган')!)).toBe(
+      'ОС · 100 м · 1/3/- · 1к10+4 Э · ББ 6 · маг. 60',
+    );
+  });
+  it('ОБ from armour items only when no zone is covered twice', () => {
+    const flak = matchArmourByName('Флак-форма')!;
+    const helmet = matchArmourByName('Стальной шлем')!;
+    expect(armourFromItems([{ ref: flak.id }]).armour).toEqual({
+      head: 2,
+      torso: 2,
+      arms: 2,
+      legs: 2,
+    });
+    const both = armourFromItems([{ ref: flak.id }, { ref: helmet.id }]);
+    expect(both.armour).toBeNull();
+    expect(both.reason).toMatch(/ждёт решения автора/);
   });
 });

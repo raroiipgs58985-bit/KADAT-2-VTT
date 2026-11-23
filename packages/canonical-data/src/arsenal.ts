@@ -139,6 +139,13 @@ export interface ArsenalAttachment {
   readonly effect: string;
   readonly source: SourceRef;
 }
+/** «Свойства брони» at the end of the «Броня» sheet (Флак, Керамит, Поддоспешник …). */
+export interface ArsenalArmourTrait {
+  readonly name: string;
+  readonly hasParam: boolean;
+  readonly description: string;
+  readonly source: SourceRef;
+}
 export interface ImportIssue extends SourceRef {
   readonly message: string;
 }
@@ -151,6 +158,7 @@ export interface ArsenalDataset {
   readonly armour: readonly ArsenalArmour[];
   readonly fields: readonly ArsenalField[];
   readonly attachments: readonly ArsenalAttachment[];
+  readonly armourTraits: readonly ArsenalArmourTrait[];
   readonly issues: readonly ImportIssue[];
   /** Author corrections applied on import (src/corrections.ts). */
   readonly corrections: readonly string[];
@@ -288,6 +296,27 @@ function attachmentEntries(rows: readonly (readonly Cell[])[], sheet: string): A
       description: str(r[2]),
       effect: str(r[5]),
       source: { sheet, row: i + 1 },
+    });
+  });
+  return out;
+}
+
+function armourTraitEntries(
+  rows: readonly (readonly Cell[])[],
+  sheet: string,
+): ArsenalArmourTrait[] {
+  const start = rows.findIndex((r) => norm(str(r[0])) === 'свойства брони');
+  if (start < 0) return [];
+  const out: ArsenalArmourTrait[] = [];
+  rows.slice(start + 1).forEach((r, k) => {
+    const raw = str(r[0]);
+    if (!raw || !str(r[1])) return;
+    const parsed = parsePropertyItem(raw.replace(/\.$/, ''));
+    out.push({
+      name: parsed.name,
+      hasParam: parsed.param !== null,
+      description: str(r[1]),
+      source: { sheet, row: start + k + 2 },
     });
   });
   return out;
@@ -589,6 +618,7 @@ export function importArsenal(original: ArsenalSnapshot): ArsenalDataset {
     armour,
     fields,
     attachments,
+    armourTraits: armourTraitEntries(sheet('Броня'), 'Броня'),
     issues,
     corrections,
   };

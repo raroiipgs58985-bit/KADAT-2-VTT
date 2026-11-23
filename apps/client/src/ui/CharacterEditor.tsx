@@ -15,6 +15,15 @@ import {
 } from '../game/character-file';
 import { footprintForSize } from '../game/grid';
 import { loadLibrary, saveLibrary } from './character-library';
+import {
+  armourById,
+  armourFromItems,
+  armourSummary,
+  arsenal,
+  searchArsenal,
+  weaponById,
+  weaponSummary,
+} from '../game/arsenal';
 import { saveTextFile } from './download';
 
 type Notify = (text: string, tone: 'success' | 'warning' | 'error' | 'info') => void;
@@ -396,41 +405,54 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
           />
         </label>
 
-        <h3>Оружие</h3>
-        <p className="muted small">
-          Выбор из Арсенала появится после его загрузки; пока — названия как в Арсенале.
-        </p>
-        {doc.weapons.map((w, i) => (
-          <div key={i} className="row char-row">
-            <label>
-              Название
-              <input
-                value={w.name}
-                onChange={(e) =>
-                  set({
-                    weapons: doc.weapons.map((x, j) =>
-                      j === i ? { ...x, name: e.target.value } : x,
-                    ),
-                  })
-                }
-              />
-            </label>
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => set({ weapons: doc.weapons.filter((_, j) => j !== i) })}
-            >
-              Убрать
-            </button>
-          </div>
-        ))}
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => set({ weapons: [...doc.weapons, { name: '', ref: null }] })}
-        >
-          + Оружие
-        </button>
+        <h3>Оружие (Арсенал)</h3>
+        <ItemList
+          items={doc.weapons}
+          describe={(ref) => {
+            const w = ref ? weaponById(ref) : undefined;
+            return w ? weaponSummary(w) : 'нет в Арсенале — только название';
+          }}
+          onRemove={(i) => set({ weapons: doc.weapons.filter((_, j) => j !== i) })}
+        />
+        <ArsenalSearch
+          label="Найти оружие в Арсенале"
+          search={(q) => searchArsenal(arsenal.weapons, q)}
+          describe={weaponSummary}
+          onPick={(w) => set({ weapons: [...doc.weapons, { name: w.name, ref: w.id }] })}
+        />
+
+        <h3>Броня (Арсенал)</h3>
+        <ItemList
+          items={doc.armourItems}
+          describe={(ref) => {
+            const a = ref ? armourById(ref) : undefined;
+            return a ? armourSummary(a) : 'нет в Арсенале — только название';
+          }}
+          onRemove={(i) => set({ armourItems: doc.armourItems.filter((_, j) => j !== i) })}
+        />
+        <ArsenalSearch
+          label="Найти броню в Арсенале"
+          search={(q) => searchArsenal(arsenal.armour, q)}
+          describe={armourSummary}
+          onPick={(a) => set({ armourItems: [...doc.armourItems, { name: a.name, ref: a.id }] })}
+        />
+        {(() => {
+          const fill = armourFromItems(doc.armourItems);
+          return (
+            <div className="row">
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={!fill.armour}
+                title={fill.reason ?? 'ОБ по зонам из выбранной брони'}
+                onClick={() => fill.armour && set({ armour: fill.armour })}
+              >
+                Взять ОБ из брони
+              </button>
+              {fill.reason && <span className="muted small">{fill.reason}</span>}
+            </div>
+          );
+        })()}
 
         <h3>Особенности и импланты</h3>
         <textarea rows={3} value={doc.traits} onChange={(e) => set({ traits: e.target.value })} />
@@ -462,3 +484,73 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
   );
 }
 const currentOr = (d: CharacterDocument) => d.movement.options[d.movement.current]?.skr ?? 3;
+
+/** Items chosen from the Arsenal, with their profile line. */
+function ItemList(props: {
+  items: readonly { name: string; ref: string | null }[];
+  describe: (ref: string | null) => string;
+  onRemove: (index: number) => void;
+}) {
+  if (!props.items.length) return <p className="muted small">Пока ничего не выбрано.</p>;
+  return (
+    <ul className="arsenal-items">
+      {props.items.map((it, i) => (
+        <li key={`${it.ref ?? it.name}-${i}`}>
+          <div>
+            <strong>{it.name}</strong>
+            <span className="muted small">{props.describe(it.ref)}</span>
+          </div>
+          <button type="button" className="btn-ghost" onClick={() => props.onRemove(i)}>
+            Убрать
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Search box over the Arsenal: type words of the name, click a result to add it. */
+function ArsenalSearch<
+  T extends { id: string; name: string; sheet: string; group: string | null },
+>(props: {
+  label: string;
+  search: (query: string) => T[];
+  describe: (item: T) => string;
+  onPick: (item: T) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const results = props.search(query);
+  return (
+    <div className="arsenal-search">
+      <label>
+        {props.label}
+        <input
+          value={query}
+          placeholder="например: лазган, флак, цепной"
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </label>
+      {query.trim() && (
+        <ul className="arsenal-results" role="listbox">
+          {results.length === 0 && <li className="muted small">Ничего не найдено.</li>}
+          {results.map((r) => (
+            <li key={r.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  props.onPick(r);
+                  setQuery('');
+                }}
+              >
+                <strong>{r.name}</strong>
+                <span className="muted small">
+                  {r.sheet.trim()} · {props.describe(r)}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
