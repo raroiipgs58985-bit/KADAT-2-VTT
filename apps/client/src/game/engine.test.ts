@@ -15,6 +15,7 @@ import {
   braceWeapon,
   nextTurn,
   weaponBraced,
+  heavyFromHands,
   type AttackCommand,
 } from './engine';
 import { fixedDice } from './dice';
@@ -190,5 +191,33 @@ describe('Heavy weapon on a support («Бой» A55)', () => {
     nextTurn(b, fixedDice(''));
     moveActor(b, { id: 'step', actor: 'gunner', mode: 'half-move', to: { x: 6.5, y: 10.5 } });
     expect(weaponBraced(b, 'gunner:0')).toBe(false);
+  });
+});
+
+describe('Talent «Бугрящиеся бицепсы»', () => {
+  it('fires heavy bursts from the hands without bracing and without −30', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const stubber = matchWeaponByName('Тяжелый стаббер')!;
+    const gunner = {
+      ...emptyCharacter('gunner', 'Оператор'),
+      talents: ['Бугрящиеся бицепсы'],
+      weapons: [{ name: stubber.name, ref: stubber.id }],
+    };
+    const b = createBattle([
+      { character: gunner, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'gunner' },
+      { character: characterFromProfile('pak'), side: 'b', at: { x: 15.5, y: 10.5 }, id: 'pak' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    expect(heavyFromHands(b, 'gunner')).toBe(true);
+    const r = attack(
+      b,
+      shot({ id: 'hands', actor: 'gunner', weapon: 'gunner:0', mode: 'short-burst' }),
+      fixedDice('100:90'),
+    );
+    const res = (
+      r as { result: { attack: { shotsFired: number; check: { modifiers: { id: string }[] } } } }
+    ).result.attack;
+    expect(res.shotsFired).toBe(stubber.rof!.short!);
+    expect(res.check.modifiers.some((m) => m.id === 'ranged:unbraced-heavy')).toBe(false);
   });
 });

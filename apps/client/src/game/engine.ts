@@ -15,6 +15,7 @@ import type {
 } from '@kadat/contracts';
 import {
   adjustDamageDice,
+  HEAVY_FROM_HANDS_TALENT,
   braceWeapon as coreBraceWeapon,
   armourAfterProperties,
   beginActionRound,
@@ -1359,6 +1360,9 @@ export function weaponSupport(b: Battle, id: WeaponId): WeaponSupport {
     : { level: 'supported', note: 'Свойства оружия учитываются автоматически.' };
 }
 
+/** Talent «Бугрящиеся бицепсы»: heavy weapons fire from the hands without penalties. */
+export const heavyFromHands = (b: Battle, actorId: ActorId) =>
+  !!b.roster[actorId]?.character.talents.includes(HEAVY_FROM_HANDS_TALENT);
 /** Whether a participant's ranged weapon stands on a support now («Бой» A55). */
 export function weaponBraced(b: Battle, weaponId: WeaponId): boolean {
   return !!getEngine(b).wounds.combat.weapons[weaponId]?.braced;

@@ -34,6 +34,11 @@ import {
 
 const isBasic = (weaponClass: string) => ['ОС', 'BASIC'].includes(weaponClass);
 const isHeavy = (weaponClass: string) => ['ТО', 'HEAVY'].includes(weaponClass);
+/**
+ * Talent «Бугрящиеся бицепсы» («Профили персонажей», «Таланты (обновлены)», стр. 55): fires a
+ * heavy weapon «с рук» without penalties — as if it stood on a support.
+ */
+export const HEAVY_FROM_HANDS_TALENT = 'Бугрящиеся бицепсы';
 /** The follow-up shot of the same attack action (second weapon or next wide-arc target). */
 const followupOf = (request: RangedAttackRequest) =>
   request.wideArc?.primaryId ?? request.dualWield?.primaryId;
@@ -127,7 +132,9 @@ export function prepareRangedAttack(
   const ammoNeeded = request.wideArc?.primaryId ? 0 : ammoForAttack(traits, request.shotsRequested);
   if (ammoNeeded > container.currentRounds) throw new Error('Insufficient ammunition');
   const weaponClass = effective.profile.weaponClass;
-  if (isHeavy(weaponClass) && !weapon.braced && request.mode !== 'single')
+  const fromHands = (actor.talents ?? []).includes(HEAVY_FROM_HANDS_TALENT);
+  const supported = !!weapon.braced || fromHands;
+  if (isHeavy(weaponClass) && !supported && request.mode !== 'single')
     throw new Error('Unbraced heavy weapon cannot fire bursts');
   if (request.wideArc) {
     if (request.mode === 'single') throw new Error('Wide arc requires a burst');
@@ -163,7 +170,7 @@ export function prepareRangedAttack(
     ruleModifier('ranged:range', range.modifier),
     ruleModifier('ranged:mode', modeModifier),
     ...(request.oneHanded && isBasic(weaponClass) ? [ruleModifier('ranged:one-handed', -20)] : []),
-    ...(isHeavy(weaponClass) && !weapon.braced ? [ruleModifier('ranged:unbraced-heavy', -30)] : []),
+    ...(isHeavy(weaponClass) && !supported ? [ruleModifier('ranged:unbraced-heavy', -30)] : []),
     ...(request.tacticalAdvance
       ? [
           ruleModifier(

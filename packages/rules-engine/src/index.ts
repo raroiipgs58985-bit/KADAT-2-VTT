@@ -25,7 +25,7 @@ export {
   resolveOverwatchInterrupts,
 } from './overwatch.js';
 export type { OverwatchActivationRequest } from './overwatch.js';
-export { resolveRangedAttack } from './ranged.js';
+export { resolveRangedAttack, HEAVY_FROM_HANDS_TALENT } from './ranged.js';
 export type { OverwatchEvent } from './ranged.js';
 export { resolveDodge } from './dodge.js';
 export { resolveRange } from './range.js';

@@ -343,6 +343,8 @@ export function AttackPanel(props: {
   battle: Battle;
   /** The selected weapon stands on a support («Бой» A55). */
   braced: (weaponId: string) => boolean;
+  /** Talent «Бугрящиеся бицепсы»: heavy weapons from the hands without penalties. */
+  fromHands: boolean;
   onBrace: (weaponId: string) => void;
 }) {
   const { form, attacker } = props;
@@ -357,7 +359,7 @@ export function AttackPanel(props: {
       : [];
   // «Бой» A55: a heavy weapon without a support fires single shots only (−30).
   const heavy = weapon?.arsenal?.weaponClass === 'ТО';
-  const onSupport = !!weapon && props.braced(weapon.id);
+  const onSupport = !!weapon && (props.fromHands || props.braced(weapon.id));
   const usable = heavy && !onSupport ? modes.filter((m) => m.mode === 'single') : modes;
   const mode = usable.find((m) => m.mode === form.mode) ?? usable[0];
   const from = posOf(props.battle, attacker);
@@ -423,9 +425,11 @@ export function AttackPanel(props: {
       {heavy && weapon && (
         <div className="stack">
           <p className="muted small">
-            {onSupport
-              ? 'Оружие на опоре: доступны очереди. Любое движение снимает опору (решение 41).'
-              : 'Тяжёлое оружие без опоры: только одиночный выстрел, −30 («Бой» A55).'}
+            {props.fromHands
+              ? 'Талант «Бугрящиеся бицепсы»: стреляет из тяжёлого оружия с рук без штрафов.'
+              : onSupport
+                ? 'Оружие на опоре: доступны очереди. Любое движение снимает опору (решение 41).'
+                : 'Тяжёлое оружие без опоры: только одиночный выстрел, −30 («Бой» A55).'}
           </p>
           {!onSupport && (
             <button type="button" onClick={() => props.onBrace(weapon.id)} disabled={!props.canAct}>

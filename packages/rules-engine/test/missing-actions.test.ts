@@ -233,3 +233,17 @@ describe('Weapon family fire-mode modifiers — «Лаз» A1, ruling 52', () =>
     expect(r.result.modeModifier).toBe(-10);
   });
 });
+
+test('talents survive clearing transient state at turn boundaries', async () => {
+  const { clearTransient } = await import('../src/action-state.js');
+  const runtime = {
+    actor: { actorId: 'A' },
+    characteristics: {},
+    movement: 4,
+    fatigue: 0,
+    posture: 'standing' as const,
+    effects: [],
+    talents: ['Спринт'],
+  };
+  expect(clearTransient(runtime as never, ['aim']).talents).toEqual(['Спринт']);
+});

@@ -69,3 +69,32 @@ test('Меткое adds +10 to an aimed single shot; Неточное removes th
   expect(aimedTarget([{ name: 'Меткое' }])).toBe(70);
   expect(aimedTarget([{ name: 'Неточное' }])).toBe(50);
 });
+
+test('«Бугрящиеся бицепсы»: a heavy weapon fires bursts from the hands without −30', () => {
+  const base = b1State(40);
+  const gun = base.weapons['gun:A']!;
+  const heavy = {
+    ...base,
+    weapons: {
+      ...base.weapons,
+      'gun:A': {
+        ...gun,
+        template: { ...gun.template, profile: { ...gun.template.profile, weaponClass: 'ТО' } },
+      },
+    },
+  };
+  const burst = attack('heavy', { mode: 'short-burst', shotsRequested: 3 });
+  expect(() => resolveRangedAttack(heavy, burst, d100(50))).toThrow(/Unbraced/);
+  const single = resolveRangedAttack(heavy, attack('one'), d100(50));
+  expect(single.result.check.modifiers.some((m) => m.id === 'ranged:unbraced-heavy')).toBe(true);
+  const strong = {
+    ...heavy,
+    actors: {
+      ...heavy.actors,
+      A: { ...heavy.actors.A!, talents: ['Бугрящиеся бицепсы'] },
+    },
+  };
+  const r = resolveRangedAttack(strong, burst, d100(50));
+  expect(r.result.shotsFired).toBe(3);
+  expect(r.result.check.modifiers.some((m) => m.id === 'ranged:unbraced-heavy')).toBe(false);
+});

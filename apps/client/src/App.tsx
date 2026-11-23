@@ -15,6 +15,7 @@ import {
   resumeAttack,
   braceWeapon,
   weaponBraced,
+  heavyFromHands,
   addCombatant,
   removeCombatant,
   setMovementOption,
@@ -946,6 +947,7 @@ export function App() {
                     attackedThisTurn={info.attacked}
                     battle={battle}
                     braced={(id) => weaponBraced(battle, id)}
+                    fromHands={heavyFromHands(battle, info.active)}
                     onBrace={(id) =>
                       run((b) =>
                         braceWeapon(b, { id: commandId('brace'), actor: info.active, weapon: id }),
