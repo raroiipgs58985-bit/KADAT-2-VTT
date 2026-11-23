@@ -120,3 +120,4 @@ export {
   type SkillCheckValue as SkillTestValue,
   type SkillLevel,
 } from './skills.js';
+export * from './weapon-properties.js';
