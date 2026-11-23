@@ -322,6 +322,7 @@ describe('Reactions of the target', () => {
     const sword = matchWeaponByName('Цепной меч')!;
     const duelist = {
       ...emptyCharacter('duelist', 'Дуэлянт'),
+      talents: ['Владение оружием (Цепное)'],
       weapons: [{ name: sword.name, ref: sword.id }],
     };
     const b = createBattle([
@@ -619,5 +620,36 @@ describe('Wounds down to 0 (ruling 83)', () => {
     attack(b, shot({ id: 'last' }), { roll: (sides: number) => (sides === 100 ? 45 : 5) });
     expect(b.hp.pak).toBe(0);
     expect(actorStatus(b, 'pak').life).toBe('AGONY');
+  });
+});
+
+describe('«Владение оружием» (ruling 84)', () => {
+  it('reads kinds from the talent and the Arsenal sheet; without it −30', async () => {
+    const { proficientKinds, weaponKindName } = await import('./proficiency');
+    const { matchWeaponByName } = await import('./arsenal');
+    expect([
+      ...proficientKinds(['Владение оружием (Стаб, Лаз, Примитив, Плазма, Болт, Цепное)']),
+    ]).toEqual(expect.arrayContaining(['стаб', 'лаз', 'примитив', 'плазма', 'болт', 'цепное']));
+    expect(weaponKindName(matchWeaponByName('Хот-шот лазган')!)).toBe('Лаз');
+    expect(weaponKindName(matchWeaponByName('Цепной меч')!)).toBe('Цепное');
+    const gun = matchWeaponByName('Хот-шот лазган')!;
+    const rookie = {
+      ...emptyCharacter('rookie', 'Новобранец'),
+      weapons: [{ name: gun.name, ref: gun.id }],
+    };
+    const b = createBattle([
+      { character: rookie, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'rookie' },
+      { character: characterFromProfile('pak'), side: 'b', at: { x: 15.5, y: 10.5 }, id: 'pak' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    const r = attack(
+      b,
+      shot({ id: 'p', actor: 'rookie', weapon: 'rookie:0' }),
+      fixedDice('100:95'),
+    );
+    const mods = (
+      r as { result: { attack: { check: { modifiers: { id: string; value: number }[] } } } }
+    ).result.attack.check.modifiers;
+    expect(mods.find((m) => m.id === 'p:no-proficiency')?.value).toBe(-30);
   });
 });

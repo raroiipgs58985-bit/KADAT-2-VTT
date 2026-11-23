@@ -94,6 +94,7 @@ import {
 } from './combatants';
 import { weaponById, weaponTraits } from './arsenal';
 import { canonicalTalents } from './talents';
+import { hasProficiency, PROFICIENCY_PENALTY, weaponKindName } from './proficiency';
 import { characterProblems, type CharacterDocument } from './character';
 import { rulings } from './rulings';
 import {
@@ -839,6 +840,37 @@ function resolve(
   }
   const kind = weaponKind(arsenalWeapon);
   const traits = impliedTraits(weaponTraits(arsenalWeapon).traits);
+  // Ruling 84: without «Владение оружием» of this kind −30 (the GM decides unclear kinds).
+  const weaponKindLabel = weaponKindName(arsenalWeapon);
+  const attackerTalents = combatant(b, command.actor).character.talents;
+  const proficient = weaponKindLabel
+    ? hasProficiency(attackerTalents, weaponKindLabel)
+    : ask(command, {
+        key: `proficiency:${command.weapon}`,
+        text: `${actorName(b, command.actor)}: владеет ли видом оружия «${selected.name}»? (решение 84: без владения −30)`,
+        options: [
+          { label: 'Владеет', value: 1 },
+          { label: 'Не владеет (−30)', value: 0 },
+        ],
+      }) === 1;
+  if (!proficient) {
+    const gm = { kind: 'author-ruling', id: 'Решение 84: нет «Владения оружием»' };
+    ctx = {
+      ...ctx,
+      modifiers: [
+        ...ctx.modifiers,
+        {
+          id: `${command.id}:no-proficiency`,
+          value: PROFICIENCY_PENALTY,
+          source: gm,
+          provenance: {
+            source: gm,
+            reason: `Нет «Владения оружием (${weaponKindLabel ?? selected.name})»`,
+          },
+        },
+      ],
+    };
+  }
   const info = {
     kind,
     traits,
