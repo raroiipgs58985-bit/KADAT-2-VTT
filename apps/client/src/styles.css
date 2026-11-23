@@ -1576,3 +1576,23 @@ textarea {
 .pending.question {
   border-color: var(--accent);
 }
+
+/* Character generator link and its outbox in the character library. */
+.button-link {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  text-decoration: none;
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+.generator-outbox {
+  display: grid;
+  gap: 6px;
+}
+.generator-outbox button {
+  display: grid;
+  text-align: left;
+}

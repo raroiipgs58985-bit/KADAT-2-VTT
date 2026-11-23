@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ARMOUR_ZONES,
   armourZoneName,
@@ -31,6 +31,12 @@ import {
   talentEntries,
   talentSummary,
 } from '../game/profiles-lists';
+import {
+  characterFromGenerator,
+  readGeneratorOutbox,
+  removeFromGeneratorOutbox,
+  type GeneratorCharacter,
+} from '../game/generator-import';
 
 type Notify = (text: string, tone: 'success' | 'warning' | 'error' | 'info') => void;
 const newId = () => `char-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -40,6 +46,26 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
   const [library, setLibrary] = useState<CharacterDocument[]>(() => loadLibrary());
   const [doc, setDoc] = useState<CharacterDocument>(() => library[0] ?? emptyCharacter(newId()));
   const problems = characterProblems(doc);
+  // Characters sent by the generator («В KADAT VTT»); re-read when the tab comes back.
+  const [outbox, setOutbox] = useState<GeneratorCharacter[]>(() => readGeneratorOutbox());
+  useEffect(() => {
+    const refresh = () => setOutbox(readGeneratorOutbox());
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, []);
+  const takeFromGenerator = (g: GeneratorCharacter) => {
+    setDoc(characterFromGenerator(g, newId()));
+    removeFromGeneratorOutbox(g.name);
+    setOutbox(readGeneratorOutbox());
+    props.notify(
+      `«${g.name}» взят из генератора. Проверьте оружие и броню (ОБ — «Взять ОБ из брони») и сохраните в библиотеку.`,
+      'info',
+    );
+  };
   const set = (patch: Partial<CharacterDocument>) => setDoc((d) => ({ ...d, ...patch }));
   const footprint = (() => {
     try {
@@ -121,6 +147,26 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
               }}
             />
           </label>
+          <a className="btn-ghost button-link" href="./generator/index.html">
+            Создать в генераторе…
+          </a>
+          {outbox.length > 0 && (
+            <div className="generator-outbox" aria-label="Из генератора">
+              <h3>Из генератора</h3>
+              {outbox.map((g) => (
+                <button
+                  key={`${g.name}-${g.exportedAt}`}
+                  type="button"
+                  onClick={() => takeFromGenerator(g)}
+                >
+                  <strong>{g.name}</strong>
+                  <span className="muted small">
+                    {g.race.name} · {g.specialty.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
           <details>
             <summary className="muted small">Из профиля таблицы</summary>
             <div className="stack" style={{ marginTop: 8 }}>

@@ -188,3 +188,47 @@ describe('Arsenal search on a phone', () => {
     ).toBe(true);
   });
 });
+
+describe('Character from the generator', () => {
+  const sample = {
+    format: 'kadat-generator-character' as const,
+    version: 1 as const,
+    exportedAt: '2026-11-23T12:00:00Z',
+    name: 'Гвардеец',
+    gender: null,
+    race: { id: 'human', name: 'Человек', traits: ['Размер (0)', 'СверхСЛ (+2)'] },
+    world: { id: 'w', name: 'Мир-кузница' },
+    specialty: { id: 's', name: 'Гвардеец' },
+    stats: { НС: 41, НР: 35, СЛ: 38, ВН: 36, ЛВ: 33, ИН: 30, СВ: 32, ВС: 34, ОЩ: 28 },
+    skills: [
+      { name: 'Уклонение', bonus: 10 },
+      { name: 'Атлетика', bonus: 0 },
+    ],
+    talents: ['Спринт'],
+    wounds: 14,
+    equipment: ['Лазган', 'Флак-форма', 'Фляга'],
+    traits: [],
+    rules: [],
+  };
+  it('turns the dossier into a combat sheet with Arsenal weapons and armour', async () => {
+    const { characterFromGenerator, isGeneratorCharacter } = await import('./generator-import');
+    expect(isGeneratorCharacter(sample)).toBe(true);
+    const c = characterFromGenerator(sample, 'gen-1');
+    expect(c.characteristics.СЛ).toEqual({ value: 38, super: 2 });
+    expect(c.characteristics.НС.value).toBe(41);
+    expect(c.wounds).toBe(14);
+    // «Общая механика» A25: СКР = бЛВ + Размер → 3 + 0.
+    expect(c.movement.options[0]!.skr).toBe(3);
+    expect(c.skills).toEqual(sample.skills);
+    expect(c.talents).toEqual(['Спринт']);
+    expect(c.weapons.map((w) => w.name)).toEqual(['Лазган']);
+    expect(c.armourItems.map((a) => a.name)).toEqual(['Флак-форма']);
+    expect(c.notes).toContain('Фляга');
+    expect(characterProblems(c)).toEqual([]);
+  });
+  it('СКР of 0 or less becomes 0,5 m', async () => {
+    const { characterFromGenerator } = await import('./generator-import');
+    const tiny = { ...sample, race: { ...sample.race, traits: ['Размер (-4)'] } };
+    expect(characterFromGenerator(tiny, 'gen-2').movement.options[0]!.skr).toBe(0.5);
+  });
+});

@@ -1173,6 +1173,45 @@ await page.getByRole('button', { name: 'Подробно' }).click();
   await page.locator('.dice select').selectOption('random');
 }
 
+// 7c. Character generator on the same address: «В KADAT VTT» → library «Из генератора».
+{
+  const base = new URL(url);
+  await page.goto(new URL('generator/index.html', base).href);
+  await page.waitForFunction(() => window.KadatVttExport && window.KadatCharacter);
+  check(!(await page.locator('text=Таро').count()), 'the generator opens without the tarot module');
+  check(
+    (await page.locator('#export-vtt').count()) === 1,
+    'the generator has the «В KADAT VTT» button',
+  );
+  await page.evaluate(() => {
+    const w = window;
+    const engine = w.KadatCharacter.createEngine(
+      w.KADAT_DATA,
+      w.KADAT_ADVANCEMENT,
+      w.KADAT_REGIMENT_CHARACTER_LINK_INTERNALS,
+      w.KADAT_REGIMENT_DATA,
+    );
+    const d = engine.createDraft();
+    d.name = 'Гвардеец из генератора';
+    d.mode = 'random';
+    d.rolls = Object.fromEntries(w.KADAT_DATA.stats.map((s) => [s, 11]));
+    for (const c of engine.origins(d).race.choices ?? [])
+      d.raceChoices[c.id] = c.options.slice(0, c.count ?? 1);
+    w.KadatExports.download('kadat-vtt', engine.build(d));
+  });
+  await page.goto(base.href);
+  await page.waitForSelector('svg.map');
+  await page.getByRole('button', { name: 'Персонажи' }).click();
+  const fromGen = page.locator('.generator-outbox button', { hasText: 'Гвардеец из генератора' });
+  check(await fromGen.isVisible(), 'the generated character waits in «Из генератора»');
+  await fromGen.click();
+  check(
+    (await page.getByLabel('Имя').inputValue()) === 'Гвардеец из генератора',
+    'taking it fills the character sheet',
+  );
+  await page.getByRole('button', { name: 'К сцене' }).click();
+}
+
 // 8. Phone layout renders without horizontal overflow.
 await page.setViewportSize({ width: 390, height: 844 });
 const overflow = await page.evaluate(

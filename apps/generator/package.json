@@ -1,0 +1,18 @@
+{
+  "name": "@kadat/generator",
+  "version": "2.1.0",
+  "private": true,
+  "description": "Генератор Кадата (персонаж, полк, ксенос, серво-броня), перенесён из Kadat-Character-Generator без модуля таро",
+  "scripts": {
+    "test": "node scripts/test.cjs",
+    "start": "node scripts/serve.cjs",
+    "format:check:own": "prettier --check src styles index.html scripts tests/*.cjs tests/visual.html docs README.md"
+  },
+  "engines": {
+    "node": ">=24.19.0 <25"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0",
+    "prettier": "3.6.2"
+  }
+}

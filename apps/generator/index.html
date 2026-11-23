@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101310" />
+    <meta
+      name="description"
+      content="Генератор Кадата: персонаж, полк, ксено-раса и серво-броня. Пошаговое создание, сохранение черновиков и Excel."
+    />
+    <title>Кадат — Генератор персонажей</title>
+    <link rel="icon" href="assets/administratum-skull.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles/app.css?v=2.1.0-20260917" />
+  </head>
+  <body data-registry-mode="character">
+    <a class="skip-link" href="#main-content">К содержимому</a>
+    <main class="page" id="main-content">
+      <div class="terminal-strip" aria-hidden="true">
+        <span>COGITATOR NODE / K–100</span><span>REGISTRUM KADAT · REV. 2.1</span>
+      </div>
+      <header class="hero">
+        <a class="brand" href="./" aria-label="Кадат — начало"
+          ><img src="assets/administratum-skull.svg" width="40" height="40" alt="" /><span
+            >КАДАТ<small>КОГИТАТОРНЫЙ КОМПЛЕКС</small></span
+          ></a
+        >
+        <div class="header-label">
+          <span class="live-dot" aria-hidden="true"></span>
+          <div>
+            <strong>РЕЕСТРЫ СЕКТОРА</strong><small>ADMINISTRATUM · MUNITORUM · MECHANICUS</small>
+          </div>
+        </div>
+        <div class="file-actions">
+          <button type="button" id="backup-export" class="secondary">Сохранить JSON</button
+          ><button type="button" id="backup-import" class="quiet">Открыть файл</button
+          ><input id="backup-file" type="file" accept=".json,application/json" hidden />
+        </div>
+      </header>
+      <div id="app-notice" class="app-notice hidden" role="status" aria-live="polite"></div>
+      <nav id="registry-mode-switch" class="registry-mode-switch" aria-label="Режим генератора">
+        <button type="button" class="is-active" data-registry-mode="character" aria-pressed="true">
+          <span>01 / PERSONA</span><strong>Персонаж</strong><small>Личность и развитие</small>
+        </button>
+        <button type="button" data-registry-mode="regiment" aria-pressed="false">
+          <span>02 / REGIMENTUM</span><strong>Полк</strong><small>Доктрины и снабжение</small>
+        </button>
+        <button type="button" data-registry-mode="xeno" aria-pressed="false">
+          <span>03 / XENOS</span><strong>Ксенос</strong><small>Раса или существо</small>
+        </button>
+        <button type="button" data-registry-mode="power-armor" aria-pressed="false">
+          <span>04 / ARMATURA</span><strong>Серво-броня</strong><small>Шасси и компоновка</small>
+        </button>
+      </nav>
+      <div class="workspace-heading">
+        <div>
+          <p class="eyebrow" id="registry-authority">ADEPTUS ADMINISTRATUM / PERSONNEL REGISTRY</p>
+          <h1 id="mode-caption">Создание персонажа</h1>
+          <p class="workspace-description" id="registry-description">
+            Личное дело · происхождение, назначение и развитие
+          </p>
+        </div>
+        <span id="save-status" class="save-status" role="status">Новый черновик</span>
+      </div>
+      <section id="builder-view" class="character-workspace">
+        <nav
+          id="wizard-progress"
+          class="wizard-progress"
+          aria-label="Этапы создания персонажа"
+        ></nav>
+        <div id="character-mobile-summary" class="mobile-record-strip"></div>
+        <div class="workspace-layout">
+          <form id="character-form" class="panel dossier-form" novalidate>
+            <div id="character-stage"></div>
+            <div
+              id="validation-message"
+              class="message error"
+              role="alert"
+              tabindex="-1"
+              hidden
+            ></div>
+            <div class="wizard-controls">
+              <div class="reset-actions">
+                <button type="button" id="reset-button" class="quiet">Сбросить</button
+                ><button type="button" id="undo-reset" class="quiet" hidden>Отменить сброс</button>
+              </div>
+              <button type="button" id="wizard-prev" class="secondary">Назад</button>
+              <div class="wizard-status">
+                <span id="wizard-step-status"></span><strong id="wizard-xp-status"></strong>
+              </div>
+              <button type="button" id="wizard-next">Далее →</button
+              ><button type="submit" id="wizard-submit" hidden>Сформировать досье</button>
+            </div>
+          </form>
+          <aside
+            id="live-summary"
+            class="live-summary"
+            aria-label="Текущий профиль персонажа"
+          ></aside>
+        </div>
+      </section>
+      <section id="result-view" class="result-view hidden">
+        <div class="result-toolbar">
+          <button type="button" id="return-to-builder" class="secondary">← К редактированию</button>
+          <h2 id="result-title" tabindex="-1">Итоговое досье</h2>
+          <button type="button" id="print-dossier" class="quiet">Печать</button
+          ><button type="button" id="export-xlsx">Скачать Excel</button
+          ><button type="button" id="export-vtt">В KADAT VTT</button>
+        </div>
+        <div id="result" class="panel character-card"></div>
+      </section>
+      <footer class="page-footer">
+        <a href="../" id="back-to-vtt">← В KADAT VTT</a>
+        <span>КАДАТ · СИСТЕМА К100 <small>REGISTRUM / 2.1</small></span
+        ><span>Черновики хранятся в этом браузере.<br />JSON сохраняет все четыре генератора.</span>
+      </footer>
+    </main>
+    <div
+      id="system-feedback"
+      class="system-feedback is-idle"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    ></div>
+    <noscript><p>Для работы генератора включите JavaScript.</p></noscript>
+    <!-- Deterministic, synchronous loading; no runtime decompression or remote dependencies. -->
+    <script src="src/services/store.js?v=2.1.0-20260917"></script>
+    <script src="src/services/schemas.js?v=2.1.0-20260917"></script>
+    <script src="src/services/storage.js?v=2.1.0-20260917"></script>
+    <script src="src/catalogs/character.js?v=2.1.0-20260917"></script>
+    <script src="src/catalogs/advancement.js?v=2.1.0-20260917"></script>
+    <script src="src/catalogs/regiments.js?v=2.1.0-20260917"></script>
+    <script src="src/catalogs/xeno.js?v=2.1.0-20260917"></script>
+    <script src="src/catalogs/power-armor.js?v=2.1.0-20260917"></script>
+    <script src="src/domain/regiment-origin.js?v=2.1.0-20260917"></script>
+    <script src="src/domain/regiment-budget.js?v=2.1.0-20260917"></script>
+    <script src="src/domain/xeno.js?v=2.1.0-20260917"></script>
+    <script src="src/domain/power-armor.js?v=2.1.0-20260917"></script>
+    <script src="src/domain/character.js?v=2.1.0-20260917"></script>
+    <script src="src/ui/shared.js?v=2.1.0-20260917"></script>
+    <script src="src/ui/modes.js?v=2.1.0-20260917"></script>
+    <script src="src/services/exports.js?v=2.1.0-20260917"></script>
+    <script src="src/services/xlsx.js?v=2.1.0-20260917"></script>
+    <script src="src/services/vtt-export.js?v=2.1.0-20260917"></script>
+    <script src="src/ui/character-views.js?v=2.1.0-20260917"></script>
+    <script src="src/features/character.js?v=2.1.0-20260917"></script>
+    <script src="src/features/regiment.js?v=2.1.0-20260917"></script>
+    <script src="src/features/xeno.js?v=2.1.0-20260917"></script>
+    <script src="src/features/power-armor.js?v=2.1.0-20260917"></script>
+    <script src="src/services/workspace.js?v=2.1.0-20260917"></script>
+  </body>
+</html>
