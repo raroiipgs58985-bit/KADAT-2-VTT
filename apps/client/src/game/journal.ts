@@ -207,6 +207,22 @@ export function describeEntry(
         summary: d.side === 'b' ? 'Сторона Б.' : 'Сторона А.',
         tone: 'info',
       };
+    case 'skr': {
+      const to = d.to as { label: string; skr: number } | undefined;
+      return {
+        ...base,
+        title: `СКР: ${name(d.actor)}`,
+        summary: to ? `Вариант «${to.label}» — ${to.skr} м (решение 3).` : '',
+        tone: 'info',
+      };
+    }
+    case 'roster-side':
+      return {
+        ...base,
+        title: `Сторона: ${name(d.actor)}`,
+        summary: d.side === 'b' ? 'Сторона Б.' : 'Сторона А.',
+        tone: 'info',
+      };
     case 'roster-remove':
       return { ...base, title: `Убран: ${name(d.actor)}`, summary: '', tone: 'info' };
     case 'combat-start':

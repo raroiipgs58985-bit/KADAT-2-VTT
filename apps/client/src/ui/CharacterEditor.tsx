@@ -25,6 +25,12 @@ import {
   weaponSummary,
 } from '../game/arsenal';
 import { saveTextFile } from './download';
+import {
+  skillCharacteristic,
+  skillNames,
+  talentEntries,
+  talentSummary,
+} from '../game/profiles-lists';
 
 type Notify = (text: string, tone: 'success' | 'warning' | 'error' | 'info') => void;
 const newId = () => `char-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -362,11 +368,21 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
           Бонус +0 — тест по характеристике; +10, +15 — бонус добавляется. Навыка нет — штраф
           выбирает ведущий в бою.
         </p>
+        <datalist id="profile-skills">
+          {skillNames.map((n) => (
+            <option key={n} value={n} />
+          ))}
+        </datalist>
         {doc.skills.map((s, i) => (
           <div key={i} className="row char-row">
             <label>
               Навык
+              {skillCharacteristic(s.name) && (
+                <span className="muted small"> ({skillCharacteristic(s.name)})</span>
+              )}
               <input
+                list="profile-skills"
+                placeholder="начните вводить: Уклонение, Атлетика…"
                 value={s.name}
                 onChange={(e) =>
                   set({
@@ -426,6 +442,19 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
             onBlur={() => set({ talents: doc.talents.map((t) => t.trim()).filter(Boolean) })}
           />
         </label>
+        <ArsenalSearch
+          label="Найти талант в «Профилях персонажей»"
+          placeholder="например: спринт, мастер, парное"
+          search={(q) => searchArsenal(talentEntries, q)}
+          describe={talentSummary}
+          onPick={(t) =>
+            set({
+              talents: [...doc.talents.map((x) => x.trim()).filter(Boolean), t.name].filter(
+                (x, i, all) => all.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === i,
+              ),
+            })
+          }
+        />
 
         <h3>Оружие (Арсенал)</h3>
         <ItemList
@@ -438,6 +467,7 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
         />
         <ArsenalSearch
           label="Найти оружие в Арсенале"
+          placeholder="например: лазган, болтер, цепной меч"
           search={(q) => searchArsenal(arsenal.weapons, q)}
           describe={weaponSummary}
           onPick={(w) => set({ weapons: [...doc.weapons, { name: w.name, ref: w.id }] })}
@@ -454,6 +484,7 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
         />
         <ArsenalSearch
           label="Найти броню в Арсенале"
+          placeholder="например: флак, панцирь, шлем"
           search={(q) => searchArsenal(arsenal.armour, q)}
           describe={armourSummary}
           onPick={(a) => set({ armourItems: [...doc.armourItems, { name: a.name, ref: a.id }] })}
@@ -547,6 +578,7 @@ function ArsenalSearch<
   T extends { id: string; name: string; sheet: string; group: string | null },
 >(props: {
   label: string;
+  placeholder?: string;
   search: (query: string) => T[];
   describe: (item: T) => string;
   onPick: (item: T) => void;
@@ -559,7 +591,7 @@ function ArsenalSearch<
         {props.label}
         <input
           value={query}
-          placeholder="например: лазган, флак, цепной"
+          placeholder={props.placeholder ?? 'например: лазган, флак, цепной'}
           onChange={(e) => setQuery(e.target.value)}
         />
       </label>

@@ -8,12 +8,14 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./dataset/arsenal.json": "./dataset/arsenal.json"
+    "./dataset/arsenal.json": "./dataset/arsenal.json",
+    "./dataset/profiles-lists.json": "./dataset/profiles-lists.json"
   },
   "scripts": {
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
     "build": "tsc -p tsconfig.json",
-    "build:arsenal": "tsx scripts/build-arsenal.ts"
+    "build:arsenal": "tsx scripts/build-arsenal.ts",
+    "build:profiles-lists": "tsx scripts/build-profiles-lists.ts"
   }
 }

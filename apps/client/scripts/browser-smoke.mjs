@@ -1087,6 +1087,16 @@ await page.getByRole('button', { name: 'Подробно' }).click();
     (await page.locator('.arsenal-items').first().textContent()).includes('Лазпистолет'),
     'a weapon picked from the Arsenal',
   );
+  await page.getByLabel('Найти талант в «Профилях персонажей»').fill('спринт');
+  await page.locator('.arsenal-results button', { hasText: 'Спринт' }).first().click();
+  check(
+    (await page.getByLabel('По одному на строке').inputValue()).includes('Спринт'),
+    'a talent picked from «Профили персонажей»',
+  );
+  check(
+    (await page.locator('#profile-skills option').count()) >= 25,
+    'skill names are suggested from «Профили персонажей»',
+  );
   await page.getByRole('button', { name: 'Сохранить в библиотеку' }).click();
   check((await page.locator('.char-items li').count()) >= 1, 'character stored in the library');
   const saved = page.waitForEvent('download');
