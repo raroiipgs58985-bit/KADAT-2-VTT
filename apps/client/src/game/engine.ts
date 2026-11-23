@@ -1,5 +1,6 @@
 import type {
   BleedingActivity,
+  CalledLocation,
   CombatActionState,
   CombatSession,
   DamageInput,
@@ -142,6 +143,11 @@ export interface AttackCommand {
   modifier?: number;
   /** Reaction of the target: none, Dodge (ЛВ, «Уклонение») or Parry (НР, «Парирование»). */
   defense: 'DECLINE' | 'DODGE' | 'PARRY';
+  /**
+   * «Избирательная атака» (2 ОД, «Бой» A52): a single shot or blow at the chosen location with
+   * its modifier (Глаза −50, Голова −20, Руки −20, Торс −10, Ноги −15, Сочленения −40).
+   */
+  calledLocation?: CalledLocation;
   /** GM answers to questions asked during this attack, by question key. */
   answers?: Record<string, number>;
 }
@@ -706,17 +712,18 @@ function resolve(
     // Ruling 78: a mode fires exactly the weapon's rate (short burst 3 — three shots).
     const rate = fireModes(arsenalWeapon).find((m) => m.mode === mode);
     if (!rate) throw new Error(`${selected.name}: нет режима «${mode}»`);
-    const shots = rate.maxShots;
+    const shots = command.calledLocation ? 1 : rate.maxShots;
     const resolved = resolveWoundAwareAction(state.wounds, 'НС', ctx, (combat, context) =>
       resolveRangedAttack(
         combat,
         {
           id: command.id,
-          type: 'ranged-attack',
+          type: command.calledLocation ? 'called-attack' : 'ranged-attack',
+          ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
           actor: ref(command.actor),
           target: ref(command.target),
           weaponId: command.weapon,
-          mode,
+          mode: command.calledLocation ? 'single' : mode,
           shotsRequested: shots,
           distance,
           dodgeable: true,
@@ -760,7 +767,8 @@ function resolve(
           type: 'melee-attack',
           actor: ref(command.actor),
           origin: 'NORMAL',
-          base: 'simple',
+          base: command.calledLocation ? 'called' : 'simple',
+          ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
           technique: 'normal',
           weaponId: command.weapon,
           targets: [
@@ -820,6 +828,7 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
           'weapon',
           'mode',
           'shots',
+          'calledLocation',
           'targetActivity',
           'modifier',
           'defense',

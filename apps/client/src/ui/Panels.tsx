@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { BleedingActivity } from '@kadat/contracts';
-import type { FireMode } from '@kadat/contracts';
+import type { CalledLocation, FireMode } from '@kadat/contracts';
 import {
   weaponSupport,
   attackLineProblem,
@@ -334,6 +334,8 @@ export interface AttackForm {
   weapon: WeaponId;
   mode: FireMode;
   shots: number;
+  /** «Избирательная атака» (2 ОД): chosen location, or none for an ordinary attack. */
+  called: CalledLocation | '';
   modifier: number;
   activity: BleedingActivity;
   /** Reaction of the target chosen by its player or the GM. */
@@ -488,6 +490,26 @@ export function AttackPanel(props: {
           </select>
         </label>
       </div>
+      <label>
+        Атака
+        <select
+          aria-label="Вид атаки"
+          value={form.called}
+          onChange={(e) => set({ called: e.target.value as AttackForm['called'] })}
+        >
+          <option value="">Обычная (1 ОД)</option>
+          <optgroup label="Избирательная атака (2 ОД, одиночный)">
+            <option value="Head">Голова −20</option>
+            <option value="Torso">Торс −10</option>
+            <option value="Right Arm">Правая рука −20</option>
+            <option value="Left Arm">Левая рука −20</option>
+            <option value="Right Leg">Правая нога −15</option>
+            <option value="Left Leg">Левая нога −15</option>
+            <option value="Eyes">Глаза −50</option>
+            <option value="Armor Joints">Сочленения −40</option>
+          </optgroup>
+        </select>
+      </label>
       <label>
         Реакция цели
         <select

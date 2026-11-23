@@ -459,3 +459,38 @@ describe('Turn actions', () => {
     expect(weaponState(replayed, 'kelus-drakar:0').jammed).toBe(false);
   });
 });
+
+describe('«Избирательная атака» (2 ОД, «Бой» A52)', () => {
+  it('a called shot hits the chosen location with its modifier', () => {
+    const b = started();
+    const r = attack(
+      b,
+      shot({ id: 'called', calledLocation: 'Head', mode: 'short-burst' }),
+      fixedDice('100:30,10:5,100:50'),
+    );
+    const res = (
+      r as {
+        result: {
+          attack: { shotsFired: number; check: { modifiers: { id: string; value: number }[] } };
+          hits: { location: string }[];
+        };
+      }
+    ).result;
+    expect(res.attack.shotsFired).toBe(1);
+    expect(res.attack.check.modifiers.find((m) => m.id === 'ranged:called')?.value).toBe(-20);
+    expect(res.hits[0]?.location).toBe('Head');
+    expect(turnInfo(b).od).toBe(0);
+  });
+  it('a called blow in melee', () => {
+    const b = started((x) => {
+      placeActor(x, 'pak', 6.5, 10.5);
+      takeWeapon(x, { id: 'sword', actor: 'kelus-drakar', weapon: 'kelus-drakar:1' });
+    });
+    const r = attack(b, shot({ id: 'leg', weapon: 'kelus-drakar:1', calledLocation: 'Left Leg' }), {
+      roll: (sides: number) => (sides === 100 ? 20 : 5),
+    });
+    expect(r.status).toBe('RESOLVED');
+    const res = (r as { result: { hits: { location: string }[] } }).result;
+    expect(res.hits[0]?.location).toBe('Left Leg');
+  });
+});

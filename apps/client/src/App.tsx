@@ -136,6 +136,7 @@ const defaultAttack = (b: Battle, attacker: ActorId): AttackForm => ({
   weapon: battleWeapons(b, attacker)[0]?.id ?? '',
   mode: 'single',
   shots: 1,
+  called: '',
   modifier: 0,
   activity: 'REST',
   defense: 'DECLINE',
@@ -1026,6 +1027,7 @@ export function App() {
                               );
                               return m ? { mode: m } : {};
                             })(),
+                            ...(form.called ? { calledLocation: form.called } : {}),
                             targetActivity: form.activity,
                             modifier: form.modifier,
                             defense:
