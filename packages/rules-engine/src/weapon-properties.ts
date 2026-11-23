@@ -1,4 +1,4 @@
-import type { DiceRoll, DiceSource } from '@kadat/contracts';
+import type { DiceRoll, DiceSource, WeaponTraitReference } from '@kadat/contracts';
 import { rollDie } from './dice.js';
 
 /**
@@ -7,10 +7,7 @@ import { rollDie } from './dice.js';
  * applies them. Names are the canonical names of the sheet; `value` is the rating «(Х)».
  * Only the properties whose text is unambiguous (or decided by the author) are implemented.
  */
-export interface WeaponTrait {
-  readonly name: string;
-  readonly value?: number;
-}
+export type WeaponTrait = WeaponTraitReference;
 
 /** Where each property is written: «Свойства оружия», row; or an author ruling. */
 export const PROPERTY_SOURCES: Readonly<Record<string, string>> = {
@@ -20,9 +17,10 @@ export const PROPERTY_SOURCES: Readonly<Record<string, string>> = {
   Гибкое: 'Свойства оружия, стр. 11',
   Громоздкое: 'Свойства оружия, стр. 14',
   Дисперсия: 'Свойства оружия, стр. 15',
-  Деструктор: 'Свойства оружия, стр. 16',
+  Деструктор: 'Свойства оружия, стр. 16; решение 71',
   Заряд: 'Свойства оружия, стр. 23',
-  Когти: 'Свойства оружия, стр. 30',
+  Когти: 'Свойства оружия, стр. 30; решение 72',
+  Контузия: 'Свойства оружия, стр. 28; решение 73',
   Лэнс: 'Свойства оружия, стр. 32; решение 68',
   'Мгновенная смерть': 'Свойства оружия, стр. 35',
   Мельта: 'Свойства оружия, стр. 36',
@@ -42,7 +40,7 @@ export const PROPERTY_SOURCES: Readonly<Record<string, string>> = {
   Сбалансированное: 'Свойства оружия, стр. 72',
   Сила: 'Свойства оружия, стр. 74',
   Шоковое: 'Свойства оружия, стр. 90',
-  Шторм: 'Свойства оружия, стр. 91',
+  Шторм: 'Свойства оружия, стр. 91; решения 66, 70',
   Точное: 'Свойства оружия, стр. 83; решение 67',
   Удобное: 'Свойства оружия, стр. 85',
   Проверенное: 'решение 54',
@@ -300,7 +298,8 @@ export function damageBonus(traits: readonly WeaponTrait[], input: DamageBonusIn
   if (hasTrait(traits, 'Когти') && input.kind === 'melee') {
     const odd = Math.ceil(d / 2);
     const primitive = hasTrait(traits, 'Примитивное') && !hasTrait(traits, 'Моно');
-    const bonus = primitive ? Math.min(4, odd) : odd * 2;
+    const counted = Math.min(4, odd);
+    const bonus = primitive ? counted : counted * 2;
     if (bonus) {
       flat += bonus;
       notes.push(`Когти: +${bonus}`);
@@ -448,9 +447,44 @@ export function afterHitTests(
 }
 
 /**
- * «Деструктор (Х)»: when the hit gets through the armour the target takes Х d10 more that
- * ignore armour. Whether «пробитие» means damage above armour is an author's question; the
- * caller passes the decision.
+ * «Деструктор (Х)»: when the damage is greater than the armour (ОБ after ББ, ruling 71 — even if
+ * бВН absorbs the rest) the target takes Х d10 more that ignore armour.
  */
-export const destroyerDice = (traits: readonly WeaponTrait[], penetrated: boolean) =>
-  penetrated ? (rating(traits, 'Деструктор') ?? 0) : 0;
+export function destroyerDice(
+  traits: readonly WeaponTrait[],
+  damage: number,
+  armourAfterPenetration: number,
+): number {
+  return damage > armourAfterPenetration ? (rating(traits, 'Деструктор') ?? 0) : 0;
+}
+
+/**
+ * «Контузия (Х)»: −10×Х to НС, НР, СВ, ИН and ВС tests for ½Х rounds, rounded up (ruling 73).
+ */
+export function concussion(traits: readonly WeaponTrait[]) {
+  const x = rating(traits, 'Контузия');
+  if (x === undefined) return null;
+  return {
+    modifier: -10 * x,
+    rounds: Math.ceil(x / 2),
+    tests: ['НС', 'НР', 'СВ', 'ИН', 'ВС'] as const,
+  };
+}
+
+/**
+ * Hits of a burst with «Шторм (Х)» (rulings 66, 70): every degree of success adds Х hits on top
+ * of the hits of the mode, never more than the declared rate of fire. A single shot is unchanged.
+ */
+export function stormHits(
+  traits: readonly WeaponTrait[],
+  input: {
+    readonly mode: 'single' | 'short-burst' | 'full-auto';
+    readonly baseHits: number;
+    readonly degrees: number;
+    readonly declaredShots: number;
+  },
+): number {
+  const x = rating(traits, 'Шторм', 2);
+  if (x === undefined || input.mode === 'single' || input.baseHits === 0) return input.baseHits;
+  return Math.min(input.declaredShots, input.baseHits + x * Math.max(0, input.degrees));
+}

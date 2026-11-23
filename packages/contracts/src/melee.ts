@@ -9,7 +9,11 @@ import type {
 } from './identity.js';
 import type { EffectDefinition, ResolutionContext } from './resolution.js';
 import type { CalledLocation, DodgeResult } from './ranged.js';
-import type { DamageProfileReference, PenetrationReference } from './weapons.js';
+import type {
+  DamageProfileReference,
+  PenetrationReference,
+  WeaponTraitReference,
+} from './weapons.js';
 
 export type MeleeBase = 'simple' | 'cautious' | 'reckless' | 'charge' | 'free' | 'called';
 export type MeleeTechnique = 'normal' | 'wide-sweep' | 'stun' | 'knockdown' | 'grapple' | 'lunge';
@@ -44,6 +48,8 @@ export interface MeleeWeaponTemplate {
   readonly profile: MeleeProfile;
   readonly effects: readonly EffectDefinition[];
   readonly provenance: Provenance;
+  /** Arsenal properties applied by the rules engine («Свойства оружия»). */
+  readonly traits?: readonly WeaponTraitReference[];
 }
 
 export interface MeleeWeaponInstance {

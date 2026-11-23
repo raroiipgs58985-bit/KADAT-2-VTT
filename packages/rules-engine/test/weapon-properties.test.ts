@@ -3,6 +3,9 @@ import {
   adjustDamageDice,
   afterHitTests,
   ammoForAttack,
+  concussion,
+  destroyerDice,
+  stormHits,
   armourAfterProperties,
   attackTestModifiers,
   createSequenceDice,
@@ -238,5 +241,40 @@ describe('Tests after a hit', () => {
     expect(afterHitTests([t('Шоковое')], 0)).toEqual([]);
     expect(afterHitTests([t('Шоковое')], 3)[0]?.modifier).toBe(-0);
     expect(afterHitTests([t('Шоковое', 2)], 3)[0]?.modifier).toBe(-20);
+  });
+});
+
+describe('Rulings 70–73', () => {
+  test('Шторм: +Х hits per degree over the mode hits, capped by the declared rate', () => {
+    const storm = [t('Шторм', 2)];
+    expect(
+      stormHits(storm, { mode: 'full-auto', baseHits: 3, degrees: 3, declaredShots: 10 }),
+    ).toBe(9);
+    expect(
+      stormHits(storm, { mode: 'full-auto', baseHits: 4, degrees: 4, declaredShots: 10 }),
+    ).toBe(10);
+    expect(
+      stormHits(storm, { mode: 'short-burst', baseHits: 2, degrees: 3, declaredShots: 5 }),
+    ).toBe(5);
+    expect(stormHits(storm, { mode: 'single', baseHits: 1, degrees: 3, declaredShots: 1 })).toBe(1);
+    expect(
+      stormHits(storm, { mode: 'full-auto', baseHits: 0, degrees: 0, declaredShots: 10 }),
+    ).toBe(0);
+    expect(
+      stormHits([t('Шторм')], { mode: 'full-auto', baseHits: 2, degrees: 2, declaredShots: 10 }),
+    ).toBe(6);
+  });
+  test('Деструктор: damage above armour, even if бВН absorbs the rest', () => {
+    expect(destroyerDice([t('Деструктор', 2)], 8, 7)).toBe(2);
+    expect(destroyerDice([t('Деструктор', 2)], 7, 7)).toBe(0);
+    expect(destroyerDice([], 20, 0)).toBe(0);
+  });
+  test('Когти: at most 4 odd degrees also for non-primitive claws (max +8)', () => {
+    expect(damageBonus([t('Когти')], { kind: 'melee', degrees: 9, strengthBonus: 3 }).flat).toBe(8);
+  });
+  test('Контузия (3): −30 for 2 rounds (½Х up)', () => {
+    expect(concussion([t('Контузия', 3)])).toMatchObject({ modifier: -30, rounds: 2 });
+    expect(concussion([t('Контузия', 1)])?.rounds).toBe(1);
+    expect(concussion([])).toBeNull();
   });
 });

@@ -52,11 +52,19 @@ export interface WeaponProfileContribution {
   readonly effects: readonly EffectDefinition[];
 }
 
+/** A weapon property of the Arsenal by its canonical name and rating «(Х)» (author ruling 50). */
+export interface WeaponTraitReference {
+  readonly name: string;
+  readonly value?: number;
+}
+
 export interface WeaponTemplate {
   readonly id: string;
   readonly canonical: CanonicalReference;
   readonly profile: RangedWeaponProfile;
   readonly properties: readonly WeaponPropertyReference[];
+  /** Arsenal properties applied by the rules engine («Свойства оружия»). */
+  readonly traits?: readonly WeaponTraitReference[];
   readonly effects: readonly EffectDefinition[];
   readonly provenance: Provenance;
 }

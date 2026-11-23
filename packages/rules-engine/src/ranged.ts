@@ -24,6 +24,13 @@ import { calledModifiers, resolveHitLocations, reverseAttackRoll } from './hit-l
 import { resolveRange } from './range.js';
 import { validateAmmunition } from './weapons.js';
 import { effectiveMovement } from './actions.js';
+import {
+  aimGivesBonus,
+  ammoForAttack,
+  attackTestModifiers,
+  isMalfunction,
+  stormHits,
+} from './weapon-properties.js';
 
 const isBasic = (weaponClass: string) => ['ОС', 'BASIC'].includes(weaponClass);
 const isHeavy = (weaponClass: string) => ['ТО', 'HEAVY'].includes(weaponClass);
@@ -116,6 +123,9 @@ export function prepareRangedAttack(
     request.mode,
     request.shotsRequested,
   );
+  const traits = weapon.template.traits ?? [];
+  const ammoNeeded = request.wideArc?.primaryId ? 0 : ammoForAttack(traits, request.shotsRequested);
+  if (ammoNeeded > container.currentRounds) throw new Error('Insufficient ammunition');
   const weaponClass = effective.profile.weaponClass;
   if (isHeavy(weaponClass) && !weapon.braced && request.mode !== 'single')
     throw new Error('Unbraced heavy weapon cannot fire bursts');
@@ -163,7 +173,14 @@ export function prepareRangedAttack(
         ]
       : []),
     ...(request.dualWield && !dualTalent ? [ruleModifier('ranged:two-weapons', -30)] : []),
-    ...(actor.aim ? [ruleModifier('ranged:aim', actor.aim.modifier)] : []),
+    ...(actor.aim && aimGivesBonus(traits) ? [ruleModifier('ranged:aim', actor.aim.modifier)] : []),
+    ...attackTestModifiers(traits, {
+      kind: 'ranged',
+      aimed: Boolean(actor.aim),
+      mode: request.mode,
+      distance: request.distance,
+      optimalRange: effective.profile.optimalRange,
+    }).map((m) => ruleModifier(`property:${m.property}`, m.value)),
     ...(called && request.calledLocation
       ? [ruleModifier('ranged:called', calledModifiers[request.calledLocation])]
       : []),
@@ -297,6 +314,8 @@ export function prepareRangedAttack(
     characteristic,
     dodgeRequest,
     movementDistance,
+    traits,
+    ammoNeeded,
   };
 }
 
@@ -316,8 +335,9 @@ export function resolveRangedAttack(
     },
     source,
   );
-  const malfunction = check.result.rawRoll >= 96;
-  const hitsGenerated =
+  // Default 96+; «Надежное» 100, «Ненадежное» 81+ (ruling 69).
+  const malfunction = isMalfunction(prepared.traits, check.result.rawRoll);
+  const baseHits =
     check.result.outcome !== 'success' || malfunction
       ? 0
       : request.mode === 'single'
@@ -325,6 +345,13 @@ export function resolveRangedAttack(
         : request.mode === 'short-burst'
           ? Math.min(hitCap(request), 1 + Math.floor(check.result.totalDegrees / 2))
           : Math.min(hitCap(request), check.result.totalDegrees);
+  // «Шторм (Х)»: +Х hits per degree, never above the declared rate (rulings 66, 70).
+  const hitsGenerated = stormHits(prepared.traits, {
+    mode: request.mode,
+    baseHits,
+    degrees: check.result.totalDegrees,
+    declaredShots: hitCap(request),
+  });
   const spent = spendResources(state, request, prepared.action, prepared.context, prepared.window);
   let next = spent.state;
   const logs = [prepared.characteristic.log, check.log];
@@ -370,7 +397,7 @@ export function resolveRangedAttack(
     context: prepared.context,
     provenance: prepared.effective.provenance,
   }));
-  const ammoSpent = request.wideArc?.primaryId ? 0 : request.shotsRequested;
+  const ammoSpent = prepared.ammoNeeded;
   const nextWeapon = {
     ...prepared.weapon,
     jammed: malfunction,

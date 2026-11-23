@@ -37,6 +37,7 @@ import {
 import { calledModifiers, firstHitLocation } from './hit-locations.js';
 import { resolveCheck } from './checks.js';
 import { rollDie } from './dice.js';
+import { isMalfunction } from './weapon-properties.js';
 import { resolutionLog, sessionLog } from './log.js';
 import { clearTransient, updateActor } from './action-state.js';
 import { opposedMeleeCheck } from './melee-opposed.js';
@@ -483,7 +484,9 @@ export function resolveMeleeAttack(
       intents,
     });
   }
-  if (raw.value >= 96)
+  // Dropped on 96+; «Надежное» only 100, «Ненадежное» 81+ (ruling 69).
+  const dropped = isMalfunction(prepared.weapon.template.traits ?? [], raw.value);
+  if (dropped)
     next = {
       ...next,
       melee: {
@@ -531,7 +534,7 @@ export function resolveMeleeAttack(
     origin: request.origin,
     base: request.base,
     stance: prepared.actor.stance,
-    dropped: raw.value >= 96,
+    dropped,
     request,
     targets: results,
   };
