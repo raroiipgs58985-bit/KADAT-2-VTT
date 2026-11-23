@@ -335,6 +335,28 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
           ))}
         </div>
 
+        <h3>Поддоспешник (ОБ при попадании в сочленения)</h3>
+        <div className="row">
+          {ARMOUR_ZONES.map((z) => (
+            <label key={z} style={{ flex: '1 1 90px' }}>
+              {armourZoneName[z]}
+              <input
+                type="number"
+                placeholder="нет"
+                value={doc.undersuit[z] ?? ''}
+                onChange={(e) =>
+                  set({
+                    undersuit: {
+                      ...doc.undersuit,
+                      [z]: e.target.value === '' ? null : Number(e.target.value),
+                    },
+                  })
+                }
+              />
+            </label>
+          ))}
+        </div>
+
         <h3>Навыки</h3>
         <p className="muted small">
           Бонус +0 — тест по характеристике; +10, +15 — бонус добавляется. Навыка нет — штраф
@@ -445,7 +467,18 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
                 className="btn-ghost"
                 disabled={!fill.armour}
                 title={fill.reason ?? 'ОБ по зонам из выбранной брони'}
-                onClick={() => fill.armour && set({ armour: fill.armour })}
+                onClick={() =>
+                  fill.armour &&
+                  set({
+                    armour: fill.armour,
+                    undersuit: fill.undersuit ?? {
+                      head: null,
+                      torso: null,
+                      arms: null,
+                      legs: null,
+                    },
+                  })
+                }
               >
                 Взять ОБ из брони
               </button>

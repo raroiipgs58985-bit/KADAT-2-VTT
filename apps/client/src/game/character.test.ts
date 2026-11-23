@@ -104,8 +104,9 @@ describe('Characters and the Arsenal (step 3)', () => {
   });
   it('a version 1 file opens and gets an empty armour list', () => {
     const v2 = JSON.parse(serializeCharacter(characterFromProfile('pak')));
-    const { armourItems: _drop, ...rest } = v2.character;
+    const { armourItems: _drop, undersuit: _u, ...rest } = v2.character;
     void _drop;
+    void _u;
     const v1 = { ...v2, schemaVersion: 1, character: { ...rest, schemaVersion: 1 } };
     const opened = parseCharacterFile(JSON.stringify(v1));
     expect(opened.schemaVersion).toBe(2);
@@ -127,8 +128,31 @@ describe('Characters and the Arsenal (step 3)', () => {
       arms: 2,
       legs: 2,
     });
+    // Two items on one zone are not worn (decision 63).
     const both = armourFromItems([{ ref: flak.id }, { ref: helmet.id }]);
     expect(both.armour).toBeNull();
-    expect(both.reason).toMatch(/ждёт решения автора/);
+    expect(both.reason).toMatch(/не надевают/);
+  });
+});
+
+describe('Armour layers (decisions 56, 63)', () => {
+  it('a plate on an undersuit: plates give ОБ, the undersuit counts for the joints', () => {
+    const plate = arsenal.armour.find((a) => a.properties.some((p) => p.name === 'Плита'))!;
+    const suit = arsenal.armour.find(
+      (a) => a.properties.some((p) => p.name === 'Поддоспешник') && a.armour!.torso !== null,
+    )!;
+    const r = armourFromItems([{ ref: suit.id }, { ref: plate.id }]);
+    expect(r.reason).toBeNull();
+    expect(r.armour!.torso).toBe(plate.armour!.torso ?? suit.armour!.torso);
+    if (plate.armour!.torso !== null) expect(r.undersuit!.torso).toBe(suit.armour!.torso);
+  });
+  it('power armour carries its own undersuit layer', () => {
+    const t = arsenal.armour.find((a) => a.name === 'Терминаторский доспех Индоминус')!;
+    expect(armourFromItems([{ ref: t.id }]).undersuit).toEqual({
+      head: 5,
+      torso: 6,
+      arms: 5,
+      legs: 5,
+    });
   });
 });

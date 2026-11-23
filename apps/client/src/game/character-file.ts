@@ -30,6 +30,7 @@ const KEYS = [
   'size',
   'movement',
   'armour',
+  'undersuit',
   'skills',
   'talents',
   'weapons',
@@ -78,16 +79,24 @@ export function parseCharacterFile(text: string): CharacterDocument {
   if (!isObject(raw)) throw new CharacterFileError('Нет описания персонажа');
   if (raw.schemaVersion !== root.schemaVersion)
     throw new CharacterFileError('Версия в персонаже не совпадает с версией файла');
-  // Version 1 had no armour items: upgrade with an empty list.
+  // Version 1 had no armour items; early version 2 files have no undersuit: fill defaults.
+  const noUndersuit = { head: null, torso: null, arms: null, legs: null };
   const c: Record<string, unknown> =
     root.schemaVersion === 1
       ? (exactKeys(
           raw,
-          KEYS.filter((k) => k !== 'armourItems'),
+          KEYS.filter((k) => k !== 'armourItems' && k !== 'undersuit'),
           'персонаже',
         ),
-        { ...raw, schemaVersion: CHARACTER_SCHEMA_VERSION, armourItems: [] })
-      : raw;
+        {
+          ...raw,
+          schemaVersion: CHARACTER_SCHEMA_VERSION,
+          armourItems: [],
+          undersuit: noUndersuit,
+        })
+      : 'undersuit' in raw
+        ? raw
+        : { ...raw, undersuit: noUndersuit };
   exactKeys(c, KEYS, 'персонаже');
   const doc = c as unknown as CharacterDocument;
   const problems = characterProblems(doc);

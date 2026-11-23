@@ -39,6 +39,8 @@ export interface CharacterDocument {
   };
   /** ОБ per zone as written in the profile («ОБ 9/9/8/8»). */
   readonly armour: Readonly<Record<ArmourZone, number>>;
+  /** ОБ of the undersuit by zone, used for hits to the joints («Поддоспешник»); null — none. */
+  readonly undersuit: Readonly<Record<ArmourZone, number | null>>;
   /** Skills with their bonus (ruling 49): +0, +10, +15 … */
   readonly skills: readonly { readonly name: string; readonly bonus: number }[];
   readonly talents: readonly string[];
@@ -79,6 +81,7 @@ export function emptyCharacter(id: string, name = 'Новый персонаж')
     size: 0,
     movement: { options: [{ label: 'Базовый', skr: 3 }], current: 0 },
     armour: { head: 0, torso: 0, arms: 0, legs: 0 },
+    undersuit: { head: null, torso: null, arms: null, legs: null },
     skills: [],
     talents: [],
     weapons: [],
@@ -123,8 +126,12 @@ export function characterProblems(c: CharacterDocument): string[] {
     m.current >= m.options.length
   )
     p.push('Движение: от 1 до 8 вариантов СКР (0,5–60), выбран один из них');
-  for (const z of ARMOUR_ZONES)
+  for (const z of ARMOUR_ZONES) {
     if (!inRange(c.armour?.[z], L.armour)) p.push(`ОБ (${armourZoneName[z]}): от 0 до 99`);
+    const u = c.undersuit?.[z];
+    if (u !== null && !inRange(u, L.armour))
+      p.push(`ОБ поддоспешника (${armourZoneName[z]}): пусто или от 0 до 99`);
+  }
   if (!Array.isArray(c.skills) || c.skills.length > L.maxListItems) p.push('Слишком много навыков');
   else {
     for (const s of c.skills)

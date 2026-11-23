@@ -68,29 +68,55 @@ export function armourSummary(a: ArsenalArmour): string {
     .join(' · ');
 }
 
+type Zones = { head: number; torso: number; arms: number; legs: number };
+const hasTrait = (a: ArsenalArmour, trait: string) =>
+  a.properties.some((p) => p.name.toLocaleLowerCase('ru-RU').replace(/ё/g, 'е') === trait);
 /**
- * ОБ by zone from the chosen armour items — only when no two items cover the same zone. How
- * layers covering one zone combine is an open author question: nothing is summed or picked.
+ * ОБ by zone from the chosen armour items. Two items are not worn on one zone (author, decision
+ * 63) — except «Плита» on a «Поддоспешник» («Броня», «Свойства брони»): the plates give the zone
+ * ОБ, the undersuit counts for hits to the joints. Anything else covering a zone twice is refused.
  */
 export function armourFromItems(items: readonly { ref: string | null }[]): {
-  armour: { head: number; torso: number; arms: number; legs: number } | null;
+  armour: Zones | null;
+  undersuit: {
+    head: number | null;
+    torso: number | null;
+    arms: number | null;
+    legs: number | null;
+  } | null;
   reason: string | null;
 } {
   const found = items.map((i) => (i.ref ? armourById(i.ref) : undefined));
-  if (!found.length) return { armour: null, reason: null };
+  if (!found.length) return { armour: null, undersuit: null, reason: null };
   if (found.some((a) => !a?.armour))
-    return { armour: null, reason: 'Есть предметы без ОБ из Арсенала' };
+    return { armour: null, undersuit: null, reason: 'Есть предметы без ОБ из Арсенала' };
   const zones = ['head', 'torso', 'arms', 'legs'] as const;
-  const out = { head: 0, torso: 0, arms: 0, legs: 0 };
+  const out: Zones = { head: 0, torso: 0, arms: 0, legs: 0 };
+  const under: {
+    head: number | null;
+    torso: number | null;
+    arms: number | null;
+    legs: number | null;
+  } = { head: null, torso: null, arms: null, legs: null };
   for (const z of zones) {
-    const covering = found.filter((a) => a!.armour![z] !== null);
-    if (covering.length > 1)
-      return {
-        armour: null,
-        reason:
-          'Несколько предметов закрывают одну зону: правило совмещения слоёв ждёт решения автора — впишите ОБ вручную',
-      };
-    out[z] = covering[0]?.armour![z] ?? 0;
+    const covering = found.filter((a) => a!.armour![z] !== null) as ArsenalArmour[];
+    if (covering.length > 2)
+      return { armour: null, undersuit: null, reason: 'На одну зону надето больше двух предметов' };
+    if (covering.length === 2) {
+      const suit = covering.find((a) => hasTrait(a, 'поддоспешник'));
+      const plate = covering.find((a) => a !== suit && hasTrait(a, 'плита'));
+      if (!suit || !plate)
+        return {
+          armour: null,
+          undersuit: null,
+          reason: `Два предмета на одну зону (${covering.map((a) => a.name).join(', ')}) не надевают; слоями носят только «Плиту» на «Поддоспешнике»`,
+        };
+      out[z] = plate.armour![z]!;
+      under[z] = suit.armour![z]!;
+    } else out[z] = covering[0]?.armour![z] ?? 0;
+    // A single item may carry its own undersuit layer (power armour, decision 56).
+    if (covering.length === 1 && covering[0]!.underlayer) under[z] = covering[0]!.underlayer[z];
   }
-  return { armour: out, reason: null };
+  const anyUnder = zones.some((z) => under[z] !== null);
+  return { armour: out, undersuit: anyUnder ? under : null, reason: null };
 }
