@@ -1050,7 +1050,7 @@ export function App() {
                         dropWeapon(b, { id: commandId('drop'), actor: info.active, weapon: id }),
                       )
                     }
-                    onAction={(type, weapon, characteristic) =>
+                    onAction={(type, weapon, characteristic, zone) =>
                       run((b) =>
                         turnAction(
                           b,
@@ -1060,6 +1060,7 @@ export function App() {
                             type,
                             ...(weapon ? { weapon } : {}),
                             ...(characteristic ? { characteristic } : {}),
+                            ...(zone ? { zone } : {}),
                           },
                           source(),
                         ),

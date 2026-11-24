@@ -535,6 +535,17 @@ export function radDice(traits: readonly WeaponTrait[], weaponClass: string): nu
   return null;
 }
 
+/**
+ * «Коррозийное (Х)» (rulings 115–117): on the hit and every turn the armour of the location loses
+ * Хк10 ОБ; at 0 ОБ the Хк10 go into the body as a separate wound (like «Деструктор»). null — no
+ * property; undefined rating — the GM gives Х.
+ */
+export function corrosiveDice(traits: readonly WeaponTrait[]): number | null | undefined {
+  const t = findTrait(traits, 'Коррозийное');
+  if (!t) return null;
+  return t.value;
+}
+
 export function destroyerDice(
   traits: readonly WeaponTrait[],
   damage: number,

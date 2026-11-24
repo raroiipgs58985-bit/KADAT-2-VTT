@@ -22,6 +22,7 @@ import {
   concussion,
   instantDeath,
   destroyerDice,
+  corrosiveDice,
   transferWeapon,
   resolveMeleeOpposedAction,
   twoHandedWeapon,
@@ -186,6 +187,16 @@ export interface EngineState {
   toxic?: Record<ActorId, { dice: number; superWounds: boolean; rounds: number | null }>;
   /** «Рад»: accumulated rad damage and whether ВН is halved till the end of the fight. */
   rad?: Record<ActorId, { total: number; halved: boolean }>;
+  /**
+   * «Коррозийное» on the armour of a zone (rulings 115–117): Хк10 a turn until cleaned or the
+   * armour is dropped; `hit` and `command` replay the separate wound when the ОБ is 0.
+   */
+  corrosion?: Record<
+    string,
+    { actor: ActorId; zone: Zone; dice: number; hit: DamageInput; command: AttackCommand }
+  >;
+  /** Zone ОБ before losses, recorded when corrosion starts (turn-start steps have no battle). */
+  zoneArmour?: Record<string, number>;
 }
 export interface AttackCommand {
   id: string;
@@ -411,6 +422,7 @@ function begin(state: EngineState, rng: DiceSource, logs: unknown[]) {
     processedEventIds: [...sup.state.processedEventIds],
   };
   burnAtTurnStart(state, id, rng, logs);
+  corrodeAtTurnStart(state, id, rng, logs);
   toxinAtTurnStart(state, id, rng, logs);
   state.turnOd = {
     turn: state.wounds.combat.session.turnsStarted,
@@ -419,7 +431,7 @@ function begin(state: EngineState, rng: DiceSource, logs: unknown[]) {
   };
 }
 
-type Zone = 'head' | 'torso' | 'arms' | 'legs';
+export type Zone = 'head' | 'torso' | 'arms' | 'legs';
 const zoneOf = (location: string): Zone | null =>
   location === 'Head'
     ? 'head'
@@ -680,7 +692,6 @@ const MANUAL_PROPERTIES = new Set([
   'Проникающее',
   'Взрыв',
   'Спрей',
-  'Коррозийное',
   'Частичное опутывание',
 ]);
 
@@ -1008,6 +1019,44 @@ function separateWound(
   postDamage(state, damage.result, command, rng, logs);
   setPhase('property');
   return { dice: roll.rolls.map((r) => r.value), finalDamage: damage.result.finalDamage ?? 0 };
+}
+
+/**
+ * One corrosion step (ruling 115–117): the zone armour loses Хк10 ОБ; when it is already 0 the
+ * Хк10 go into the body as a separate wound.
+ */
+function corrode(state: EngineState, key: string, rng: DiceSource, logs: unknown[]) {
+  const c = state.corrosion![key]!;
+  const armourKey = `${c.actor}:${c.zone}`;
+  const base = state.zoneArmour?.[armourKey] ?? 0;
+  const ob = Math.max(0, base - (state.armorLoss[armourKey] ?? 0));
+  if (ob > 0) {
+    const dice = Array.from({ length: c.dice }, () => rollDie(10, rng).value);
+    const loss = Math.min(
+      ob,
+      dice.reduce((a, v) => a + v, 0),
+    );
+    state.armorLoss[armourKey] = (state.armorLoss[armourKey] ?? 0) + loss;
+    logs.push({ type: 'corrosion', actor: c.actor, zone: c.zone, dice, armourLoss: loss });
+    return { armourLoss: loss, dice };
+  }
+  const wound = separateWound(
+    state,
+    c.command,
+    { ...c.hit, hitId: `${c.hit.hitId}:corrosion:${state.wounds.combat.session.turnsStarted}` },
+    c.hit.location,
+    'corrosion',
+    c.dice,
+    rng,
+    logs,
+  );
+  logs.push({ type: 'corrosion', actor: c.actor, zone: c.zone, wound });
+  return { wound };
+}
+function corrodeAtTurnStart(state: EngineState, id: ActorId, rng: DiceSource, logs: unknown[]) {
+  for (const key of Object.keys(state.corrosion ?? {}))
+    if (state.corrosion![key]!.actor === id && state.wounds.actors[id]?.life.status !== 'DEAD')
+      corrode(state, key, rng, logs);
 }
 
 /** Damage of one hit: dice, weapon properties, zone armour, endurance and wounds. */
@@ -1393,6 +1442,46 @@ function resolveHit(
         state: `рад-урон ${radCount}к10 (${dice.join('+')}) → −${wounds} ран${!pierced ? ', ВН /2 до конца боя' : ''}; накоплено ${old.total + raw}`,
       });
     } else effects.push({ property: 'Рад', passed: true, state: 'броня защищает от радиации' });
+  }
+  // «Коррозийное (Х)» (rulings 115–117): the zone armour corrodes now and every turn.
+  const corrosive = corrosiveDice(traits);
+  if (corrosive !== null && state.wounds.actors[command.target]?.life.status === 'ALIVE') {
+    if (!armour.zone)
+      effects.push({
+        property: 'Коррозийное',
+        passed: false,
+        state: 'попадание не в зону брони — ведущему вручную',
+      });
+    else {
+      const x =
+        corrosive ??
+        ask(command, {
+          key: `corrosive:${command.weapon}`,
+          text: `«Коррозийное» без Х в Арсенале (${weaponOf(b, command.weapon)?.name ?? command.weapon}): сколько к10 урона броне?`,
+          min: 1,
+          max: 10,
+        });
+      const key = `${command.target}:${armour.zone}`;
+      state.zoneArmour = { ...state.zoneArmour, [key]: armour.base };
+      state.corrosion = {
+        ...state.corrosion,
+        [key]: {
+          actor: command.target,
+          zone: armour.zone,
+          dice: Math.max(state.corrosion?.[key]?.dice ?? 0, x),
+          hit,
+          command: { ...command, answers: {} },
+        },
+      };
+      const step = corrode(state, key, rng, logs);
+      effects.push({
+        property: 'Коррозийное',
+        passed: false,
+        state: step.wound
+          ? `броня (${zoneName[armour.zone]}) разъедена: ${step.wound.finalDamage} ран`
+          : `броня (${zoneName[armour.zone]}) −${step.armourLoss} ОБ, разъедает каждый ход`,
+      });
+    }
   }
   // «Гравитонное» (rulings 96, 97): СЛ −30, a failure — falls, к10 per odd degree into a leg.
   if (
@@ -2672,7 +2761,14 @@ export function weaponSupport(b: Battle, id: WeaponId): WeaponSupport {
 }
 
 export type TurnActionType =
-  'quick-aim' | 'careful-aim' | 'wait' | 'reload' | 'clear-malfunction' | 'break-free';
+  | 'quick-aim'
+  | 'careful-aim'
+  | 'wait'
+  | 'reload'
+  | 'clear-malfunction'
+  | 'break-free'
+  | 'clean-armour'
+  | 'drop-armour';
 export interface TurnActionCommand {
   id: string;
   actor: ActorId;
@@ -2681,6 +2777,8 @@ export interface TurnActionCommand {
   weapon?: WeaponId;
   /** «Вырваться»: the characteristic of the test (СЛ or ЛВ, «Опутывающее»). */
   characteristic?: 'СЛ' | 'ЛВ';
+  /** «Очистить / сбросить броню»: the corroded zone. */
+  zone?: Zone;
 }
 const turnActionName: Record<TurnActionType, string> = {
   'quick-aim': 'Быстрое прицеливание',
@@ -2689,7 +2787,15 @@ const turnActionName: Record<TurnActionType, string> = {
   reload: 'Перезарядка',
   'clear-malfunction': 'Исправление осечки',
   'break-free': 'Вырваться из пут',
+  'clean-armour': 'Очистить броню',
+  'drop-armour': 'Сбросить броню',
 };
+/** Corroded armour zones of the actor (rulings 115–117). */
+export function corrodedZones(b: Battle, actorId: ActorId): Zone[] {
+  return Object.values(getEngine(b).corrosion ?? {})
+    .filter((c) => c.actor === actorId)
+    .map((c) => c.zone);
+}
 /** The entanglement («Опутывающее») holding the actor, if any. */
 export function entanglement(b: Battle, actorId: ActorId) {
   const c = getEngine(b).wounds.combat.session.conditions.find(
@@ -2759,6 +2865,16 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
         detail = { ...r.result };
       }
       detail.weaponName = weaponOf(b, command.weapon!)?.name ?? command.weapon;
+    } else if (command.type === 'clean-armour' || command.type === 'drop-armour') {
+      // Ruling 116: cleaning — 2 ОД, dropping the armour element — 1 ОД; corrosion stops.
+      const zone = command.zone;
+      const key = `${command.actor}:${zone}`;
+      if (!zone || !state.corrosion?.[key]) throw new Error('Эта броня не разъедается');
+      const cost = command.type === 'clean-armour' ? 2 : 1;
+      const turn = combat.session.turn!;
+      if (turn.od < cost) throw new Error(`Нужно ${cost} ОД (решение 116)`);
+      next = { ...combat, session: { ...combat.session, turn: { ...turn, od: turn.od - cost } } };
+      detail = { zone: zoneName[zone], cost };
     } else if (command.type === 'break-free') {
       // Ruling 86: 2 ОД (the whole turn), СЛ or ЛВ test with −10 × Х; success frees the actor.
       const held = entanglement(b, command.actor);
@@ -2806,6 +2922,15 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
     const after = structuredClone(state);
     after.wounds = { ...after.wounds, combat: next };
     after.committed.push(command.id);
+    if ((command.type === 'clean-armour' || command.type === 'drop-armour') && command.zone) {
+      const key = `${command.actor}:${command.zone}`;
+      const rest = { ...after.corrosion };
+      delete rest[key];
+      after.corrosion = rest;
+      // The dropped element no longer protects: the zone ОБ is 0 till the end of the fight.
+      if (command.type === 'drop-armour')
+        after.armorLoss[key] = combatant(b, command.actor).character.armour[command.zone];
+    }
     sync(b, after);
     append(b, 'turn-action', {
       command,

@@ -367,9 +367,11 @@ export function describeEntry(
               ? '+10 к следующему выстрелу.'
               : c.type === 'careful-aim'
                 ? '+20 к следующему выстрелу.'
-                : c.type === 'break-free'
-                  ? `Тест ${String(d.characteristic)}${d.modifier ? ` ${String(d.modifier)}` : ''}: ${d.freed ? 'вырвался, путы сброшены.' : 'не вырвался, всё ещё опутан.'} Потрачен весь ход (2 ОД).`
-                  : '';
+                : c.type === 'clean-armour' || c.type === 'drop-armour'
+                  ? `Броня (${String(d.zone)}): ${c.type === 'clean-armour' ? 'очищена' : 'сброшена, эта зона без защиты'} — коррозия остановлена (${String(d.cost)} ОД).`
+                  : c.type === 'break-free'
+                    ? `Тест ${String(d.characteristic)}${d.modifier ? ` ${String(d.modifier)}` : ''}: ${d.freed ? 'вырвался, путы сброшены.' : 'не вырвался, всё ещё опутан.'} Потрачен весь ход (2 ОД).`
+                    : '';
       return {
         ...base,
         title: `${name(c.actor)}: ${String(d.name)}`,

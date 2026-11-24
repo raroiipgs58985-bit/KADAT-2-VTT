@@ -31,6 +31,7 @@ import {
   entanglement,
   counterattacks,
   disarm,
+  corrodedZones,
   placeLoose,
   pendingLoose,
   takeDisarmed,
@@ -1171,6 +1172,62 @@ describe('More weapon properties in the fight', () => {
     expect((r3 as Hits).result.hits[0]!.effects.find((e) => e.property === 'Рад')?.state).toBe(
       'броня защищает от радиации',
     );
+  });
+  it('«Коррозийное»: the zone armour loses Хк10 at the hit and every turn; cleaning stops it (rulings 115–117)', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const w = matchWeaponByName('Электрокоррозийный хлыст')!;
+    const brute = {
+      ...emptyCharacter('brute', 'Боец'),
+      characteristics: { ...emptyCharacter('x').characteristics, НР: { value: 60, super: 0 } },
+      weapons: [{ name: w.name, ref: w.id }],
+    };
+    const b = createBattle([
+      { character: brute, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'brute' },
+      {
+        character: { ...soft(), armour: { head: 40, torso: 40, arms: 40, legs: 40 } },
+        side: 'b',
+        at: { x: 6.5, y: 10.5 },
+        id: 'pak',
+      },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    let n = 0;
+    const r = attack(
+      b,
+      shot({
+        id: 'acid',
+        actor: 'brute',
+        weapon: 'brute:0',
+        answers: { 'proficiency:brute:0': 1, 'corrosive:brute:0': 1 },
+      }),
+      { roll: (sides: number) => (sides === 100 ? (n++ === 0 ? 35 : 1) : 5) },
+    );
+    expect(r.status).toBe('RESOLVED');
+    expect(
+      (r as Hits).result.hits[0]!.effects.find((e) => e.property === 'Коррозийное')?.state,
+    ).toBe('броня (торс) −5 ОБ, разъедает каждый ход');
+    expect(corrodedZones(b, 'pak')).toEqual(['torso']);
+    nextTurn(b, { roll: (sides: number) => (sides === 100 ? 1 : 5) });
+    expect(actorStatus(b, 'pak').armorLoss['pak:torso']).toBe(10);
+    turnAction(b, { id: 'clean', actor: 'pak', type: 'clean-armour', zone: 'torso' });
+    expect(corrodedZones(b, 'pak')).toEqual([]);
+    expect(turnInfo(b).od).toBe(0);
+  });
+  it('«Коррозийное» on armour already at 0 ОБ: a separate wound like «Деструктор»', async () => {
+    const { b, r } = await melee('Электрокоррозийный хлыст', (n) => (n === 0 ? 35 : 1), soft());
+    // Х is not in the Arsenal: the GM is asked.
+    expect(r.status).toBe('CONTEXT_REQUIRED');
+    expect(turnInfo(b).pending?.question?.key).toBe('corrosive:brute:0');
+    const done = resumeAttack(
+      b,
+      { roll: (sides: number) => (sides === 100 ? 1 : 5) },
+      {
+        'corrosive:brute:0': 1,
+      },
+    );
+    expect(
+      (done as Hits).result.hits[0]!.effects.find((e) => e.property === 'Коррозийное')?.state,
+    ).toMatch(/^броня \(торс\) разъедена: \d+ ран$/);
   });
   it('«Вырваться»: 2 ОД, СЛ test with −10 × Х frees the entangled (ruling 86)', async () => {
     const { b } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft());

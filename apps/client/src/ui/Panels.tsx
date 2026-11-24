@@ -12,10 +12,12 @@ import {
   readyCost,
   reloadCost,
   entanglement,
+  corrodedZones,
   otherWeaponInHand,
   oneHandedWeapon,
   disarmOptions,
   type TurnActionType,
+  type Zone,
   type MoveMode,
   type MoveOption,
   type turnInfo as TurnInfoFn,
@@ -591,7 +593,12 @@ export function ActionsPanel(props: {
   actor: ActorId;
   canAct: boolean;
   od: number | null;
-  onAction: (type: TurnActionType, weapon?: WeaponId, characteristic?: 'СЛ' | 'ЛВ') => void;
+  onAction: (
+    type: TurnActionType,
+    weapon?: WeaponId,
+    characteristic?: 'СЛ' | 'ЛВ',
+    zone?: Zone,
+  ) => void;
   onTake: (weapon: WeaponId) => void;
   onDrop: (weapon: WeaponId) => void;
   onPickUp: (weapon: WeaponId) => void;
@@ -605,8 +612,31 @@ export function ActionsPanel(props: {
   const od = props.od ?? 0;
   const state = (id: WeaponId) => weaponState(props.battle, id);
   const held = entanglement(props.battle, props.actor);
+  const corroded = corrodedZones(props.battle, props.actor);
+  const zoneLabel = { head: 'голова', torso: 'торс', arms: 'руки', legs: 'ноги' } as const;
   return (
     <div className="stack">
+      {corroded.map((z) => (
+        <div key={z} className="weapon-note badge-blocked">
+          <p>Броня ({zoneLabel[z]}) разъедается «Коррозийным» каждый ход.</p>
+          <div className="row">
+            <button
+              type="button"
+              disabled={!props.canAct || od < 2}
+              onClick={() => props.onAction('clean-armour', undefined, undefined, z)}
+            >
+              Очистить (2 ОД)
+            </button>
+            <button
+              type="button"
+              disabled={!props.canAct || od < 1}
+              onClick={() => props.onAction('drop-armour', undefined, undefined, z)}
+            >
+              Сбросить броню (1 ОД)
+            </button>
+          </div>
+        </div>
+      ))}
       {held && (
         <div className="weapon-note badge-blocked">
           <p>
