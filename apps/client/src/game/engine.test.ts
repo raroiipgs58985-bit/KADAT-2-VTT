@@ -834,6 +834,14 @@ describe('More weapon properties in the fight', () => {
     expect(vn()).toBe(Math.max(0, start - 10));
     expect(actorStatus(b, 'pak').conditions).toContain('Poisoned');
   });
+  it('«Токсичное»: sealed or void armour stops the toxin (ruling 98)', async () => {
+    const { r } = await melee('Клинок Гекатарии', (n) => (n === 0 ? 35 : 1), {
+      ...soft(),
+      armourItems: [{ name: 'Флак шлем (закрытый)', ref: 'Броня:Флак шлем (закрытый)' }],
+    });
+    expect(r.status).toBe('RESOLVED');
+    expect((r as Hits).result.hits[0]!.effects.map((e) => e.property)).not.toContain('Токсичное');
+  });
   it('«Вырваться»: 2 ОД, СЛ test with −10 × Х frees the entangled (ruling 86)', async () => {
     const { b } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft());
     // Entangle the target directly as «Опутывающее (1)» would.

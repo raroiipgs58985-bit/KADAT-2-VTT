@@ -505,7 +505,7 @@ export function meltingLoss(
 }
 
 /**
- * «Токсичное (Х/Y)» (rulings 95, 98): every turn the target's ВН drops by Хк10 for Y turns
+ * «Токсичное (Х/Y)» (rulings 95, 98; sealed or void armour stops it): every turn the target's ВН drops by Хк10 for Y turns
  * (no Y — till the end of the fight); with СверхВН a ВН test −5×Х, a failure — 1к10 wounds a
  * turn ignoring ОБ and бВН.
  */

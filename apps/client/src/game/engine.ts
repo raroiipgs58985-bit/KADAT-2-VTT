@@ -1246,12 +1246,12 @@ function resolveHit(
       rounds: fire.rounds,
     });
   }
-  // «Токсичное» (rulings 95, 98): sealed or void armour lets the toxin in only with damage.
+  // «Токсичное» (rulings 95, 98): sealed or void armour stops the toxin; otherwise any hit.
   const toxic = toxicProperty(traits);
   if (
     toxic &&
     state.wounds.actors[command.target]?.life.status === 'ALIVE' &&
-    ((damage.result.finalDamage ?? 0) > 0 || !sealedArmour(target.armourItems))
+    !sealedArmour(target.armourItems)
   ) {
     let superWounds = false;
     let passed = false;

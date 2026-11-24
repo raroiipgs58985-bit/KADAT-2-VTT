@@ -165,7 +165,7 @@ export interface WeaponTrait {
 }
 /** Properties rated by a word: «Плавящее (ББ)», «Плавящее (У)». */
 const WORD_RATED: Record<string, readonly string[]> = { Плавящее: ['ББ', 'У'] };
-/** Toxins do not get through sealed or void armour without damage (ruling 98). */
+/** Sealed or void armour stops toxins completely (ruling 98). */
 export function sealedArmour(items: readonly { ref: string | null }[]): boolean {
   return items.some((i) =>
     (i.ref ? armourById(i.ref) : undefined)?.properties.some((p) =>
