@@ -32,6 +32,7 @@ import {
   counterattacks,
   disarm,
   chargeDestination,
+  trailsAt,
   coverFor,
   attackLineProblem,
   applyMap,
@@ -981,6 +982,47 @@ describe('«Спрей» (rulings 144–145)', () => {
     expect(spray.targets.map((t) => t.actor).sort()).toEqual(['a', 'b']);
     expect(spray.targets.find((t) => t.actor === 'b')?.avoided).toBe(true);
     expect(spray.targets.find((t) => t.actor === 'a')?.avoided).toBe(false);
+  });
+  it('«След»: the cone keeps burning — half damage at the turn start from the next round (ruling 149)', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const flamer = matchWeaponByName('Огнемёт')!;
+    const b = createBattle([
+      {
+        character: {
+          ...emptyCharacter('f', 'Огнемётчик'),
+          talents: ['Владение оружием (Огнемёт)'],
+          weapons: [{ name: flamer.name, ref: flamer.id }],
+        },
+        side: 'a',
+        at: { x: 3.5, y: 10.5 },
+        id: 'f',
+      },
+      {
+        character: { ...emptyCharacter('a', 'a'), wounds: 200 },
+        side: 'b',
+        at: { x: 7.5, y: 10.5 },
+        id: 'a',
+      },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    attack(
+      b,
+      shot({
+        id: 'sp',
+        actor: 'f',
+        target: 'a',
+        weapon: 'f:0',
+        answers: { 'proficiency:f:0': 1, 'spray:a': 0, 'burning-ob:a': 0 },
+      }),
+      { roll: (sides: number) => (sides === 100 ? 1 : 5) },
+    );
+    expect(trailsAt(b, 'a')).toEqual([]); // works from the next round
+    const dice = { roll: (sides: number) => (sides === 100 ? 99 : 5) };
+    nextTurn(b, dice); // a, round 1 — no trail damage yet
+    const before = b.hp.a!;
+    nextTurn(b, dice); // f, round 2
+    nextTurn(b, dice); // a, round 2 — in the burning cone
+    expect(b.hp.a!).toBeLessThan(before);
   });
 });
 

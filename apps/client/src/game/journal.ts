@@ -173,6 +173,12 @@ export function describeEntry(
       const fire = burn
         ? ` ${name(burn.actor)} горит: 2к10 (${burn.dice.join('+')}) − ½ ОБ ${burn.halfOb} − бВН → −${burn.wounds} ран, +${burn.fatigue} усталости.${burn.turnLost ? ' Паника: ход потерян.' : ''}${burn.roundsLeft ? ` Гореть ещё ${burn.roundsLeft} р.` : ' Огонь погас.'}`
         : '';
+      const trails = ((d.coreLogs as { type?: string }[] | undefined) ?? []).filter(
+        (l) => l.type === 'trail',
+      ) as { actor: string; finalDamage: number }[];
+      const trailText = trails.length
+        ? ` След: ${trails.map((t) => `${name(t.actor)} — ${t.finalDamage} ран`).join('; ')}.`
+        : '';
       const tox = ((d.coreLogs as { type?: string }[] | undefined) ?? []).find(
         (l) => l.type === 'toxin',
       ) as
@@ -190,7 +196,7 @@ export function describeEntry(
       return {
         ...base,
         title: 'Ход передан',
-        summary: `Теперь ходит ${name(d.active)}.${fire}${poison}`,
+        summary: `Теперь ходит ${name(d.active)}.${fire}${poison}${trailText}`,
         tone: burn || tox ? 'warning' : 'info',
       };
     }

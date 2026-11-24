@@ -207,6 +207,8 @@ export interface EngineState {
     string,
     { actor: ActorId; zone: Zone; dice: number; hit: DamageInput; command: AttackCommand }
   >;
+  /** «След» zones (ruling 149): half damage to those inside at their turn start or entering. */
+  trails?: Trail[];
   /** ОБ lost by cover (ruling 142): obstacle or wall id → loss. */
   coverLoss?: Record<string, number>;
   /** Zone ОБ before losses, recorded when corrosion starts (turn-start steps have no battle). */
@@ -424,7 +426,7 @@ function sync(b: Battle, state: EngineState) {
   }
   engines.set(b, state);
 }
-function begin(state: EngineState, rng: DiceSource, logs: unknown[]) {
+function begin(state: EngineState, rng: DiceSource, logs: unknown[], b?: Battle) {
   if (state.wounds.combat.session.phase === 'turn-active') return;
   const started = beginActionTurn(state.wounds.combat);
   logs.push(...started.logs);
@@ -464,6 +466,7 @@ function begin(state: EngineState, rng: DiceSource, logs: unknown[]) {
     processedEventIds: [...sup.state.processedEventIds],
   };
   burnAtTurnStart(state, id, rng, logs);
+  if (b) trailDamage(b, state, id, rng, logs);
   corrodeAtTurnStart(state, id, rng, logs);
   toxinAtTurnStart(state, id, rng, logs);
   state.turnOd = {
@@ -1135,7 +1138,13 @@ function resolveHit(
   /** One damage roll shared by several targets («Спрей», «Взрыв»). */
   preRoll?: ReturnType<typeof resolveDamageRoll>['result'],
   /** «Взрыв»: ОБ of the undersuit, halvings of damage and ББ beyond Х, extra traits. */
-  area?: { ob: number; halvings: number; extraTraits: WeaponTraitReference[] },
+  area?: {
+    ob?: number;
+    halvings: number;
+    extraTraits: WeaponTraitReference[];
+    /** «След»: only the damage halves, ББ stays (ruling 149). */
+    keepPenetration?: boolean;
+  },
 ) {
   const attacker = combatant(b, command.actor).character;
   const target = combatant(b, command.target).character;
@@ -1157,9 +1166,10 @@ function resolveHit(
         ...area.extraTraits,
       ]
     : baseTraits;
-  const armour = area
-    ? { key: `${command.target}:blast`, ob: area.ob, base: area.ob, loss: 0, zone: null }
-    : zoneArmour(b, state, command, hit.location);
+  const armour =
+    area?.ob !== undefined
+      ? { key: `${command.target}:blast`, ob: area.ob, base: area.ob, loss: 0, zone: null }
+      : zoneArmour(b, state, command, hit.location);
   setPhase('damage');
   const roll = preRoll ?? resolveDamageRoll(hit.profile.expression, rng, hit.context).result;
   // «Знаток Цепного оружия»: one more к10 for the damage, the lowest die is dropped (ruling 126).
@@ -1248,8 +1258,12 @@ function resolveHit(
   // «Взрыв» (ruling 143): every metre beyond Х halves damage and ББ (down).
   if (area?.halvings) {
     total = Math.floor(total / 2 ** area.halvings);
-    penetration = Math.floor(penetration / 2 ** area.halvings);
-    notes.push(`Взрыв: ${area.halvings} м за радиусом — урон и ББ /${2 ** area.halvings}`);
+    if (!area.keepPenetration) penetration = Math.floor(penetration / 2 ** area.halvings);
+    notes.push(
+      area.keepPenetration
+        ? 'След: урон /2'
+        : `Взрыв: ${area.halvings} м за радиусом — урон и ББ /${2 ** area.halvings}`,
+    );
   }
   for (const t of talentBonus.penetration) notes.push(`${t.talent}: ББ +${t.value}`);
   // «Цепное»: the armour element loses ОБ equal to ББ at once (rulings 5, 16).
@@ -2294,6 +2308,124 @@ function segmentHitsRect(
   }
   return true;
 }
+export interface Trail {
+  id: string;
+  shooter: ActorId;
+  weapon: WeaponId;
+  info: Parameters<typeof resolveHit>[4];
+  shape:
+    | { kind: 'circle'; x: number; y: number; r: number }
+    | { kind: 'sector'; x: number; y: number; heading: number; range: number };
+  fromRound: number;
+  untilRound: number;
+}
+/** Rounds a «След» lasts: Хк5 / Хк10 (+N) or a fixed Х (ruling 149); 0 — no trail. */
+function trailRounds(traits: readonly WeaponTraitReference[], rng: DiceSource) {
+  const t = traits.find((x) => x.name === 'След');
+  if (!t) return 0;
+  if (!t.dice) return t.value ?? 0;
+  let n = t.value ?? 0;
+  for (let i = 0; i < t.dice.count; i++) n += rollDie(t.dice.sides, rng).value;
+  return n;
+}
+function addTrail(
+  state: EngineState,
+  command: AttackCommand,
+  info: Parameters<typeof resolveHit>[4],
+  shape: Trail['shape'],
+  rng: DiceSource,
+) {
+  const rounds = trailRounds(info.traits, rng);
+  if (rounds <= 0) return null;
+  const round = state.wounds.combat.session.roundNumber;
+  const trail: Trail = {
+    id: `${command.id}:trail:${(state.trails ?? []).length}`,
+    shooter: command.actor,
+    weapon: command.weapon,
+    info,
+    shape,
+    // The attack itself is the first turn's damage; the zone works from the next round.
+    fromRound: round + 1,
+    untilRound: round + rounds,
+  };
+  state.trails = [...(state.trails ?? []), trail];
+  return { rounds };
+}
+const insideTrail = (t: Trail, p: { x: number; y: number }) => {
+  const d = Math.hypot(p.x - t.shape.x, p.y - t.shape.y);
+  if (t.shape.kind === 'circle') return d <= t.shape.r + 1e-9;
+  // The shooter at the apex of the cone is not in it.
+  if (d > t.shape.range + 1e-9 || d === 0) return false;
+  let diff = Math.abs(Math.atan2(p.y - t.shape.y, p.x - t.shape.x) - t.shape.heading);
+  if (diff > Math.PI) diff = 2 * Math.PI - diff;
+  return diff <= Math.PI / 8 + 1e-9;
+};
+/** «След» zones still burning, for the map. */
+export function activeTrails(b: Battle) {
+  const state = getEngine(b);
+  const round = state.wounds.combat.session.roundNumber;
+  return (state.trails ?? [])
+    .filter((t) => round <= t.untilRound)
+    .map((t) => ({ id: t.id, shape: t.shape, untilRound: t.untilRound }));
+}
+/** Active «След» zones containing the actor now. */
+export function trailsAt(b: Battle, id: ActorId, state = getEngine(b)) {
+  const round = state.wounds.combat.session.roundNumber;
+  const p = posOf(b, id);
+  return (state.trails ?? []).filter(
+    (t) => round >= t.fromRound && round <= t.untilRound && insideTrail(t, p),
+  );
+}
+/** «След»: half the profile damage, torso, through armour (ruling 149). */
+function trailDamage(
+  b: Battle,
+  state: EngineState,
+  id: ActorId,
+  rng: DiceSource,
+  logs: unknown[],
+  only: (t: Trail) => boolean = () => true,
+) {
+  for (const t of trailsAt(b, id, state).filter(only)) {
+    if (state.wounds.actors[id]?.life.status === 'DEAD') return;
+    const weapon = state.wounds.combat.weapons[t.weapon];
+    if (!weapon) continue;
+    const template = weapon.template.profile;
+    const command: AttackCommand = {
+      id: `${t.id}:${state.wounds.combat.session.turnsStarted}:${id}`,
+      actor: t.shooter,
+      target: id,
+      weapon: t.weapon,
+      targetActivity: 'REST',
+    };
+    setPhase('damage');
+    const roll = resolveDamageRoll(
+      template.damage.expression,
+      rng,
+      context(state.wounds.combat, t.shooter),
+    ).result;
+    const src = { kind: 'weapon-property', id: 'Свойства оружия: След' };
+    const hit: DamageInput = {
+      hitId: command.id,
+      attackId: t.id,
+      attacker: ref(t.shooter),
+      target: ref(id),
+      location: 'Torso',
+      profile: template.damage,
+      penetration: template.penetration,
+      transformations: [],
+      tags: ['trail'],
+      context: context(state.wounds.combat, t.shooter, id),
+      provenance: [{ source: src, reason: 'Зона следа' }],
+    };
+    // Profile damage only: the weapon's other properties act on the hit itself (ruling 149).
+    const r = resolveHit(b, state, command, hit, { ...t.info, traits: [] }, rng, logs, roll, {
+      halvings: 1,
+      extraTraits: [],
+      keepPenetration: true,
+    });
+    logs.push({ type: 'trail', actor: id, trail: t.id, finalDamage: r.finalDamage });
+  }
+}
 /** Scatter scheme (ruling 144): d10 → direction in units of forward / left. */
 const SCATTER: Record<number, [number, number]> = {
   1: [1, 1],
@@ -2411,7 +2543,20 @@ function resolveBlasts(
         ),
       });
     }
-    out.push({ at, scatter: at.scatter ?? null, dice: roll.rolls.map((r) => r.value), targets });
+    const trail = addTrail(
+      state,
+      command,
+      info,
+      { kind: 'circle', x: at.x, y: at.y, r: blast.radius },
+      rng,
+    );
+    out.push({
+      at,
+      scatter: at.scatter ?? null,
+      dice: roll.rolls.map((r) => r.value),
+      targets,
+      ...(trail ? { trail } : {}),
+    });
   }
   return out;
 }
@@ -2570,7 +2715,15 @@ function sprayResolve(
       ),
     });
   }
-  return { dice: roll.rolls.map((r) => r.value), targets };
+  // «След» (ruling 149): the cone keeps burning for its rounds.
+  const trail = addTrail(
+    state,
+    command,
+    info,
+    { kind: 'sector', x: from.x, y: from.y, heading, range },
+    rng,
+  );
+  return { dice: roll.rolls.map((r) => r.value), targets, ...(trail ? { trail } : {}) };
 }
 /** Called-attack penalties («Бой» A52), to cap the talents that reduce them. */
 const CALLED_PENALTY: Record<CalledLocation, number> = {
@@ -2615,7 +2768,7 @@ function resolve(
   if (state.wounds.combat.session.phase === 'ready')
     throw new Error('Бой ещё не начат: нажмите «Начать бой»');
   setPhase('turn');
-  begin(state, rng, logs);
+  begin(state, rng, logs, b);
   setPhase('attack');
   if (command.counter) {
     const opportunity = state.wounds.combat.melee?.counterattacks.find(
@@ -3604,7 +3757,7 @@ export function nextTurn(b: Battle, source: DiceSource) {
     logs: unknown[] = [];
   delete state.pendingTurn;
   try {
-    begin(state, tape, logs);
+    begin(state, tape, logs, b);
     const finished = finishActionTurn(state.wounds.combat);
     state.wounds = { ...state.wounds, combat: finished.state };
     logs.push(...finished.logs);
@@ -3616,7 +3769,7 @@ export function nextTurn(b: Battle, source: DiceSource) {
       state.wounds = { ...state.wounds, combat: started.state };
       logs.push(...started.logs);
     }
-    begin(state, tape, logs);
+    begin(state, tape, logs, b);
     sync(b, state);
     append(b, 'next-turn', { coreLogs: logs, rolls: used, active: b.active });
     return { status: 'RESOLVED' as const };
@@ -3978,8 +4131,14 @@ export function moveActor(b: Battle, command: MoveCommand, source: DiceSource = 
     });
     if (fell) next.pendingFall = { actor: command.actor, commandId: command.id, zone: fell.id };
     else b.positions[command.actor] = { x, y };
+    // «След» (ruling 149): entering a burning zone hurts at once.
+    const trailLogs: unknown[] = [];
+    if (!fell) trailDamage(b, next, command.actor, tape, trailLogs, (t) => !insideTrail(t, from));
     sync(b, next);
     append(b, 'move', {
+      ...(trailLogs.length
+        ? { trail: trailLogs.filter((l) => (l as { type?: string }).type === 'trail') }
+        : {}),
       command,
       from,
       to: fell ? null : { x, y },
@@ -4073,7 +4232,7 @@ export function startCombat(b: Battle, source: DiceSource) {
       state.wounds = { ...state.wounds, combat: { ...state.wounds.combat, session } };
       logs.push({ type: 'initiative', order: session.initiativeOrder });
     }
-    begin(state, tape, logs);
+    begin(state, tape, logs, b);
     sync(b, state);
     append(b, 'combat-start', { coreLogs: logs, rolls: used, active: b.active });
     return { status: 'RESOLVED' as const };

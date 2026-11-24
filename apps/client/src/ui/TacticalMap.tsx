@@ -77,6 +77,13 @@ interface Props {
   /** A runner fell: the GM clicks where they lie (author ruling 42). */
   fallActor: ActorId | null;
   onPlaceFall: (id: ActorId, p: Point) => void;
+  /** «След» zones still burning (ruling 149). */
+  trails?: {
+    id: string;
+    shape:
+      | { kind: 'circle'; x: number; y: number; r: number }
+      | { kind: 'sector'; x: number; y: number; heading: number; range: number };
+  }[];
   /** Weapons knocked out of the hand lying on the map (ruling 108). */
   loose?: { id: string; name: string; x: number; y: number }[];
   /** A knocked-out weapon waits for its place: within `max` m of `from`. */
@@ -990,6 +997,36 @@ export function TacticalMap(props: Props) {
               <circle key={i} cx={p.x} cy={p.y} r={0.18} />
             ))}
           </g>
+        )}
+        {(props.trails ?? []).map((t) =>
+          t.shape.kind === 'circle' ? (
+            <circle
+              key={t.id}
+              className="trail-zone"
+              cx={t.shape.x}
+              cy={t.shape.y}
+              r={t.shape.r}
+              fill="rgba(255, 120, 0, 0.18)"
+              stroke="rgba(255, 120, 0, 0.6)"
+              strokeWidth={0.05}
+              pointerEvents="none"
+            />
+          ) : (
+            <path
+              key={t.id}
+              className="trail-zone"
+              d={(() => {
+                const s = t.shape;
+                const a1 = s.heading - Math.PI / 8,
+                  a2 = s.heading + Math.PI / 8;
+                return `M ${s.x} ${s.y} L ${s.x + s.range * Math.cos(a1)} ${s.y + s.range * Math.sin(a1)} A ${s.range} ${s.range} 0 0 1 ${s.x + s.range * Math.cos(a2)} ${s.y + s.range * Math.sin(a2)} Z`;
+              })()}
+              fill="rgba(255, 120, 0, 0.18)"
+              stroke="rgba(255, 120, 0, 0.6)"
+              strokeWidth={0.05}
+              pointerEvents="none"
+            />
+          ),
         )}
         {props.placingLoose && (
           <circle

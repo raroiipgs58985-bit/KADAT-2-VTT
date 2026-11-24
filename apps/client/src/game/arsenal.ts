@@ -182,7 +182,7 @@ export function radProtectedArmour(items: readonly { ref: string | null }[]): bo
   );
 }
 /** Properties whose rating may be dice with a duration: «Огненное (2к10/3)». */
-const DICE_RATED = new Set(['Огненное']);
+const DICE_RATED = new Set(['Огненное', 'След']);
 /**
  * Properties of an Arsenal weapon for the rules engine. A rating that is a whole number
  * becomes `value`; anything else («3+», «2к10/3», «см прим») is not read and is listed for the
@@ -204,7 +204,10 @@ export function weaponTraits(w: ArsenalWeapon): {
     let trait: WeaponTrait | null = { name: p.property };
     if (p.param !== null) {
       const v = p.param.trim();
-      const dice = DICE_RATED.has(p.property) ? /^(\d+)к(\d+)(?:\/(\d+))?$/.exec(v) : null;
+      // «2к10/3» — dice and duration; «2к10+5» (След) — dice plus a number kept in `value`.
+      const dice = DICE_RATED.has(p.property)
+        ? /^(\d+)к(\d+)(?:\+(\d+))?(?:\/(\d+))?$/.exec(v)
+        : null;
       const split = p.property === 'Токсичное' ? /^(\d+)\/(\d+)$/.exec(v) : null;
       trait = WORD_RATED[p.property]?.includes(v)
         ? { name: p.property, text: v }
@@ -216,7 +219,8 @@ export function weaponTraits(w: ArsenalWeapon): {
               ? {
                   name: p.property,
                   dice: { count: Number(dice[1]), sides: Number(dice[2]) },
-                  ...(dice[3] ? { duration: Number(dice[3]) } : {}),
+                  ...(dice[3] ? { value: Number(dice[3]) } : {}),
+                  ...(dice[4] ? { duration: Number(dice[4]) } : {}),
                 }
               : null;
     }

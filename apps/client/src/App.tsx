@@ -40,6 +40,7 @@ import {
   takeDisarmed,
   extractWeapon,
   looseWeapons,
+  activeTrails,
   grappleAction,
   placePush,
   pendingPush,
@@ -743,6 +744,7 @@ export function App() {
               fallActor={mode === 'combat' ? fallActor : null}
               onPlaceFall={(id, p) => run((b) => placeFallen(b, id, p))}
               loose={looseWeapons(battle)}
+              trails={activeTrails(battle)}
               placingLoose={
                 mode !== 'combat'
                   ? null
