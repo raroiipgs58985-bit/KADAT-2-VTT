@@ -700,6 +700,65 @@ describe('Two weapons (rulings 105, 106)', () => {
   });
 });
 
+describe('Bare hands (rulings 138–139)', () => {
+  const run = async (talents: string[], armedTarget: boolean) => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const sword = matchWeaponByName('Цепной меч')!;
+    const b = createBattle([
+      {
+        character: {
+          ...emptyCharacter('f', 'Кулачник'),
+          characteristics: {
+            ...emptyCharacter('x').characteristics,
+            НР: { value: 50, super: 0 },
+            СЛ: { value: 40, super: 0 },
+          },
+          talents,
+        },
+        side: 'a',
+        at: { x: 5.5, y: 10.5 },
+        id: 'f',
+      },
+      {
+        character: {
+          ...emptyCharacter('t', 'Цель'),
+          wounds: 50,
+          weapons: armedTarget ? [{ name: sword.name, ref: sword.id }] : [],
+        },
+        side: 'b',
+        at: { x: 6.5, y: 10.5 },
+        id: 't',
+      },
+    ]);
+    if (armedTarget) takeWeapon(b, { id: 'tw', actor: 't', weapon: 't:0' });
+    startCombat(b, fixedDice('10:9,10:2'));
+    return attack(b, shot({ id: 'punch', actor: 'f', target: 't', weapon: 'f:hands' }), {
+      roll: (sides: number) => (sides === 100 ? 35 : 3),
+    }) as {
+      status: string;
+      result: {
+        attack: { modifiers: { id: string; value: number }[] };
+        hits: { total: number; notes: string[] }[];
+      };
+    };
+  };
+  it('a punch: 1к5−3 + бСЛ, −20 against an armed target', async () => {
+    const plain = await run([], false);
+    expect(plain.status).toBe('RESOLVED');
+    expect(plain.result.attack.modifiers.find((m) => m.id === 'punch:unarmed')).toBeUndefined();
+    // 1к5 = 3, −3, + бСЛ 4 = 4.
+    expect(plain.result.hits[0]!.total).toBe(4);
+    const armed = await run([], true);
+    expect(armed.result.attack.modifiers.find((m) => m.id === 'punch:unarmed')?.value).toBe(-20);
+  });
+  it('«Кулачный боец»: 1к10 + бСЛ and counts as armed', async () => {
+    const r = await run(['Кулачный боец'], true);
+    expect(r.result.attack.modifiers.find((m) => m.id === 'punch:unarmed')).toBeUndefined();
+    // 1к10 = 3 + бСЛ 4 = 7.
+    expect(r.result.hits[0]!.total).toBe(7);
+  });
+});
+
 describe('«Натиск» (ruling 132)', () => {
   const setup = async (talents: string[] = [], targetX = 9.5) => {
     const { matchWeaponByName } = await import('./arsenal');

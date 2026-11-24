@@ -89,6 +89,7 @@ import {
 import {
   actorIds,
   battleWeapons,
+  type BattleWeapon,
   actorName,
   fpOf,
   posOf,
@@ -1164,9 +1165,14 @@ function resolveHit(
   const notes = [...bonus.notes];
   let flat = bonus.flat;
   if (info.kind === 'melee') {
-    // Ruling 74: melee damage adds бСЛ with the Super-characteristic.
-    flat += sl;
-    notes.push(`бСЛ: +${sl}`);
+    // Ruling 74: melee damage adds бСЛ with the Super-characteristic; «Порхай как бабочка,
+    // жаль как оса» — бЛВ instead for bare hands (ruling 139).
+    const butterfly =
+      isFists(command.weapon) &&
+      canonicalTalents(attacker.talents).includes('Порхай как бабочка, жаль как оса');
+    const strength = butterfly ? bonusOf(attacker, 'ЛВ') : sl;
+    flat += strength;
+    notes.push(`${butterfly ? 'бЛВ' : 'бСЛ'}: +${strength}`);
     if (hasTrait(traits, 'Цепное')) {
       // «Цепное»: +½ бСЛ, rounded up (ruling 77).
       const half = Math.ceil(sl / 2);
@@ -2016,6 +2022,106 @@ function applyOverheat(
     finalDamage: damage.result.finalDamage ?? 0,
   };
 }
+/** Bare hands as a melee weapon (rulings 138–139): «Кулаки» 1к5−3 У, «Примитивное». */
+export const isFists = (weaponId: WeaponId) => weaponId.endsWith(':hands');
+const FISTS: ArsenalWeapon = {
+  id: 'fists',
+  name: 'Кулаки',
+  sheet: 'ХТХ и примитив',
+  group: null,
+  weaponClass: 'ББ',
+  classNote: null,
+  range: { meters: 1, text: '1', formula: false },
+  rof: null,
+  damage: { count: 1, sides: 5, modifier: -3, type: 'У' },
+  damageText: '1к5−3 У',
+  penetration: 0,
+  magazine: null,
+  reload: null,
+  properties: [],
+  ammoDependent: false,
+  mass: { kg: null, text: '' },
+  rarity: null,
+  modeModifiers: null,
+  source: { sheet: 'Механика', row: 0 },
+} as unknown as ArsenalWeapon;
+/** The weapon of an attack: an Arsenal weapon of the battle or the attacker's bare hands. */
+export function attackWeapon(b: Battle, weaponId: WeaponId): BattleWeapon | null {
+  if (!isFists(weaponId)) return weaponOf(b, weaponId);
+  const owner = weaponId.slice(0, -':hands'.length);
+  if (!b.roster[owner]) return null;
+  return { id: weaponId, owner, name: 'Кулаки', arsenal: FISTS, capacity: null, sling: false };
+}
+/**
+ * Bare hands for this blow (rulings 138–139): a free hand is needed; «Кулачный боец» — 1к10,
+ * «Мастер кулачного боя» — not primitive.
+ */
+function prepareFists(b: Battle, state: EngineState, actor: ActorId) {
+  const melee = state.wounds.combat.melee;
+  const hands = melee?.weapons[`${actor}:hands`];
+  const before = { hands, weaponId: melee?.actors[actor]?.weaponId };
+  if (!melee || !hands) throw new Error('Нет рук для удара');
+  if (freeHand(b, state, actor, `${actor}:hands`) === null)
+    throw new Error('Для удара кулаком нужна свободная рука');
+  const t = canonicalTalents(combatant(b, actor).character.talents);
+  const fighter = t.includes('Кулачный боец');
+  const src = { kind: 'canonical', id: fighter ? 'Таланты: Кулачный боец' : 'Механика: Кулаки' };
+  const profile = {
+    ...hands.template.profile,
+    // The core keeps natural weapons out of ordinary blows; for this blow the hands count as a
+    // weapon and go back to «natural» afterwards.
+    family: 'arsenal',
+    damage: {
+      source: src,
+      expression: fighter
+        ? { count: 1, sides: 10, modifier: 0 }
+        : { count: 1, sides: 5, modifier: -3 },
+    },
+  };
+  state.wounds = {
+    ...state.wounds,
+    combat: {
+      ...state.wounds.combat,
+      melee: {
+        ...melee,
+        weapons: {
+          ...melee.weapons,
+          [hands.id]: {
+            ...hands,
+            held: true,
+            readied: true,
+            template: {
+              ...hands.template,
+              profile,
+              traits: t.includes('Мастер кулачного боя') ? [] : [{ name: 'Примитивное' }],
+            },
+          },
+        },
+        actors: { ...melee.actors, [actor]: { ...melee.actors[actor]!, weaponId: hands.id } },
+      },
+    },
+  };
+  return before;
+}
+/** The hands go back to a natural weapon after the blow. */
+function restoreFists(state: EngineState, actor: ActorId, before: ReturnType<typeof prepareFists>) {
+  const melee = state.wounds.combat.melee;
+  if (!melee || !before.hands) return;
+  state.wounds = {
+    ...state.wounds,
+    combat: {
+      ...state.wounds.combat,
+      melee: {
+        ...melee,
+        weapons: { ...melee.weapons, [before.hands.id]: before.hands },
+        actors: {
+          ...melee.actors,
+          [actor]: { ...melee.actors[actor]!, weaponId: before.weaponId ?? before.hands.id },
+        },
+      },
+    },
+  };
+}
 /** Called-attack penalties («Бой» A52), to cap the talents that reduce them. */
 const CALLED_PENALTY: Record<CalledLocation, number> = {
   Eyes: -50,
@@ -2048,7 +2154,9 @@ function resolve(
   combatant(b, command.actor);
   combatant(b, command.target);
   if (command.actor === command.target) throw new Error('Неверные участники атаки');
-  const selected = weaponOf(b, command.weapon);
+  const selected = attackWeapon(b, command.weapon);
+  // Bare hands (rulings 138–139): the hands become the melee weapon of this blow.
+  const fistsRestore = isFists(command.weapon) ? prepareFists(b, state, command.actor) : null;
   if (!selected || selected.owner !== command.actor)
     throw new Error('Оружие не принадлежит атакующему');
   const problem = weaponProblem(selected.arsenal);
@@ -2106,11 +2214,33 @@ function resolve(
     };
   }
   const kind = weaponKind(arsenalWeapon);
-  const traits = withTalentTraits(
-    impliedTraits(weaponTraits(arsenalWeapon).traits),
-    arsenalWeapon,
-    combatant(b, command.actor).character,
-  );
+  const traits = isFists(command.weapon)
+    ? (state.wounds.combat.melee?.weapons[command.weapon]?.template.traits ?? []).slice()
+    : withTalentTraits(
+        impliedTraits(weaponTraits(arsenalWeapon).traits),
+        arsenalWeapon,
+        combatant(b, command.actor).character,
+      );
+  // Bare hands against an armed target: −20 to НР; «Кулачный боец» counts as armed (ruling 138).
+  if (
+    isFists(command.weapon) &&
+    !canonicalTalents(combatant(b, command.actor).character.talents).includes('Кулачный боец') &&
+    battleWeapons(b, command.target).some((w) => weaponInHandState(state, w.id))
+  ) {
+    const src = { kind: 'author-ruling', id: 'Решение 138: без оружия против вооружённого' };
+    ctx = {
+      ...ctx,
+      modifiers: [
+        ...ctx.modifiers,
+        {
+          id: `${command.id}:unarmed`,
+          value: -20,
+          source: src,
+          provenance: { source: src, reason: 'Безоружный против вооружённого' },
+        },
+      ],
+    };
+  }
   if (command.counter && kind !== 'melee')
     throw new Error('Контратака — только оружием ближнего боя');
   // «Раны и лечение»: a blinded character fails НС automatically, НР without «Бой вслепую».
@@ -2190,18 +2320,20 @@ function resolve(
       ],
     };
   }
-  const proficient = isExotic(arsenalWeapon)
-    ? hasExoticProficiency(attackerTalents, arsenalWeapon)
-    : weaponKindLabel
-      ? hasProficiency(attackerTalents, weaponKindLabel)
-      : ask(command, {
-          key: `proficiency:${command.weapon}`,
-          text: `${actorName(b, command.actor)}: владеет ли видом оружия «${selected.name}»? (решение 84: без владения −30)`,
-          options: [
-            { label: 'Владеет', value: 1 },
-            { label: 'Не владеет (−30)', value: 0 },
-          ],
-        }) === 1;
+  const proficient = isFists(command.weapon)
+    ? true
+    : isExotic(arsenalWeapon)
+      ? hasExoticProficiency(attackerTalents, arsenalWeapon)
+      : weaponKindLabel
+        ? hasProficiency(attackerTalents, weaponKindLabel)
+        : ask(command, {
+            key: `proficiency:${command.weapon}`,
+            text: `${actorName(b, command.actor)}: владеет ли видом оружия «${selected.name}»? (решение 84: без владения −30)`,
+            options: [
+              { label: 'Владеет', value: 1 },
+              { label: 'Не владеет (−30)', value: 0 },
+            ],
+          }) === 1;
   if (!proficient) {
     const gm = { kind: 'author-ruling', id: 'Решение 84: нет «Владения оружием»' };
     ctx = {
@@ -2701,6 +2833,7 @@ function resolve(
       },
     };
   }
+  if (fistsRestore) restoreFists(state, command.actor, fistsRestore);
   const damage = hits.map((hit) =>
     resolveHit(b, state, command, hit, { ...info, degrees }, rng, logs),
   );
@@ -2839,7 +2972,7 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
       command,
       rolls: used,
       rollPurposes: purposes,
-      weaponName: weaponOf(b, command.weapon)?.name ?? command.weapon,
+      weaponName: attackWeapon(b, command.weapon)?.name ?? command.weapon,
       maxHp: maxWounds(b, command.target),
       result,
       coreLogs: logs,
@@ -3508,6 +3641,11 @@ export function actorStatus(b: Battle, id: ActorId) {
 export type WeaponSupport = { level: 'supported' | 'partial' | 'blocked'; note: string };
 /** Whether the combat engine can use a participant's weapon, and why not. */
 export function weaponSupport(b: Battle, id: WeaponId): WeaponSupport {
+  if (isFists(id))
+    return {
+      level: 'supported',
+      note: 'Кулаки 1к5−3 + бСЛ, «Примитивное»; против вооружённого −20 (решения 138–139)',
+    };
   const w = weaponOf(b, id);
   const problem = w ? weaponProblem(w.arsenal) : 'Нет такого оружия';
   if (problem) return { level: 'blocked', note: problem };

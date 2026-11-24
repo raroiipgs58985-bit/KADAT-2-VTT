@@ -18,6 +18,8 @@ import {
   otherWeaponInHand,
   oneHandedWeapon,
   disarmOptions,
+  attackWeapon,
+  isFists,
   chargeDestination,
   meleeAttackKinds,
   type TurnActionType,
@@ -381,7 +383,10 @@ export function AttackPanel(props: {
   onCharge?: (at: { x: number; y: number }) => void;
 }) {
   const { form, attacker } = props;
-  const own = battleWeapons(props.battle, attacker);
+  const own = [
+    ...battleWeapons(props.battle, attacker),
+    attackWeapon(props.battle, `${attacker}:hands`)!,
+  ];
   const weapon = own.find((w) => w.id === form.weapon) ?? own[0];
   const support = weapon
     ? weaponSupport(props.battle, weapon.id)
@@ -462,7 +467,7 @@ export function AttackPanel(props: {
           <p className="muted small">Выстрелов: {mode.maxShots} (темп оружия, решение 78)</p>
         </div>
       )}
-      {weapon && support.level !== 'blocked' && !props.inHand(weapon.id) && (
+      {weapon && support.level !== 'blocked' && !isFists(weapon.id) && !props.inHand(weapon.id) && (
         <div className="stack">
           <p className="weapon-note badge-partial">Это оружие не в руках.</p>
           <button
