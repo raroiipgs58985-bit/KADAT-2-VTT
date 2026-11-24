@@ -22,6 +22,11 @@ import {
   concussion,
   instantDeath,
   destroyerDice,
+  talentDamage,
+  talentAttackModifiers,
+  criticalBonus,
+  unfamiliarWeaponPenalty,
+  type WeaponFamily,
   corrosiveDice,
   transferWeapon,
   resolveMeleeOpposedAction,
@@ -111,6 +116,7 @@ import {
   weaponProblem,
   type WeaponKind,
 } from './combatants';
+import type { ArsenalWeapon } from '../../../../packages/canonical-data/src/arsenal';
 import { radProtectedArmour, sealedArmour, weaponById, weaponTraits } from './arsenal';
 import { canonicalTalents } from './talents';
 import {
@@ -234,6 +240,8 @@ export interface AttackCommand {
   second?: WeaponId;
   /** Internal: this attack is the follow-up of the two-weapon attack with this primary ID. */
   dualPrimary?: string;
+  /** Internal: the other weapon of the two-weapon attack. */
+  dualWith?: WeaponId;
 }
 export class ContextRequired extends Error {
   override readonly name = 'ContextRequired';
@@ -503,6 +511,7 @@ function postDamage(
   command: AttackCommand,
   rng: DiceSource,
   logs: unknown[],
+  critical = 0,
 ) {
   const result = resolvePostDamage(
     {
@@ -512,6 +521,7 @@ function postDamage(
       facts: {
         provenance,
         activity: command.targetActivity,
+        ...(critical ? { criticalBonus: critical } : {}),
         ...(zoneOf(damage.input.location)
           ? {}
           : {
@@ -1068,6 +1078,7 @@ function resolveHit(
     weaponClass: string;
     distance: number;
     optimalRange: number;
+    family: WeaponFamily;
   },
   rng: DiceSource,
   logs: unknown[],
@@ -1104,6 +1115,19 @@ function resolveHit(
       notes.push(`Цепное: +${half} (½ бСЛ вверх)`);
     }
   }
+  // Talents (ruling 121): «Сокрушительный удар/выстрел», «Мастер Болт/Лаз/Плазменного оружия».
+  const talentBonus = talentDamage({
+    talents: canonicalTalents(attacker.talents),
+    kind: info.kind === 'melee' ? 'melee' : 'ranged',
+    family: info.family,
+    nrBonus: bonusOf(attacker, 'НР'),
+    nsBonus: bonusOf(attacker, 'НС'),
+    degrees: info.degrees,
+  });
+  for (const t of talentBonus.damage) {
+    flat += t.value;
+    notes.push(`${t.talent}: +${t.value}`);
+  }
   let total = sum(dice.rolls) + hit.profile.expression.modifier + sum(extra) - sum(minus) + flat;
   const strength = strengthRequirement(traits, sl);
   if (strength.halveDamage) {
@@ -1111,7 +1135,11 @@ function resolveHit(
     notes.push('Сила: бСЛ ниже нужного — урон /2');
   }
   total = Math.max(0, total);
-  const penetration = hit.penetration.value * bonus.penetrationMultiplier + bonus.penetrationAdd;
+  const penetration =
+    hit.penetration.value * bonus.penetrationMultiplier +
+    bonus.penetrationAdd +
+    talentBonus.penetration.reduce((a, t) => a + t.value, 0);
+  for (const t of talentBonus.penetration) notes.push(`${t.talent}: ББ +${t.value}`);
   // «Цепное»: the armour element loses ОБ equal to ББ at once (rulings 5, 16).
   if (hasTrait(traits, 'Цепное') && armour.zone) {
     state.armorLoss[armour.key] = (state.armorLoss[armour.key] ?? 0) + penetration;
@@ -1202,7 +1230,15 @@ function resolveHit(
     throw new ContextRequired(JSON.stringify(damage.result.status));
   state.protection = damage.state;
   setPhase('consequence');
-  const wound = postDamage(state, damage.result, command, rng, logs);
+  // «Калечащий удар / выстрел»: +2 to the critical consequence die (ruling 123).
+  const wound = postDamage(
+    state,
+    damage.result,
+    command,
+    rng,
+    logs,
+    criticalBonus(canonicalTalents(attacker.talents), info.kind === 'melee' ? 'melee' : 'ranged'),
+  );
   setPhase('property');
   // «Деструктор (Х)» (rulings 71, 88): damage above ОБ after ББ — Хк10 as a separate wound,
   // without armour, minus бВН, with its own consequence.
@@ -1685,6 +1721,28 @@ function resolveHit(
   };
 }
 
+/** Called-attack penalties («Бой» A52), to cap the talents that reduce them. */
+const CALLED_PENALTY: Record<CalledLocation, number> = {
+  Eyes: -50,
+  Head: -20,
+  'Right Arm': -20,
+  'Left Arm': -20,
+  Torso: -10,
+  'Right Leg': -15,
+  'Left Leg': -15,
+  'Armor Joints': -40,
+};
+/** Weapon family for the «Знаток / Мастер …-оружия» talents (Arsenal sheet, «Мельта»). */
+function weaponFamily(w: ArsenalWeapon, traits: readonly WeaponTraitReference[]): WeaponFamily {
+  if (hasTrait(traits, 'Мельта')) return 'melta';
+  return w.sheet === 'Болт'
+    ? 'bolt'
+    : w.sheet === 'Лаз'
+      ? 'las'
+      : w.sheet === 'Плазма'
+        ? 'plasma'
+        : 'other';
+}
 function resolve(
   state: EngineState,
   b: Battle,
@@ -1802,6 +1860,29 @@ function resolve(
   // Ruling 84: without «Владение оружием» of this kind −30 (the GM decides unclear kinds).
   const weaponKindLabel = weaponKindName(arsenalWeapon);
   const attackerTalents = combatant(b, command.actor).character.talents;
+  const attackerTalentsCanon = canonicalTalents(attackerTalents);
+  // Talents on the attack test (ruling 122): called-attack penalty reductions, «Знаток
+  // Болт-оружия».
+  for (const t of talentAttackModifiers({
+    talents: attackerTalentsCanon,
+    kind,
+    family: weaponFamily(arsenalWeapon, traits),
+    calledPenalty: command.calledLocation ? CALLED_PENALTY[command.calledLocation] : 0,
+  })) {
+    const src = { kind: 'talent', id: `Таланты: ${t.talent}` };
+    ctx = {
+      ...ctx,
+      modifiers: [
+        ...ctx.modifiers,
+        {
+          id: `${command.id}:talent:${t.talent}`,
+          value: t.value,
+          source: src,
+          provenance: { source: src, reason: t.talent },
+        },
+      ],
+    };
+  }
   const proficient = isExotic(arsenalWeapon)
     ? hasExoticProficiency(attackerTalents, arsenalWeapon)
     : weaponKindLabel
@@ -1822,7 +1903,8 @@ function resolve(
         ...ctx.modifiers,
         {
           id: `${command.id}:no-proficiency`,
-          value: PROFICIENCY_PENALTY,
+          // «Универсальный солдат»: −10 lower.
+          value: unfamiliarWeaponPenalty(attackerTalentsCanon, PROFICIENCY_PENALTY),
           source: gm,
           provenance: {
             source: gm,
@@ -1862,6 +1944,36 @@ function resolve(
         };
     }
   }
+  // «Офицерское оружие»: no penalties for a pistol together with a melee weapon.
+  const pair = command.second ?? command.dualWith;
+  const pairArsenal = pair ? weaponOf(b, pair)?.arsenal : null;
+  const officer =
+    dual &&
+    !!pairArsenal &&
+    canonicalTalents(combatant(b, command.actor).character.talents).includes('Офицерское оружие') &&
+    ((arsenalWeapon.weaponClass === 'П' && weaponKind(pairArsenal) === 'melee') ||
+      (pairArsenal.weaponClass === 'П' && kind === 'melee'));
+  const officerRestore = state.wounds.combat.actors[command.actor]!.talents;
+  if (officer) {
+    const runtime = state.wounds.combat.actors[command.actor]!;
+    state.wounds = {
+      ...state.wounds,
+      combat: {
+        ...state.wounds.combat,
+        actors: {
+          ...state.wounds.combat.actors,
+          [command.actor]: {
+            ...runtime,
+            talents: [
+              ...(runtime.talents ?? []),
+              'Парное оружие (Стрелковое)',
+              'Парное оружие (Рукопашное)',
+            ],
+          },
+        },
+      },
+    };
+  }
   const dualRequest: { dualWield?: { primaryId?: string }; oneHanded?: boolean } = dual
     ? {
         dualWield: command.dualPrimary ? { primaryId: command.dualPrimary } : {},
@@ -1873,7 +1985,11 @@ function resolve(
     traits,
     weaponClass: arsenalWeapon.weaponClass,
     distance,
-    optimalRange: arsenalWeapon.range.meters!,
+    // The template's range (talent «Знаток Мельта-оружия» lengthens it, ruling 124).
+    optimalRange:
+      state.wounds.combat.weapons[command.weapon]?.template.profile.optimalRange ??
+      arsenalWeapon.range.meters!,
+    family: weaponFamily(arsenalWeapon, traits),
   };
   const hits: DamageInput[] = [];
   let attack: unknown, degrees: number;
@@ -2029,6 +2145,19 @@ function resolve(
     if (target.hit) hits.push(damageInputFromHit(target.hit as MeleeHitRecord));
     if (target.avoidance) reaction = target.avoidance;
   }
+  if (officer) {
+    const runtime = state.wounds.combat.actors[command.actor]!;
+    state.wounds = {
+      ...state.wounds,
+      combat: {
+        ...state.wounds.combat,
+        actors: {
+          ...state.wounds.combat.actors,
+          [command.actor]: { ...runtime, talents: officerRestore ?? [] },
+        },
+      },
+    };
+  }
   const damage = hits.map((hit) =>
     resolveHit(b, state, command, hit, { ...info, degrees }, rng, logs),
   );
@@ -2134,7 +2263,13 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
           second: resolve(
             next,
             b,
-            { ...command, id: `${command.id}:2`, weapon: command.second, dualPrimary: command.id },
+            {
+              ...command,
+              id: `${command.id}:2`,
+              weapon: command.second,
+              dualPrimary: command.id,
+              dualWith: command.weapon,
+            },
             rng,
             logs,
           ),

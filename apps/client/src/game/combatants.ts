@@ -7,7 +7,7 @@ import type {
   AmmoContainerInstance,
   FireMode,
 } from '@kadat/contracts';
-import { impliedTraits } from '@kadat/rules-engine';
+import { hasTrait, impliedTraits, meltaRangeBonus } from '@kadat/rules-engine';
 import { weaponTraits } from './arsenal';
 import type { ArsenalWeapon } from '../../../../packages/canonical-data/src/arsenal';
 import { battleWeapons, combatant, actorIds, type ActorId, type Battle } from './model';
@@ -216,7 +216,24 @@ export function engineWeapons(b: Battle) {
   for (const w of battleWeapons(b)) {
     if (!w.arsenal || weaponProblem(w.arsenal)) continue;
     if (weaponKind(w.arsenal) === 'ranged') {
-      ranged[w.id] = rangedInstance(w.id, w.owner, w.arsenal);
+      const instance = rangedInstance(w.id, w.owner, w.arsenal);
+      // «Знаток Мельта-оружия»: optimal range + НС × 2 m (ruling 124).
+      const owner = combatant(b, w.owner).character;
+      const extra = hasTrait(instance.template.traits ?? [], 'Мельта')
+        ? meltaRangeBonus(canonicalTalents(owner.talents), owner.characteristics.НС.value)
+        : 0;
+      ranged[w.id] = extra
+        ? {
+            ...instance,
+            template: {
+              ...instance.template,
+              profile: {
+                ...instance.template.profile,
+                optimalRange: instance.template.profile.optimalRange + extra,
+              },
+            },
+          }
+        : instance;
       containers[`${w.id}:mag`] = magazine(w.id, w.arsenal, b.ammo[w.id] ?? w.arsenal.magazine!);
     } else melee[w.id] = meleeInstance(w.id, w.owner, w.arsenal);
   }

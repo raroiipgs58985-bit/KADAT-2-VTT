@@ -139,3 +139,4 @@ export {
   type SkillLevel,
 } from './skills.js';
 export * from './weapon-properties.js';
+export * from './talent-effects.js';

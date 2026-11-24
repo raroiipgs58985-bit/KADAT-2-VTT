@@ -534,6 +534,37 @@ describe('Two weapons (rulings 105, 106)', () => {
       expect(modsOf(fire(b)).find((m) => m.id === 'ranged:two-weapons')?.value).toBe(value);
     }
   });
+  it('«Меткий выстрел»: the called-attack penalty is 10 lower (ruling 122)', async () => {
+    const b = await gunslinger(['Меткий выстрел']);
+    startCombat(b, fixedDice('10:9,10:2'));
+    const r = attack(
+      b,
+      shot({ id: 'aimed', actor: 'gun', weapon: 'gun:0', calledLocation: 'Torso' }),
+      { roll: (sides: number) => (sides === 100 ? 95 : 5) },
+    );
+    expect(modsOf(r).find((m) => m.id === 'aimed:talent:Меткий выстрел')?.value).toBe(10);
+  });
+  it('«Знаток Мельта-оружия»: optimal range + НС × 2 m (ruling 124)', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const melta = matchWeaponByName('Мельтган')!;
+    const b = createBattle([
+      {
+        character: {
+          ...emptyCharacter('m', 'Мельтист'),
+          characteristics: { ...emptyCharacter('x').characteristics, НС: { value: 45, super: 0 } },
+          talents: ['Знаток Мельта-оружия'],
+          weapons: [{ name: melta.name, ref: melta.id }],
+        },
+        side: 'a',
+        at: { x: 5.5, y: 10.5 },
+        id: 'm',
+      },
+      { character: characterFromProfile('pak'), side: 'b', at: { x: 12.5, y: 10.5 }, id: 'pak' },
+    ]);
+    expect(getEngine(b).wounds.combat.weapons['m:0']!.template.profile.optimalRange).toBe(
+      melta.range.meters! + 90,
+    );
+  });
   it('a two-handed weapon cannot be one of two weapons', async () => {
     const b = await gunslinger([], 'Лазган');
     expect(() =>
@@ -972,6 +1003,7 @@ describe('More weapon properties in the fight', () => {
     weaponName: string,
     roll100: (n: number) => number,
     target = characterFromProfile('pak'),
+    talents: string[] = [],
   ) => {
     const { matchWeaponByName } = await import('./arsenal');
     const w = matchWeaponByName(weaponName)!;
@@ -982,6 +1014,7 @@ describe('More weapon properties in the fight', () => {
         НР: { value: 60, super: 0 },
         СЛ: { value: 60, super: 0 },
       },
+      talents,
       weapons: [{ name: w.name, ref: w.id }],
     };
     const b = createBattle([
@@ -1274,6 +1307,15 @@ describe('More weapon properties in the fight', () => {
     expect(getEngine(b).wounds.combat.actors.pak!.movement).toBe(skr + 1);
     expect(b.taken?.['brute:0']).toBe('pak');
     expect(weaponInHand(b, 'brute:0')).toBe(true);
+  });
+  it('«Сокрушительный удар» adds ½ бНР (up) to melee damage (ruling 121)', async () => {
+    const notes = async (talents: string[]) => {
+      const { r } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft(), talents);
+      return (r as { result: { hits: { notes: string[] }[] } }).result.hits[0]!.notes;
+    };
+    expect((await notes([])).some((n) => n.startsWith('Сокрушительный удар'))).toBe(false);
+    // НР 60 → бНР 6 → +3.
+    expect(await notes(['Сокрушительный удар'])).toContain('Сокрушительный удар: +3');
   });
   it('«Вырваться»: 2 ОД, СЛ test with −10 × Х frees the entangled (ruling 86)', async () => {
     const { b } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft());
