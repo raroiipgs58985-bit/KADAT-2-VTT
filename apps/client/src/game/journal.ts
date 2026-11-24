@@ -404,6 +404,17 @@ export function describeEntry(
         summary: String(d.reason),
         tone: 'warning',
       };
+    case 'extract': {
+      const c = d.command as { actor: string };
+      return {
+        ...base,
+        title: `${name(c.actor)} извлекает ${String(d.weaponName)} из раны ${name(d.target)}`,
+        summary: `к5 (${String(d.die)}) + бСЛ ${String(d.sl)} − ½ бВН ${String(d.half)} → −${String(d.wounds)} ран (решение 119). ${d.inHand ? 'Оружие в руке извлёкшего.' : 'Свободной руки нет — оружие на полу.'} Потрачен 1 ОД.`,
+        tone: 'warning',
+      };
+    }
+    case 'extract-rejected':
+      return { ...base, title: 'Извлечь не удалось', summary: String(d.reason), tone: 'warning' };
     case 'weapon-taken':
       return {
         ...base,

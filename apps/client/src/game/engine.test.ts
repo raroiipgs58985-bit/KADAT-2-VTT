@@ -32,6 +32,7 @@ import {
   counterattacks,
   disarm,
   corrodedZones,
+  extractWeapon,
   placeLoose,
   pendingLoose,
   takeDisarmed,
@@ -991,7 +992,12 @@ describe('More weapon properties in the fight', () => {
     let n = 0;
     const r = attack(
       b,
-      shot({ id: 'hit', actor: 'brute', weapon: 'brute:0', answers: { 'proficiency:brute:0': 1 } }),
+      shot({
+        id: 'hit',
+        actor: 'brute',
+        weapon: 'brute:0',
+        answers: { 'proficiency:brute:0': 1, 'impale:hit:hit:pak': 0 },
+      }),
       { roll: (sides: number) => (sides === 100 ? roll100(n++) : 5) },
     );
     return { b, r };
@@ -1228,6 +1234,46 @@ describe('More weapon properties in the fight', () => {
     expect(
       (done as Hits).result.hits[0]!.effects.find((e) => e.property === 'Коррозийное')?.state,
     ).toMatch(/^броня \(торс\) разъедена: \d+ ран$/);
+  });
+  it('«Проникающее»: the GM leaves the weapon in the wound; anyone next to it pulls it out (rulings 118–120)', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const w = matchWeaponByName('Копье')!;
+    const brute = {
+      ...emptyCharacter('brute', 'Боец'),
+      characteristics: { ...emptyCharacter('x').characteristics, НР: { value: 60, super: 0 } },
+      weapons: [{ name: w.name, ref: w.id }],
+    };
+    const b = createBattle([
+      { character: brute, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'brute' },
+      { character: soft(), side: 'b', at: { x: 6.5, y: 10.5 }, id: 'pak' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    let n = 0;
+    const r = attack(
+      b,
+      shot({
+        id: 'stab',
+        actor: 'brute',
+        weapon: 'brute:0',
+        answers: { 'proficiency:brute:0': 1, 'impale:stab:hit:pak': 1 },
+      }),
+      { roll: (sides: number) => (sides === 100 ? (n++ === 0 ? 35 : 1) : 5) },
+    );
+    expect(r.status).toBe('RESOLVED');
+    expect(
+      (r as Hits).result.hits[0]!.effects.find((e) => e.property === 'Проникающее')?.state,
+    ).toBe('оружие в ране (торс): −1 СКР');
+    expect(weaponInHand(b, 'brute:0')).toBe(false);
+    const skr = getEngine(b).wounds.combat.actors.pak!.movement;
+    nextTurn(b, { roll: (sides: number) => (sides === 100 ? 1 : 5) });
+    const before = b.hp.pak!;
+    const sl = Math.floor(soft().characteristics.СЛ.value / 10);
+    const half = Math.floor(Math.floor(soft().characteristics.ВН.value / 10) / 2);
+    extractWeapon(b, { id: 'pull', actor: 'pak', weapon: 'brute:0' }, fixedDice('5:3'));
+    expect(b.hp.pak).toBe(before - Math.max(0, 3 + sl - half));
+    expect(getEngine(b).wounds.combat.actors.pak!.movement).toBe(skr + 1);
+    expect(b.taken?.['brute:0']).toBe('pak');
+    expect(weaponInHand(b, 'brute:0')).toBe(true);
   });
   it('«Вырваться»: 2 ОД, СЛ test with −10 × Х frees the entangled (ruling 86)', async () => {
     const { b } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft());

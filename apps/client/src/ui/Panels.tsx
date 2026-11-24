@@ -13,6 +13,7 @@ import {
   reloadCost,
   entanglement,
   corrodedZones,
+  impalements,
   otherWeaponInHand,
   oneHandedWeapon,
   disarmOptions,
@@ -602,6 +603,7 @@ export function ActionsPanel(props: {
   onTake: (weapon: WeaponId) => void;
   onDrop: (weapon: WeaponId) => void;
   onPickUp: (weapon: WeaponId) => void;
+  onExtract?: (weapon: WeaponId) => void;
 }) {
   const all = battleWeapons(props.battle, props.actor).filter(
     (w) => w.arsenal && !weaponProblem(w.arsenal),
@@ -613,9 +615,20 @@ export function ActionsPanel(props: {
   const state = (id: WeaponId) => weaponState(props.battle, id);
   const held = entanglement(props.battle, props.actor);
   const corroded = corrodedZones(props.battle, props.actor);
+  const stuck = impalements(props.battle, props.actor);
   const zoneLabel = { head: 'голова', torso: 'торс', arms: 'руки', legs: 'ноги' } as const;
   return (
     <div className="stack">
+      {stuck.map((x) => (
+        <button
+          key={x.weapon}
+          type="button"
+          disabled={!props.canAct || od < 1 || !props.onExtract}
+          onClick={() => props.onExtract?.(x.weapon)}
+        >
+          Извлечь {x.name} из раны ({actorName(props.battle, x.target)}, {x.location}) — 1 ОД
+        </button>
+      ))}
       {corroded.map((z) => (
         <div key={z} className="weapon-note badge-blocked">
           <p>Броня ({zoneLabel[z]}) разъедается «Коррозийным» каждый ход.</p>

@@ -9,6 +9,7 @@ import {
   disarm,
   placeLoose,
   takeDisarmed,
+  extractWeapon,
   nextTurn,
   placeActor,
   setDoorOpen,
@@ -64,6 +65,7 @@ type Step =
     }
   | { type: 'loose'; x: number; y: number }
   | { type: 'take-disarmed' }
+  | { type: 'extract'; command: { id: string; actor: ActorId; weapon: string }; rolls: DiceRoll[] }
   // v0.4: geometry-sensitive commands.
   // v0.5: the map geometry is a reference into the replay's shared snapshot store.
   | {
@@ -97,6 +99,7 @@ const JOURNAL_ONLY = [
   'turn-action-rejected',
   'brace-rejected',
   'disarm-rejected',
+  'extract-rejected',
 ] as const;
 type JournalOnly = (typeof JOURNAL_ONLY)[number];
 const isJournalOnly = (type: string): type is JournalOnly =>
@@ -222,6 +225,13 @@ export function exportReplay(b: Battle): Replay {
       steps.push({ type: 'disarm', command: r.command, rolls: r.rolls ?? [] });
     }
     if (entry.type === 'weapon-taken') steps.push({ type: 'take-disarmed' });
+    if (entry.type === 'extract') {
+      const r = entry.detail as {
+        command: { id: string; actor: ActorId; weapon: string };
+        rolls?: DiceRoll[];
+      };
+      steps.push({ type: 'extract', command: r.command, rolls: r.rolls ?? [] });
+    }
     if (entry.type === 'weapon-landed') {
       const r = entry.detail as { at: Point };
       steps.push({ type: 'loose', x: r.at.x, y: r.at.y });
@@ -322,6 +332,7 @@ export function importReplay(value: unknown): Battle {
     else if (step.type === 'disarm') disarm(b, step.command, dice(step.rolls));
     else if (step.type === 'loose') placeLoose(b, { x: step.x, y: step.y });
     else if (step.type === 'take-disarmed') takeDisarmed(b);
+    else if (step.type === 'extract') extractWeapon(b, step.command, dice(step.rolls));
     else if (step.type === 'map') {
       if (r.format === REPLAY_FORMAT && typeof step.snapshot !== 'string')
         throw new Error('Шаг карты replay без ссылки на снимок');

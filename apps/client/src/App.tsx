@@ -38,6 +38,7 @@ import {
   placeLoose,
   pendingLoose,
   takeDisarmed,
+  extractWeapon,
   looseWeapons,
   type MoveMode,
 } from './game/engine';
@@ -1048,6 +1049,15 @@ export function App() {
                     onDrop={(id) =>
                       run((b) =>
                         dropWeapon(b, { id: commandId('drop'), actor: info.active, weapon: id }),
+                      )
+                    }
+                    onExtract={(weapon) =>
+                      run((b) =>
+                        extractWeapon(
+                          b,
+                          { id: commandId('extract'), actor: info.active, weapon },
+                          source(),
+                        ),
                       )
                     }
                     onAction={(type, weapon, characteristic, zone) =>

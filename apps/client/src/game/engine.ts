@@ -197,6 +197,8 @@ export interface EngineState {
   >;
   /** Zone ОБ before losses, recorded when corrosion starts (turn-start steps have no battle). */
   zoneArmour?: Record<string, number>;
+  /** «Проникающее» (rulings 118–120): weapons stuck in a wound, by weapon ID. */
+  impaled?: Record<WeaponId, { target: ActorId; location: string; skr: boolean }>;
 }
 export interface AttackCommand {
   id: string;
@@ -687,13 +689,7 @@ function applyCrippling(state: EngineState) {
 const sum = (rolls: readonly DiceRoll[]) => rolls.reduce((s, r) => s + r.value, 0);
 
 /** Properties the polygon does not apply automatically yet: shown to the GM after the hit. */
-const MANUAL_PROPERTIES = new Set([
-  'Галлюциногенное',
-  'Проникающее',
-  'Взрыв',
-  'Спрей',
-  'Частичное опутывание',
-]);
+const MANUAL_PROPERTIES = new Set(['Галлюциногенное', 'Взрыв', 'Спрей', 'Частичное опутывание']);
 
 /**
  * Context of the target's reaction with its skill (ruling 49): the skill bonus is added;
@@ -1483,6 +1479,62 @@ function resolveHit(
       });
     }
   }
+  // «Проникающее» (rulings 118–120): the GM says whether the weapon stayed in the wound.
+  if (
+    hasTrait(traits, 'Проникающее') &&
+    (damage.result.finalDamage ?? 0) > 0 &&
+    state.wounds.actors[command.target]?.life.status === 'ALIVE' &&
+    !state.impaled?.[command.weapon]
+  ) {
+    const stuck =
+      ask(command, {
+        key: `impale:${hit.hitId}`,
+        text: `«Проникающее»: оружие осталось в ране ${target.name}? (решение 118)`,
+        options: [
+          { label: 'Осталось в ране', value: 1 },
+          { label: 'Нет', value: 0 },
+        ],
+      }) === 1;
+    if (stuck) {
+      const loc = hit.location;
+      const skr = loc === 'Torso' || loc.includes('Leg');
+      state.impaled = {
+        ...state.impaled,
+        [command.weapon]: { target: command.target, location: loc, skr },
+      };
+      const combat = state.wounds.combat;
+      const blade = combat.melee?.weapons[command.weapon];
+      const runtime = combat.actors[command.target]!;
+      state.wounds = {
+        ...state.wounds,
+        combat: {
+          ...combat,
+          ...(blade && combat.melee
+            ? {
+                melee: {
+                  ...combat.melee,
+                  weapons: {
+                    ...combat.melee.weapons,
+                    [command.weapon]: { ...blade, held: false, readied: false, dropped: true },
+                  },
+                },
+              }
+            : {}),
+          actors: skr
+            ? {
+                ...combat.actors,
+                [command.target]: { ...runtime, movement: Math.max(0, runtime.movement - 1) },
+              }
+            : combat.actors,
+        },
+      };
+      effects.push({
+        property: 'Проникающее',
+        passed: false,
+        state: `оружие в ране (${locationLabel(loc)}): ${skr ? '−1 СКР' : loc.includes('Arm') ? '−10 к атакам' : 'ведущему'}`,
+      });
+    }
+  }
   // «Гравитонное» (rulings 96, 97): СЛ −30, a failure — falls, к10 per odd degree into a leg.
   if (
     hasTrait(traits, 'Гравитонное') &&
@@ -1710,6 +1762,26 @@ function resolve(
       throw new Error(
         `${actorName(b, command.actor)} ослеплён: тесты ${kind === 'ranged' ? 'НС' : 'НР'} проваливаются автоматически («Раны и лечение», Слепота)`,
       );
+  }
+  // «Проникающее»: a weapon stuck in the attacker's arm — −10 to actions with it (ruling 118).
+  if (
+    Object.values(state.impaled ?? {}).some(
+      (x) => x.target === command.actor && x.location.includes('Arm'),
+    )
+  ) {
+    const src = { kind: 'weapon-property', id: 'Свойства оружия: Проникающее' };
+    ctx = {
+      ...ctx,
+      modifiers: [
+        ...ctx.modifiers,
+        {
+          id: `${command.id}:impaled-arm`,
+          value: -10,
+          source: src,
+          provenance: { source: src, reason: 'Оружие в ране руки' },
+        },
+      ],
+    };
   }
   // «Раны и лечение»: attacks on a stunned target get +20.
   if (conditionsOf(command.target).some((c) => c.type === 'Stunned')) {
@@ -3139,6 +3211,109 @@ export const looseWeapons = (b: Battle) =>
   }));
 /** A loose weapon can be picked up from the token's own or a neighbouring cell. */
 export const LOOSE_REACH = 1.5;
+const locationLabel = (loc: string) =>
+  loc === 'Torso'
+    ? 'торс'
+    : loc.includes('Arm')
+      ? 'рука'
+      : loc.includes('Leg')
+        ? 'нога'
+        : loc === 'Head'
+          ? 'голова'
+          : loc;
+/** Weapons stuck in wounds that the actor can reach (own wound or a neighbour's, ≤ 1.5 m). */
+export function impalements(b: Battle, actor: ActorId) {
+  const p = posOf(b, actor);
+  return Object.entries(getEngine(b).impaled ?? {})
+    .filter(([, x]) => {
+      const q = posOf(b, x.target);
+      return Math.hypot(p.x - q.x, p.y - q.y) <= LOOSE_REACH;
+    })
+    .map(([weapon, x]) => ({
+      weapon,
+      target: x.target,
+      name: weaponOf(b, weapon)?.name ?? weapon,
+      location: locationLabel(x.location),
+    }));
+}
+/**
+ * «Проникающее»: pull the weapon out of the wound (rulings 119, 120) — 1 ОД, anyone next to the
+ * wounded; к5 + бСЛ of the one pulling minus ½ бВН (down) of the wounded, without armour and
+ * without consequences. The weapon ends in the puller's hand (free hand), otherwise on the floor.
+ */
+export function extractWeapon(
+  b: Battle,
+  command: { id: string; actor: ActorId; weapon: WeaponId },
+  source: DiceSource = noDice,
+) {
+  const state = getEngine(b);
+  const used: DiceRoll[] = [];
+  const tape: DiceSource = {
+    roll(sides) {
+      const value = source.roll(sides);
+      used.push({ sides, value });
+      return value;
+    },
+  };
+  try {
+    combatant(b, command.actor);
+    if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
+    movementGate(state, command.actor);
+    const stuck = state.impaled?.[command.weapon];
+    if (!stuck) throw new Error('Это оружие не в ране');
+    if (!impalements(b, command.actor).some((x) => x.weapon === command.weapon))
+      throw new Error('Раненый слишком далеко — подойдите вплотную');
+    const turn = state.wounds.combat.session.turn!;
+    if (turn.od < 1) throw new Error('Нужен 1 ОД (решение 119)');
+    const next = structuredClone(state);
+    const die = rollDie(5, tape).value;
+    const sl = bonusOf(combatant(b, command.actor).character, 'СЛ');
+    const half = Math.floor(bonusVN(next, stuck.target) / 2);
+    const wounds = Math.max(0, die + sl - half);
+    const logs: unknown[] = [];
+    plainWounds(next, stuck.target, wounds, logs);
+    const rest = { ...next.impaled };
+    delete rest[command.weapon];
+    next.impaled = rest;
+    let combat = next.wounds.combat;
+    combat = { ...combat, session: { ...combat.session, turn: { ...turn, od: turn.od - 1 } } };
+    if (stuck.skr) {
+      const runtime = combat.actors[stuck.target]!;
+      combat = {
+        ...combat,
+        actors: {
+          ...combat.actors,
+          [stuck.target]: { ...runtime, movement: runtime.movement + 1 },
+        },
+      };
+    }
+    const keep = freeHand(b, next, command.actor, command.weapon);
+    const owner = weaponOf(b, command.weapon)!.owner;
+    if (keep !== null) {
+      combat = transferWeapon(combat, command.weapon, command.actor, keep || undefined);
+      if (owner !== command.actor) b.taken = { ...b.taken, [command.weapon]: command.actor };
+    } else b.loose = { ...b.loose, [command.weapon]: { ...posOf(b, stuck.target) } };
+    next.wounds = { ...next.wounds, combat };
+    next.committed.push(command.id);
+    sync(b, next);
+    append(b, 'extract', {
+      command,
+      rolls: used,
+      target: stuck.target,
+      weaponName: weaponOf(b, command.weapon)?.name ?? command.weapon,
+      wounds,
+      die,
+      sl,
+      half,
+      inHand: keep !== null,
+      committed: true,
+    });
+    return { status: 'RESOLVED' as const, wounds };
+  } catch (error) {
+    append(b, 'extract-rejected', { command, reason: explainEngineError(error), committed: false });
+    throw error;
+  }
+}
 /** Whether the weapon is in the owner's hands now (ruling 81). */
 export function weaponInHand(b: Battle, weaponId: WeaponId): boolean {
   const combat = getEngine(b).wounds.combat;
@@ -3171,6 +3346,8 @@ export function pickUpWeapon(b: Battle, command: { id: string; actor: ActorId; w
     if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
     movementGate(state, command.actor);
     const hanging = weaponHanging(b, command.weapon);
+    if (state.impaled?.[command.weapon])
+      throw new Error('Оружие застряло в ране — его нужно извлечь (решение 119)');
     // Ruling 108: a knocked-out weapon is picked up only next to where it lies.
     const lying = b.loose?.[command.weapon];
     if (lying) {
