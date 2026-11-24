@@ -205,6 +205,8 @@ export interface EngineState {
   >;
   /** Zone ОБ before losses, recorded when corrosion starts (turn-start steps have no battle). */
   zoneArmour?: Record<string, number>;
+  /** «Первоклассный стрелок» used this fight: `${actor}:${weapon kind}`. */
+  firstClassUsed?: string[];
   /** Once-a-round talent rerolls: `${actor}:${talent}` → round used. */
   rerolls?: Record<string, number>;
   /** «Проникающее» (rulings 118–120): weapons stuck in a wound, by weapon ID. */
@@ -1852,6 +1854,35 @@ export function chargeDestination(b: Battle, actor: ActorId, target: ActorId) {
   );
   return cells.find((c) => !chargeProblem(b, actor, target, c)) ?? null;
 }
+/** «Знаток Стаб-/Болт-оружия» with a weapon of that kind (ruling 133). */
+export function weaponExpert(b: Battle, actor: ActorId, weaponId: WeaponId) {
+  const w = weaponOf(b, weaponId)?.arsenal;
+  const t = canonicalTalents(combatant(b, actor).character.talents);
+  return (
+    !!w &&
+    ((w.sheet === 'Стаб и РПУ' && t.includes('Знаток Стаб-оружия')) ||
+      (w.sheet === 'Болт' && t.includes('Знаток Болт-оружия')))
+  );
+}
+/**
+ * «Первоклассный стрелок (вид)» available for the ranged weapon in hand: the key
+ * `${actor}:${kind}` if unused this fight, otherwise null (ruling 134).
+ */
+export function firstClassKind(b: Battle, actor: ActorId, state = getEngine(b)) {
+  const specs = canonicalTalents(combatant(b, actor).character.talents).flatMap((t) => {
+    const m = /^первоклассный стрелок\s*\((.+)\)$/i.exec(t.trim());
+    return m ? m[1]!.split(',').map((x) => x.trim().toLowerCase()) : [];
+  });
+  if (!specs.length) return null;
+  for (const w of battleWeapons(b, actor)) {
+    if (!w.arsenal || !weaponInHandState(state, w.id) || weaponKind(w.arsenal) !== 'ranged')
+      continue;
+    const kind = (weaponKindName(w.arsenal) ?? '').toLowerCase();
+    const key = `${actor}:${kind}`;
+    if (kind && specs.includes(kind) && !(state.firstClassUsed ?? []).includes(key)) return key;
+  }
+  return null;
+}
 /** Called-attack penalties («Бой» A52), to cap the talents that reduce them. */
 const CALLED_PENALTY: Record<CalledLocation, number> = {
   Eyes: -50,
@@ -2124,6 +2155,43 @@ function resolve(
       }
     : {};
   if (command.charge && kind !== 'melee') throw new Error('Натиск — только с оружием ближнего боя');
+  // «Ненависть (Х)»: +10 in melee against a target tagged with a hated faction (ruling 135).
+  if (kind === 'melee') {
+    const hated = attackerTalentsCanon.flatMap((t) => {
+      const m = /^ненависть\s*\((.+)\)$/i.exec(t.trim());
+      return m ? m[1]!.split(',').map((x) => x.trim().toLowerCase()) : [];
+    });
+    const plain = attackerTalentsCanon.some((t) => t.trim().toLowerCase() === 'ненависть');
+    const tags = (combatant(b, command.target).character.factions ?? []).map((f) =>
+      f.trim().toLowerCase(),
+    );
+    const hates =
+      tags.some((f) => hated.includes(f)) ||
+      (plain &&
+        ask(command, {
+          key: 'hatred',
+          text: `${actorName(b, command.actor)}: «Ненависть» без уточнения. ${actorName(b, command.target)} — ненавистный враг? (решение 135)`,
+          options: [
+            { label: 'Да, +10', value: 1 },
+            { label: 'Нет', value: 0 },
+          ],
+        }) === 1);
+    if (hates) {
+      const src = { kind: 'talent', id: 'Таланты: Ненависть' };
+      ctx = {
+        ...ctx,
+        modifiers: [
+          ...ctx.modifiers,
+          {
+            id: `${command.id}:talent:Ненависть`,
+            value: 10,
+            source: src,
+            provenance: { source: src, reason: 'Ненавистный враг' },
+          },
+        ],
+      };
+    }
+  }
   // «Яростный натиск»: the charge gives +30 instead of +20 (ruling 132).
   if (command.charge && attackerTalentsCanon.includes('Яростный натиск')) {
     const src = { kind: 'talent', id: 'Таланты: Яростный натиск' };
@@ -3319,6 +3387,8 @@ export interface TurnActionCommand {
   characteristic?: 'СЛ' | 'ЛВ';
   /** «Очистить / сбросить броню»: the corroded zone. */
   zone?: Zone;
+  /** «Первоклассный стрелок»: the aim as the Free Action, once a fight (ruling 134). */
+  free?: boolean;
 }
 const turnActionName: Record<TurnActionType, string> = {
   'quick-aim': 'Быстрое прицеливание',
@@ -3377,7 +3447,12 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
       if (command.type === 'clear-malfunction') {
         const r = clearMalfunction(
           combat,
-          { ...base, type: 'clear-malfunction', weaponId: weapon.id },
+          {
+            ...base,
+            type: 'clear-malfunction',
+            weaponId: weapon.id,
+            ...(weaponExpert(b, command.actor, weapon.id) ? { oneRound: true } : {}),
+          },
           tape,
         );
         next = r.state;
@@ -3400,6 +3475,7 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
           type: 'reload',
           weaponId: weapon.id,
           containerId: spareId,
+          ...(weaponExpert(b, command.actor, weapon.id) ? { asFreeAction: true } : {}),
         });
         next = r.state;
         detail = { ...r.result };
@@ -3456,12 +3532,23 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
         },
       };
       detail = { freed, check, characteristic: key, modifier: held.modifier };
+    } else if (command.free && (command.type === 'quick-aim' || command.type === 'careful-aim')) {
+      const kind = firstClassKind(b, command.actor, state);
+      if (!kind)
+        throw new Error('«Первоклассный стрелок» уже использован или не подходит к оружию');
+      next = resolveCombatAction(
+        combat,
+        { ...base, type: command.type, freeAim: true } as Parameters<typeof resolveCombatAction>[1],
+        noDice,
+      ).state;
+      detail = { free: true, kind };
     } else {
       next = resolveCombatAction(combat, { ...base, type: command.type }, noDice).state;
     }
     const after = structuredClone(state);
     after.wounds = { ...after.wounds, combat: next };
     after.committed.push(command.id);
+    if (detail.free) after.firstClassUsed = [...(after.firstClassUsed ?? []), String(detail.kind)];
     if ((command.type === 'clean-armour' || command.type === 'drop-armour') && command.zone) {
       const key = `${command.actor}:${command.zone}`;
       const rest = { ...after.corrosion };
@@ -3872,6 +3959,7 @@ export const readyCost = (b: Battle, actorId: ActorId) =>
 /** Reload cost with «Быстрая перезарядка» (−1 ОД, 1 ОД → СД). */
 export function reloadCost(b: Battle, actorId: ActorId, weaponId: WeaponId): string {
   const base = getEngine(b).wounds.combat.weapons[weaponId]?.template.profile.reload.odCost ?? 1;
+  if (weaponExpert(b, actorId, weaponId)) return 'СД';
   const n = hasTalentNamed(b, actorId, RAPID_RELOAD_TALENT) ? base - 1 : base;
   return n <= 0 ? 'СД' : `${n} ОД`;
 }

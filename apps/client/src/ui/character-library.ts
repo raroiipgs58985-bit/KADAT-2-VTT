@@ -13,11 +13,18 @@ export function loadLibrary(): CharacterDocument[] {
     if (!raw) return [];
     const list = JSON.parse(raw) as unknown;
     if (!Array.isArray(list)) return [];
-    return list.filter(
-      (c): c is CharacterDocument =>
-        typeof c === 'object' &&
-        c !== null &&
-        characterProblems(c as CharacterDocument).length === 0,
+    return (
+      list
+        // Characters saved before faction tags (ruling 135) get an empty list.
+        .map((c: unknown) =>
+          typeof c === 'object' && c !== null && !('factions' in c) ? { ...c, factions: [] } : c,
+        )
+        .filter(
+          (c): c is CharacterDocument =>
+            typeof c === 'object' &&
+            c !== null &&
+            characterProblems(c as CharacterDocument).length === 0,
+        )
     );
   } catch {
     return [];

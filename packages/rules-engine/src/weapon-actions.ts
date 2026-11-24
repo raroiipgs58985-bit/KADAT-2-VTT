@@ -334,6 +334,8 @@ export function pickUpWeapon(
 }
 
 export interface ReloadRequest extends ActionRequest {
+  /** «Знаток Стаб-/Болт-оружия»: the reload is the Free Action (ruling 133). */
+  readonly asFreeAction?: boolean;
   readonly type: 'reload';
   readonly weaponId: string;
   readonly containerId: string;
@@ -366,7 +368,11 @@ export function reloadWeapon(
   const base = (weapon.pattern?.profile.reload ?? weapon.template.profile.reload).odCost;
   integer(base, 'reload OD cost', 1);
   // «Быстрая перезарядка»: 1 ОД faster; a 1-ОД reload becomes the Free Action (ruling 81).
-  const required = hasTalent(state, request.actor.actorId, RAPID_RELOAD_TALENT) ? base - 1 : base;
+  const required = request.asFreeAction
+    ? 0
+    : hasTalent(state, request.actor.actorId, RAPID_RELOAD_TALENT)
+      ? base - 1
+      : base;
   if (required === 0) {
     const context = scopedContext(state, request.actor, request.context, [], ['action:reload']);
     const spent = spendResources(state, request, definition('free-action', 0), context, 'own-turn');

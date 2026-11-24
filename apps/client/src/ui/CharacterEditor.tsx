@@ -474,6 +474,24 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
           + Навык
         </button>
 
+        <label>
+          Фракции (теги через запятую, для «Ненависти»)
+          <input
+            value={(doc.factions ?? []).join(', ')}
+            placeholder="например: Империум, Астра Милитарум"
+            onChange={(e) =>
+              set({
+                factions: e.target.value
+                  .split(',')
+                  .map((f) => f.trimStart())
+                  .filter((f, i, all) => f || i === all.length - 1),
+              })
+            }
+            onBlur={() =>
+              set({ factions: (doc.factions ?? []).map((f) => f.trim()).filter(Boolean) })
+            }
+          />
+        </label>
         <h3>Таланты</h3>
         <label>
           По одному на строке

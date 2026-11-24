@@ -70,7 +70,13 @@ export function resolveCombatAction(
         .reduce((n, m) => n + m.value, 0)
     : 0;
   integer(cost + equipmentOd, 'equipment-adjusted action cost', 0);
-  const action = definition(request.type, cost + equipmentOd, reactionCost);
+  // «Первоклассный стрелок»: an aim as the turn's Free Action (ruling 134).
+  const freeAim =
+    (request.type === 'quick-aim' || request.type === 'careful-aim') &&
+    (request as { readonly freeAim?: boolean }).freeAim === true;
+  const action = freeAim
+    ? definition('free-action', 0, 0)
+    : definition(request.type, cost + equipmentOd, reactionCost);
   const own =
     state.session.phase === 'turn-active' &&
     state.session.activeActor?.actorId === request.actor.actorId;
@@ -195,7 +201,11 @@ export function effectiveMovement(actor: CombatActionState['actors'][string]): {
 
 export function clearMalfunction(
   state: CombatActionState,
-  request: ActionRequest & { readonly weaponId: string },
+  request: ActionRequest & {
+    readonly weaponId: string;
+    /** «Знаток Стаб-/Болт-оружия»: clearing costs 1 round instead of the magazine (ruling 133). */
+    readonly oneRound?: boolean;
+  },
   source: DiceSource,
 ) {
   if (request.type !== 'clear-malfunction')
@@ -230,9 +240,24 @@ export function clearMalfunction(
   );
   const spent = spendResources(state, request, action, context, 'own-turn');
   const cleared = check.result.outcome === 'success';
+  // Ruling 133: a cleared jam empties the magazine; with the talent only one round is lost.
+  const container = weapon.loadedContainerId
+    ? spent.state.containers[weapon.loadedContainerId]
+    : undefined;
   const next = {
     ...spent.state,
     weapons: { ...state.weapons, [weapon.id]: { ...weapon, jammed: !cleared } },
+    ...(cleared && container
+      ? {
+          containers: {
+            ...spent.state.containers,
+            [container.id]: {
+              ...container,
+              currentRounds: request.oneRound ? Math.max(0, container.currentRounds - 1) : 0,
+            },
+          },
+        }
+      : {}),
   };
   const mutation = {
     type: 'jam-clear',

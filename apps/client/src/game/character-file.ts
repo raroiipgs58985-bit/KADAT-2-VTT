@@ -33,6 +33,7 @@ const KEYS = [
   'undersuit',
   'skills',
   'talents',
+  'factions',
   'weapons',
   'armourItems',
   'traits',
@@ -85,7 +86,10 @@ export function parseCharacterFile(text: string): CharacterDocument {
     root.schemaVersion === 1
       ? (exactKeys(
           raw,
-          KEYS.filter((k) => k !== 'armourItems' && k !== 'undersuit'),
+          KEYS.filter(
+            (k) =>
+              k !== 'armourItems' && k !== 'undersuit' && (k !== 'factions' || 'factions' in raw),
+          ),
           'персонаже',
         ),
         {
@@ -93,10 +97,14 @@ export function parseCharacterFile(text: string): CharacterDocument {
           schemaVersion: CHARACTER_SCHEMA_VERSION,
           armourItems: [],
           undersuit: noUndersuit,
+          factions: 'factions' in raw ? raw.factions : [],
         })
-      : 'undersuit' in raw
-        ? raw
-        : { ...raw, undersuit: noUndersuit };
+      : {
+          ...raw,
+          ...('undersuit' in raw ? {} : { undersuit: noUndersuit }),
+          // Faction tags came later (ruling 135): older files have none.
+          ...('factions' in raw ? {} : { factions: [] }),
+        };
   exactKeys(c, KEYS, 'персонаже');
   const doc = c as unknown as CharacterDocument;
   const problems = characterProblems(doc);

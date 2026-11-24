@@ -44,6 +44,8 @@ export interface CharacterDocument {
   /** Skills with their bonus (ruling 49): +0, +10, +15 … */
   readonly skills: readonly { readonly name: string; readonly bonus: number }[];
   readonly talents: readonly string[];
+  /** Faction tags («Хаос», «Орки», «Империум»…) for talents like «Ненависть (Х)» (ruling 135). */
+  readonly factions: readonly string[];
   /** Weapons from the Arsenal (ruling 48): `ref` is the Arsenal record once it is loaded. */
   readonly weapons: readonly {
     readonly name: string;
@@ -89,6 +91,7 @@ export function emptyCharacter(id: string, name = 'Новый персонаж')
     undersuit: { head: null, torso: null, arms: null, legs: null },
     skills: [],
     talents: [],
+    factions: [],
     weapons: [],
     armourItems: [],
     traits: '',
@@ -106,7 +109,11 @@ const text = (v: unknown, max: number) => typeof v === 'string' && v.length <= m
 
 /** Every problem that makes the character unusable in combat; empty when it is valid. */
 export function characterProblems(c: CharacterDocument): string[] {
-  const p: string[] = [];
+  const factionProblem =
+    !Array.isArray(c.factions) || c.factions.some((f) => typeof f !== 'string')
+      ? ['Фракции — список строк']
+      : [];
+  const p: string[] = [...factionProblem];
   const L = CHARACTER_LIMITS;
   if (!text(c.id, L.maxItemText) || !c.id.trim()) p.push('Нет идентификатора');
   if (!text(c.name, L.maxName) || !c.name.trim()) p.push('Нужно имя');

@@ -629,6 +629,41 @@ describe('Two weapons (rulings 105, 106)', () => {
       -Math.min(30, 5 * deg),
     );
   });
+  it('«Первоклассный стрелок (Лаз)»: an aim for the Free Action once a fight (ruling 134)', async () => {
+    const b = await gunslinger(['Первоклассный стрелок (Лаз)']);
+    startCombat(b, fixedDice('10:9,10:2'));
+    turnAction(b, { id: 'fa', actor: 'gun', type: 'careful-aim', free: true });
+    expect(turnInfo(b).od).toBe(2);
+    expect(() =>
+      turnAction(b, { id: 'fa2', actor: 'gun', type: 'quick-aim', free: true }),
+    ).toThrow();
+  });
+  it('a cleared jam empties the magazine; «Знаток Стаб-оружия» loses one round (ruling 133)', async () => {
+    const run = async (talents: string[]) => {
+      const b = await gunslinger(talents, 'Стаб-пистолет');
+      takeWeapon(b, { id: 't', actor: 'gun', weapon: 'gun:1' });
+      startCombat(b, fixedDice('10:9,10:2'));
+      const state = getEngine(b);
+      const w = state.wounds.combat.weapons['gun:1']!;
+      state.wounds = {
+        ...state.wounds,
+        combat: {
+          ...state.wounds.combat,
+          weapons: { ...state.wounds.combat.weapons, 'gun:1': { ...w, jammed: true } },
+        },
+      };
+      const full = b.ammo['gun:1']!;
+      turnAction(
+        b,
+        { id: 'cm', actor: 'gun', type: 'clear-malfunction', weapon: 'gun:1' },
+        fixedDice('100:1'),
+      );
+      return { left: b.ammo['gun:1'], full };
+    };
+    expect((await run([])).left).toBe(0);
+    const expert = await run(['Знаток Стаб-оружия']);
+    expect(expert.left).toBe(expert.full - 1);
+  });
   it('a two-handed weapon cannot be one of two weapons', async () => {
     const b = await gunslinger([], 'Лазган');
     expect(() =>
@@ -1539,6 +1574,20 @@ describe('More weapon properties in the fight', () => {
       r as { result: { attack: { totalDegrees: number }; hits: { location: string }[] } }
     ).result;
     expect(res.hits).toHaveLength(1 + Math.floor(res.attack.totalDegrees / 2));
+  });
+  it('«Ненависть (Хаос)»: +10 in melee against a target tagged «Хаос» (ruling 135)', async () => {
+    const mods = async (factions: string[]) => {
+      const { r } = await melee(
+        'Пневмо-копье',
+        (n) => (n === 0 ? 35 : 99),
+        { ...soft(), factions },
+        ['Ненависть (Хаос)'],
+      );
+      return (r as { result: { attack: { modifiers: { id: string; value: number }[] } } }).result
+        .attack.modifiers;
+    };
+    expect((await mods(['Хаос'])).find((m) => m.id === 'hit:talent:Ненависть')?.value).toBe(10);
+    expect((await mods(['Империум'])).find((m) => m.id === 'hit:talent:Ненависть')).toBeUndefined();
   });
   it('«Вырваться»: 2 ОД, СЛ test with −10 × Х frees the entangled (ruling 86)', async () => {
     const { b } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft());

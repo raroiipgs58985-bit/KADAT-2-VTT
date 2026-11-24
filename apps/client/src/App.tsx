@@ -1051,6 +1051,15 @@ export function App() {
                         dropWeapon(b, { id: commandId('drop'), actor: info.active, weapon: id }),
                       )
                     }
+                    onFreeAim={(type) =>
+                      run((b) =>
+                        turnAction(
+                          b,
+                          { id: commandId(type), actor: info.active, type, free: true },
+                          source(),
+                        ),
+                      )
+                    }
                     onExtract={(weapon) =>
                       run((b) =>
                         extractWeapon(

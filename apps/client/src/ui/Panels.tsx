@@ -14,6 +14,7 @@ import {
   entanglement,
   corrodedZones,
   impalements,
+  firstClassKind,
   otherWeaponInHand,
   oneHandedWeapon,
   disarmOptions,
@@ -649,6 +650,8 @@ export function ActionsPanel(props: {
   onDrop: (weapon: WeaponId) => void;
   onPickUp: (weapon: WeaponId) => void;
   onExtract?: (weapon: WeaponId) => void;
+  /** «Первоклассный стрелок»: an aim as the Free Action, once a fight. */
+  onFreeAim?: (type: 'quick-aim' | 'careful-aim') => void;
 }) {
   const all = battleWeapons(props.battle, props.actor).filter(
     (w) => w.arsenal && !weaponProblem(w.arsenal),
@@ -661,9 +664,25 @@ export function ActionsPanel(props: {
   const held = entanglement(props.battle, props.actor);
   const corroded = corrodedZones(props.battle, props.actor);
   const stuck = impalements(props.battle, props.actor);
+  const firstClass = firstClassKind(props.battle, props.actor);
   const zoneLabel = { head: 'голова', torso: 'торс', arms: 'руки', legs: 'ноги' } as const;
   return (
     <div className="stack">
+      {firstClass && props.onFreeAim && (
+        <div className="row">
+          {(['quick-aim', 'careful-aim'] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              disabled={!props.canAct}
+              onClick={() => props.onFreeAim!(t)}
+            >
+              {t === 'quick-aim' ? 'Быстрое' : 'Тщательное'} прицеливание за СД (Первоклассный
+              стрелок, раз за бой)
+            </button>
+          ))}
+        </div>
+      )}
       {stuck.map((x) => (
         <button
           key={x.weapon}
