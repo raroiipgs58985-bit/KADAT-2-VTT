@@ -8,7 +8,7 @@ export const PROFICIENCY_PENALTY = -30;
 const norm = (s: string) => s.toLowerCase().replace(/ё/g, 'е').trim();
 
 /** Arsenal sheets of xenos weapons: exotic, each type needs its own «Владение экзотическим оружием». */
-export const EXOTIC_SHEETS = ['Аэльдари', 'Друкхари', 'Тау'];
+export const EXOTIC_SHEETS = ['Аэльдари', 'Друкхари', 'Тау', 'Оружие Механикус'];
 export const isExotic = (w: ArsenalWeapon) => EXOTIC_SHEETS.includes(w.sheet);
 
 export function weaponKindName(w: ArsenalWeapon): string | null {
