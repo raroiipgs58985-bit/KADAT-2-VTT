@@ -731,7 +731,7 @@ function applyCrippling(state: EngineState) {
 const sum = (rolls: readonly DiceRoll[]) => rolls.reduce((s, r) => s + r.value, 0);
 
 /** Properties the polygon does not apply automatically yet: shown to the GM after the hit. */
-const MANUAL_PROPERTIES = new Set(['Галлюциногенное', 'Взрыв', 'Частичное опутывание']);
+const MANUAL_PROPERTIES = new Set(['Галлюциногенное', 'Частичное опутывание']);
 
 /**
  * Context of the target's reaction with its skill (ruling 49): the skill bonus is added;
@@ -1134,11 +1134,13 @@ function resolveHit(
   logs: unknown[],
   /** One damage roll shared by several targets («Спрей», «Взрыв»). */
   preRoll?: ReturnType<typeof resolveDamageRoll>['result'],
+  /** «Взрыв»: ОБ of the undersuit, halvings of damage and ББ beyond Х, extra traits. */
+  area?: { ob: number; halvings: number; extraTraits: WeaponTraitReference[] },
 ) {
   const attacker = combatant(b, command.actor).character;
   const target = combatant(b, command.target).character;
   const sl = bonusOf(attacker, 'СЛ');
-  const traits: readonly WeaponTraitReference[] =
+  const baseTraits: readonly WeaponTraitReference[] =
     info.kind === 'melee' &&
     command.meleeBase === 'reckless' &&
     canonicalTalents(attacker.talents).includes('Громовой удар')
@@ -1149,7 +1151,15 @@ function resolveHit(
             : [{ name: 'Оглушающее', value: 2 }]),
         ]
       : info.traits;
-  const armour = zoneArmour(b, state, command, hit.location);
+  const traits: readonly WeaponTraitReference[] = area?.extraTraits.length
+    ? [
+        ...baseTraits.filter((t) => !area.extraTraits.some((x) => x.name === t.name)),
+        ...area.extraTraits,
+      ]
+    : baseTraits;
+  const armour = area
+    ? { key: `${command.target}:blast`, ob: area.ob, base: area.ob, loss: 0, zone: null }
+    : zoneArmour(b, state, command, hit.location);
   setPhase('damage');
   const roll = preRoll ?? resolveDamageRoll(hit.profile.expression, rng, hit.context).result;
   // «Знаток Цепного оружия»: one more к10 for the damage, the lowest die is dropped (ruling 126).
@@ -1229,12 +1239,18 @@ function resolveHit(
     notes.push('Сила: бСЛ ниже нужного — урон /2');
   }
   total = Math.max(0, total);
-  const penetration =
+  let penetration =
     hit.penetration.value * bonus.penetrationMultiplier +
     bonus.penetrationAdd +
     talentBonus.penetration.reduce((a, t) => a + t.value, 0) +
     meltaMaster +
     thunder;
+  // «Взрыв» (ruling 143): every metre beyond Х halves damage and ББ (down).
+  if (area?.halvings) {
+    total = Math.floor(total / 2 ** area.halvings);
+    penetration = Math.floor(penetration / 2 ** area.halvings);
+    notes.push(`Взрыв: ${area.halvings} м за радиусом — урон и ББ /${2 ** area.halvings}`);
+  }
   for (const t of talentBonus.penetration) notes.push(`${t.talent}: ББ +${t.value}`);
   // «Цепное»: the armour element loses ОБ equal to ББ at once (rulings 5, 16).
   if (hasTrait(traits, 'Цепное') && armour.zone) {
@@ -2278,6 +2294,186 @@ function segmentHitsRect(
   }
   return true;
 }
+/** Scatter scheme (ruling 144): d10 → direction in units of forward / left. */
+const SCATTER: Record<number, [number, number]> = {
+  1: [1, 1],
+  2: [1, 0],
+  3: [1, -1],
+  4: [0, 1],
+  5: [0, -1],
+  6: [-1, 1],
+  7: [-1, 1],
+  8: [-1, 0],
+  9: [-1, -1],
+  10: [-1, -1],
+};
+/**
+ * «Взрыв (Х)» / «Локальный взрыв (Х)» (rulings 143–144): one damage roll per blast; full damage
+ * within Х m, every metre beyond Х halves damage and ББ («Локальный» — nothing beyond Х);
+ * into the undersuit (sheet, otherwise the GM), consequences by the torso table; the epicentre
+ * adds «Калечащее (3)», −1 per metre. Walls between the epicentre and a target shield it. A
+ * missed «Взрыв» scatters 2к10 by the scheme (П/ОС — m, ТО/СТ — ×5 m).
+ */
+function resolveBlasts(
+  b: Battle,
+  state: EngineState,
+  command: AttackCommand,
+  info: Parameters<typeof resolveHit>[4],
+  hitCount: number,
+  blast: { radius: number; local: boolean },
+  rng: DiceSource,
+  logs: unknown[],
+) {
+  const from = posOf(b, command.actor),
+    aim = posOf(b, command.target);
+  const points: { x: number; y: number; scatter?: { dir: number; distance: number } }[] = [];
+  if (hitCount > 0) for (let i = 0; i < hitCount; i++) points.push({ ...aim });
+  else if (!blast.local) {
+    const dir = rollDie(10, rng).value;
+    const distance = rollDie(10, rng).value * (['ТО', 'СТ'].includes(info.weaponClass) ? 5 : 1);
+    const len = Math.hypot(aim.x - from.x, aim.y - from.y) || 1;
+    const fwd = { x: (aim.x - from.x) / len, y: (aim.y - from.y) / len };
+    const left = { x: fwd.y, y: -fwd.x };
+    const [f, l] = SCATTER[dir]!;
+    const v = { x: fwd.x * f + left.x * l, y: fwd.y * f + left.y * l };
+    const n = Math.hypot(v.x, v.y);
+    points.push({
+      x: Math.min(b.map.cols, Math.max(0, aim.x + (v.x / n) * distance)),
+      y: Math.min(b.map.rows, Math.max(0, aim.y + (v.y / n) * distance)),
+      scatter: { dir, distance },
+    });
+  }
+  const combat = state.wounds.combat;
+  const template = combat.weapons[command.weapon]!.template.profile;
+  const out: unknown[] = [];
+  for (const [k, at] of points.entries()) {
+    setPhase('damage');
+    const roll = resolveDamageRoll(
+      template.damage.expression,
+      rng,
+      context(combat, command.actor),
+    ).result;
+    setPhase('attack');
+    const targets: unknown[] = [];
+    for (const id of actorIds(b)) {
+      if (state.wounds.actors[id]?.life.status === 'DEAD') continue;
+      const p = posOf(b, id);
+      const d = Math.hypot(p.x - at.x, p.y - at.y);
+      const beyond = Math.max(0, Math.ceil(d - blast.radius - 1e-9));
+      if (blast.local ? d > blast.radius + 1e-9 : beyond > 8) continue;
+      if (d > 0 && sightLine(at, p, sceneGeometry(b)).blocker) continue;
+      if (zoneDodge(b, state, command, id, 'blast', rng, logs)) {
+        targets.push({ actor: id, avoided: true });
+        continue;
+      }
+      const c = combatant(b, id).character;
+      const ob =
+        c.undersuit.torso ??
+        ask(command, {
+          key: `blast-ob:${id}`,
+          text: `«Взрыв»: ${c.name} — сколько ОБ поддоспешника / сочленений? (решение 143)`,
+          min: 0,
+          max: 99,
+        });
+      const crippling = Math.max(0, 3 - Math.floor(d));
+      const src = { kind: 'weapon-property', id: 'Свойства оружия: Взрыв' };
+      const hit: DamageInput = {
+        hitId: `${command.id}:blast:${k}:${id}`,
+        attackId: command.id,
+        attacker: ref(command.actor),
+        target: ref(id),
+        location: 'Torso',
+        profile: template.damage,
+        penetration: template.penetration,
+        transformations: [],
+        tags: ['blast'],
+        context: context(state.wounds.combat, command.actor, id),
+        provenance: [{ source: src, reason: 'Урон по области' }],
+      };
+      targets.push({
+        actor: id,
+        avoided: false,
+        distance: Number(d.toFixed(1)),
+        ...resolveHit(
+          b,
+          state,
+          { ...command, target: id },
+          hit,
+          { ...info, distance: d },
+          rng,
+          logs,
+          roll,
+          {
+            ob,
+            halvings: blast.local ? 0 : beyond,
+            extraTraits: crippling ? [{ name: 'Калечащее', value: crippling }] : [],
+          },
+        ),
+      });
+    }
+    out.push({ at, scatter: at.scatter ?? null, dice: roll.rolls.map((r) => r.value), targets });
+  }
+  return out;
+}
+/**
+ * Leaving an area attack (rulings 143, 145): the GM says whether the target can leave the zone
+ * or get behind solid cover within СКР; if so, an Уклонение +0 test (no skill — GM penalty).
+ */
+function zoneDodge(
+  b: Battle,
+  state: EngineState,
+  command: AttackCommand,
+  id: ActorId,
+  kind: 'spray' | 'blast',
+  rng: DiceSource,
+  logs: unknown[],
+) {
+  const name = actorName(b, id);
+  const label = kind === 'spray' ? '«Спрей»' : '«Взрыв»';
+  const canLeave =
+    ask(command, {
+      key: `${kind}:${id}`,
+      text: `${label}: может ли ${name} уйти из зоны или за сплошное укрытие в пределах СКР? (тест Уклонения +0)`,
+      options: [
+        { label: 'Да — тест Уклонения', value: 1 },
+        { label: 'Нет — попадание', value: 0 },
+      ],
+    }) === 1;
+  if (!canLeave) return false;
+  const c = combatant(b, id).character;
+  const skill = c.skills.find((s) => s.name.toLowerCase() === 'уклонение');
+  const bonus =
+    skill?.bonus ??
+    ask(command, {
+      key: `${kind}-untrained:${id}`,
+      text: `${name}: нет навыка «Уклонение». Какой штраф к тесту? (решение 49)`,
+      min: -60,
+      max: 0,
+    });
+  const src = { kind: 'gm', id: `Уклонение: ${label}` };
+  const check = resolveCheck(
+    {
+      baseValue: c.characteristics.ЛВ.value,
+      finalSuper: c.characteristics.ЛВ.super,
+      context: {
+        ...context(state.wounds.combat, id, command.actor),
+        modifiers: bonus
+          ? [
+              {
+                id: `${command.id}:${kind}-dodge:${id}`,
+                value: bonus,
+                source: src,
+                provenance: { source: src, reason: skill ? 'навык' : 'штраф ведущего' },
+              },
+            ]
+          : [],
+      },
+    },
+    rng,
+  ).result;
+  logs.push({ type: `${kind}-dodge`, actor: id, check });
+  return check.outcome === 'success';
+}
 /**
  * «Спрей» (rulings 144–145): a 45° sector on the optimal range towards the chosen target hits
  * everyone in it not behind a wall. Who can leave the zone or get behind solid cover within
@@ -2339,52 +2535,7 @@ function sprayResolve(
   setPhase('attack');
   const targets: unknown[] = [];
   for (const id of inside) {
-    const name = actorName(b, id);
-    const canLeave =
-      ask(command, {
-        key: `spray:${id}`,
-        text: `«Спрей»: может ли ${name} уйти из зоны или за сплошное укрытие в пределах СКР? (тест Уклонения +0)`,
-        options: [
-          { label: 'Да — тест Уклонения', value: 1 },
-          { label: 'Нет — попадание', value: 0 },
-        ],
-      }) === 1;
-    let avoided = false;
-    if (canLeave) {
-      const c = combatant(b, id).character;
-      const skill = c.skills.find((s) => s.name.toLowerCase() === 'уклонение');
-      const bonus =
-        skill?.bonus ??
-        ask(command, {
-          key: `spray-untrained:${id}`,
-          text: `${name}: нет навыка «Уклонение». Какой штраф к тесту? (решение 49)`,
-          min: -60,
-          max: 0,
-        });
-      const src = { kind: 'gm', id: 'Уклонение от Спрея' };
-      const check = resolveCheck(
-        {
-          baseValue: c.characteristics.ЛВ.value,
-          finalSuper: c.characteristics.ЛВ.super,
-          context: {
-            ...context(state.wounds.combat, id, command.actor),
-            modifiers: bonus
-              ? [
-                  {
-                    id: `${command.id}:spray-dodge:${id}`,
-                    value: bonus,
-                    source: src,
-                    provenance: { source: src, reason: skill ? 'навык' : 'штраф ведущего' },
-                  },
-                ]
-              : [],
-          },
-        },
-        rng,
-      ).result;
-      logs.push({ type: 'spray-dodge', actor: id, check });
-      avoided = check.outcome === 'success';
-    }
+    const avoided = zoneDodge(b, state, command, id, 'spray', rng, logs);
     if (avoided) {
       targets.push({ actor: id, avoided: true });
       continue;
@@ -2840,6 +2991,7 @@ function resolve(
   let overheat: unknown = null;
   let knockdownDamage: unknown = null;
   let spray: unknown = null;
+  let blasts: unknown = null;
   let stunned: unknown = null;
   // «Перегрев»: the weapon cools down — no shots this round and the next (ruling 137).
   const cooling = state.overheated?.[command.weapon];
@@ -2966,7 +3118,22 @@ function resolve(
     const result = resolved.resolution.result;
     attack = result;
     degrees = result.check.totalDegrees;
-    hits.push(...result.hits.map((h) => damageInputFromHit(h)));
+    const blastX = traits.find((t) => t.name === 'Взрыв')?.value;
+    const localX = traits.find((t) => t.name === 'Локальный взрыв')?.value;
+    if ((blastX || localX) && !result.overheated)
+      // «Взрыв» / «Локальный взрыв» (rulings 143–144): hits become blasts around the target;
+      // a missed «Взрыв» scatters by the scheme.
+      blasts = resolveBlasts(
+        b,
+        state,
+        command,
+        { ...info, degrees: result.check.totalDegrees },
+        result.hitsGenerated - (result.dodge?.cancelledHits ?? 0),
+        blastX ? { radius: blastX, local: false } : { radius: localX!, local: true },
+        rng,
+        logs,
+      );
+    else hits.push(...result.hits.map((h) => damageInputFromHit(h)));
     if (result.dodge) reaction = result.dodge;
     if (result.overheated) {
       overheat = applyOverheat(b, state, command, arsenalWeapon, rng, logs);
@@ -3208,6 +3375,7 @@ function resolve(
     ...(overheat ? { overheat } : {}),
     ...(knockdownDamage ? { knockdownDamage } : {}),
     ...(spray ? { spray } : {}),
+    ...(blasts ? { blasts } : {}),
     ...(stunned ? { stunned } : {}),
     ...(command.technique === 'grapple' &&
     state.wounds.combat.melee?.grapples.some(

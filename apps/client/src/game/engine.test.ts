@@ -984,6 +984,73 @@ describe('«Спрей» (rulings 144–145)', () => {
   });
 });
 
+describe('«Взрыв» (rulings 143–144)', () => {
+  const scene = async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const gun = matchWeaponByName('Плазмоган')!;
+    const t = (id: string) => ({ ...emptyCharacter(id, id), wounds: 200 });
+    const b = createBattle([
+      {
+        character: {
+          ...emptyCharacter('s', 'Стрелок'),
+          characteristics: { ...emptyCharacter('x').characteristics, НС: { value: 60, super: 0 } },
+          talents: ['Владение оружием (Плазма)'],
+          weapons: [{ name: gun.name, ref: gun.id }],
+        },
+        side: 'a',
+        at: { x: 3.5, y: 10.5 },
+        id: 's',
+      },
+      { character: t('a'), side: 'b', at: { x: 8.5, y: 10.5 }, id: 'a' },
+      { character: t('b'), side: 'b', at: { x: 9.5, y: 10.5 }, id: 'b' },
+      { character: t('c'), side: 'b', at: { x: 12.5, y: 10.5 }, id: 'c' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2,10:3,10:4'));
+    return b;
+  };
+  const answers = {
+    'cover:a': 0,
+    'cover:b': 0,
+    'cover:c': 0,
+    'blast:a': 0,
+    'blast:b': 0,
+    'blast:c': 0,
+    'blast-ob:a': 0,
+    'blast-ob:b': 0,
+    'blast-ob:c': 0,
+    'blast:s': 0,
+    'blast-ob:s': 0,
+  };
+  type Blasts = {
+    result: {
+      blasts: {
+        scatter: { dir: number; distance: number } | null;
+        targets: { actor: string; notes: string[] }[];
+      }[];
+    };
+  };
+  it('a hit blasts everyone around the target; beyond Х the damage halves each metre', async () => {
+    const b = await scene();
+    const r = attack(b, shot({ id: 'pl', actor: 's', target: 'a', weapon: 's:0', answers }), {
+      roll: (sides: number) => (sides === 100 ? 5 : 5),
+    });
+    expect(r.status).toBe('RESOLVED');
+    const blast = (r as Blasts).result.blasts[0]!;
+    expect(blast.scatter).toBeNull();
+    // The shooter, 5 m away, is still inside the halving zone.
+    expect(blast.targets.map((x) => x.actor).sort()).toEqual(['a', 'b', 'c', 's']);
+    const far = blast.targets.find((x) => x.actor === 'c')!;
+    expect(far.notes.some((n) => n.startsWith('Взрыв: 3 м за радиусом'))).toBe(true);
+  });
+  it('a miss scatters by the scheme', async () => {
+    const b = await scene();
+    const r = attack(b, shot({ id: 'pl', actor: 's', target: 'a', weapon: 's:0', answers }), {
+      roll: (sides: number) => (sides === 100 ? 99 : 2),
+    });
+    expect((r as Blasts).result.blasts[0]!.scatter).toEqual({ dir: 2, distance: 2 });
+  });
+});
+
 describe('«Натиск» (ruling 132)', () => {
   const setup = async (talents: string[] = [], targetX = 9.5) => {
     const { matchWeaponByName } = await import('./arsenal');

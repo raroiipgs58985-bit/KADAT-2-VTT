@@ -341,6 +341,39 @@ export function describeEntry(
             : 'В конусе никого.',
           tone: 'success',
         };
+      const blasts = (
+        a.result as {
+          blasts?: {
+            scatter: { dir: number; distance: number } | null;
+            dice: number[];
+            targets: { actor: string; avoided: boolean; finalDamage?: number }[];
+          }[];
+        }
+      ).blasts;
+      if (blasts)
+        return {
+          ...base,
+          title: `${name(a.command.actor)}: взрыв (${weapon})`,
+          summary: blasts.length
+            ? blasts
+                .map(
+                  (x) =>
+                    `${x.scatter ? `Промах — отклонение: направление ${x.scatter.dir}, ${x.scatter.distance} м. ` : ''}Урон ${x.dice.join('+')}: ${
+                      x.targets.length
+                        ? x.targets
+                            .map((t) =>
+                              t.avoided
+                                ? `${name(t.actor)} — ушёл из зоны`
+                                : `${name(t.actor)} — ${t.finalDamage} ран`,
+                            )
+                            .join('; ')
+                        : 'никого не задело'
+                    }.`,
+                )
+                .join(' ')
+            : 'Промах.',
+          tone: 'success',
+        };
       const tech = (a.command as { technique?: string }).technique;
       if (tech === 'grapple' || tech === 'stun' || tech === 'knockdown')
         return {
