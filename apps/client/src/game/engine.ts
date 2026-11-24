@@ -254,7 +254,7 @@ export interface AttackCommand {
    */
   charge?: { x: number; y: number };
   /** «Стремительная» / «Молниеносная атака» in melee (talents, ruling 130). */
-  meleeBase?: 'swift' | 'lightning';
+  meleeBase?: 'swift' | 'lightning' | 'cautious' | 'reckless';
   /** Internal: «Двойной выстрел» — the first shot hit, the second gets +20 (ruling 127). */
   doubleShot?: boolean;
 }
@@ -1121,8 +1121,18 @@ function resolveHit(
 ) {
   const attacker = combatant(b, command.actor).character;
   const target = combatant(b, command.target).character;
-  const traits = info.traits;
   const sl = bonusOf(attacker, 'СЛ');
+  const traits: readonly WeaponTraitReference[] =
+    info.kind === 'melee' &&
+    command.meleeBase === 'reckless' &&
+    canonicalTalents(attacker.talents).includes('Громовой удар')
+      ? [
+          ...info.traits.filter((t) => t.name !== 'Оглушающее' || (t.value ?? 0) < 2),
+          ...(info.traits.some((t) => t.name === 'Оглушающее' && (t.value ?? 0) >= 2)
+            ? []
+            : [{ name: 'Оглушающее', value: 2 }]),
+        ]
+      : info.traits;
   const armour = zoneArmour(b, state, command, hit.location);
   setPhase('damage');
   const roll = resolveDamageRoll(hit.profile.expression, rng, hit.context).result;
@@ -1170,6 +1180,14 @@ function resolveHit(
       ? 2 * Math.ceil(Math.max(0, info.degrees) / 2)
       : 0;
   if (meltaMaster) notes.push(`Мастер Мельта-оружия: ББ +${meltaMaster}`);
+  // «Громовой удар»: a reckless melee attack gets ББ + ½ бСЛ (up) and «Оглушающее (2)» (ruling 136).
+  const thunder =
+    info.kind === 'melee' &&
+    command.meleeBase === 'reckless' &&
+    canonicalTalents(attacker.talents).includes('Громовой удар')
+      ? Math.ceil(sl / 2)
+      : 0;
+  if (thunder) notes.push(`Громовой удар: ББ +${thunder}, Оглушающее (2)`);
   // Talents (ruling 121): «Сокрушительный удар/выстрел», «Мастер Болт/Лаз/Плазменного оружия».
   const talentBonus = talentDamage({
     talents: canonicalTalents(attacker.talents),
@@ -1194,7 +1212,8 @@ function resolveHit(
     hit.penetration.value * bonus.penetrationMultiplier +
     bonus.penetrationAdd +
     talentBonus.penetration.reduce((a, t) => a + t.value, 0) +
-    meltaMaster;
+    meltaMaster +
+    thunder;
   for (const t of talentBonus.penetration) notes.push(`${t.talent}: ББ +${t.value}`);
   // «Цепное»: the armour element loses ОБ equal to ББ at once (rulings 5, 16).
   if (hasTrait(traits, 'Цепное') && armour.zone) {

@@ -355,7 +355,7 @@ export interface AttackForm {
   /** Attack with both weapons in hand (ruling 105). */
   dual?: boolean;
   /** «Стремительная» / «Молниеносная атака» (ruling 130). */
-  meleeBase?: 'swift' | 'lightning' | '';
+  meleeBase?: 'swift' | 'lightning' | 'cautious' | 'reckless' | '';
 }
 
 export function AttackPanel(props: {
@@ -483,26 +483,28 @@ export function AttackPanel(props: {
           )}
         </div>
       )}
-      {weapon?.arsenal &&
-        weaponKind(weapon.arsenal) === 'melee' &&
-        meleeAttackKinds(props.battle, attacker).length > 0 && (
-          <label>
-            Тип атаки
-            <select
-              value={form.meleeBase ?? ''}
-              onChange={(e) => set({ meleeBase: e.target.value as 'swift' | 'lightning' | '' })}
-            >
-              <option value="">Обычная</option>
-              {meleeAttackKinds(props.battle, attacker).map((k) => (
-                <option key={k} value={k}>
-                  {k === 'swift'
-                    ? 'Стремительная (1 ОД, +1 попадание за 2 ст.)'
-                    : 'Молниеносная (1 ОД, −10, +1 попадание за ст., до бНР)'}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+      {weapon?.arsenal && weaponKind(weapon.arsenal) === 'melee' && (
+        <label>
+          Тип атаки
+          <select
+            value={form.meleeBase ?? ''}
+            onChange={(e) =>
+              set({ meleeBase: e.target.value as NonNullable<AttackForm['meleeBase']> })
+            }
+          >
+            <option value="">Стандартная (1 ОД, +10)</option>
+            <option value="cautious">Осторожная (1 ОД, −10; +10 к уклонению и парированию)</option>
+            <option value="reckless">Безоглядная (1 ОД, +30; нельзя уклоняться)</option>
+            {meleeAttackKinds(props.battle, attacker).map((k) => (
+              <option key={k} value={k}>
+                {k === 'swift'
+                  ? 'Стремительная (1 ОД, +1 попадание за 2 ст.)'
+                  : 'Молниеносная (1 ОД, −10, +1 попадание за ст., до бНР)'}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {props.onCharge &&
         weapon?.arsenal &&
         weaponKind(weapon.arsenal) === 'melee' &&

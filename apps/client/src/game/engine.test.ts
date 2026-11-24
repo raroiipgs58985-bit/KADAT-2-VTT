@@ -1589,6 +1589,46 @@ describe('More weapon properties in the fight', () => {
     expect((await mods(['Хаос'])).find((m) => m.id === 'hit:talent:Ненависть')?.value).toBe(10);
     expect((await mods(['Империум'])).find((m) => m.id === 'hit:talent:Ненависть')).toBeUndefined();
   });
+  it('«Громовой удар»: a reckless attack gets ББ + ½ бСЛ and «Оглушающее (2)» (ruling 136)', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const w = matchWeaponByName('Пневмо-копье')!;
+    const b = createBattle([
+      {
+        character: {
+          ...emptyCharacter('brute', 'Боец'),
+          characteristics: {
+            ...emptyCharacter('x').characteristics,
+            НР: { value: 60, super: 0 },
+            СЛ: { value: 60, super: 0 },
+          },
+          talents: ['Громовой удар'],
+          weapons: [{ name: w.name, ref: w.id }],
+        },
+        side: 'a',
+        at: { x: 5.5, y: 10.5 },
+        id: 'brute',
+      },
+      { character: soft(), side: 'b', at: { x: 6.5, y: 10.5 }, id: 'pak' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    let n = 0;
+    const r = attack(
+      b,
+      shot({
+        id: 'hit',
+        actor: 'brute',
+        weapon: 'brute:0',
+        meleeBase: 'reckless',
+        answers: { 'proficiency:brute:0': 1, 'impale:hit:hit:pak': 0 },
+      }),
+      { roll: (sides: number) => (sides === 100 ? (n++ === 0 ? 35 : 99) : 5) },
+    );
+    expect(r.status).toBe('RESOLVED');
+    const hit = (r as { result: { hits: { notes: string[]; effects: { property: string }[] }[] } })
+      .result.hits[0]!;
+    expect(hit.notes).toContain('Громовой удар: ББ +3, Оглушающее (2)');
+    expect(hit.effects.map((e) => e.property)).toContain('Оглушающее');
+  });
   it('«Вырваться»: 2 ОД, СЛ test with −10 × Х frees the entangled (ruling 86)', async () => {
     const { b } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft());
     // Entangle the target directly as «Опутывающее (1)» would.
