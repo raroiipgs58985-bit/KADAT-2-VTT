@@ -204,7 +204,7 @@ export interface EngineState {
   /** Zone ОБ before losses, recorded when corrosion starts (turn-start steps have no battle). */
   zoneArmour?: Record<string, number>;
   /** «Проникающее» (rulings 118–120): weapons stuck in a wound, by weapon ID. */
-  impaled?: Record<WeaponId, { target: ActorId; location: string; skr: boolean }>;
+  impaled?: Record<WeaponId, { target: ActorId; location: string; skr: boolean; skrLoss?: number }>;
 }
 export interface AttackCommand {
   id: string;
@@ -242,6 +242,8 @@ export interface AttackCommand {
   dualPrimary?: string;
   /** Internal: the other weapon of the two-weapon attack. */
   dualWith?: WeaponId;
+  /** Internal: «Двойной выстрел» — the first shot hit, the second gets +20 (ruling 127). */
+  doubleShot?: boolean;
 }
 export class ContextRequired extends Error {
   override readonly name = 'ContextRequired';
@@ -1584,13 +1586,15 @@ function resolveHit(
     if (stuck) {
       const loc = hit.location;
       const skr = loc === 'Torso' || loc.includes('Leg');
-      state.impaled = {
-        ...state.impaled,
-        [command.weapon]: { target: command.target, location: loc, skr },
-      };
       const combat = state.wounds.combat;
       const blade = combat.melee?.weapons[command.weapon];
       const runtime = combat.actors[command.target]!;
+      // СКР never drops to 0 (the core needs a positive value): at most down to 0.5.
+      const skrLoss = skr ? Math.max(0, Math.min(1, runtime.movement - 0.5)) : 0;
+      state.impaled = {
+        ...state.impaled,
+        [command.weapon]: { target: command.target, location: loc, skr, skrLoss },
+      };
       state.wounds = {
         ...state.wounds,
         combat: {
@@ -1609,7 +1613,7 @@ function resolveHit(
           actors: skr
             ? {
                 ...combat.actors,
-                [command.target]: { ...runtime, movement: Math.max(0, runtime.movement - 1) },
+                [command.target]: { ...runtime, movement: runtime.movement - skrLoss },
               }
             : combat.actors,
         },
@@ -1786,6 +1790,20 @@ function withTalentTraits(
   const own = traits.find((t) => t.name === 'Проверенное');
   if (own && (own.value ?? 0) >= value) return traits;
   return [...traits.filter((t) => t.name !== 'Проверенное'), { name: 'Проверенное', value }];
+}
+/** «Двойной выстрел»: two ranged weapons, the first attack succeeded (ruling 127). */
+function doubleShot(b: Battle, command: AttackCommand, first: { attack: unknown }) {
+  const ranged = (id: WeaponId) => {
+    const w = weaponOf(b, id)?.arsenal;
+    return !!w && weaponKind(w) === 'ranged';
+  };
+  return (
+    canonicalTalents(combatant(b, command.actor).character.talents).includes('Двойной выстрел') &&
+    ranged(command.weapon) &&
+    !!command.second &&
+    ranged(command.second) &&
+    (first.attack as { check?: { outcome?: string } } | null)?.check?.outcome === 'success'
+  );
 }
 /** Called-attack penalties («Бой» A52), to cap the talents that reduce them. */
 const CALLED_PENALTY: Record<CalledLocation, number> = {
@@ -2050,6 +2068,36 @@ function resolve(
         ...(kind === 'ranged' && arsenalWeapon.weaponClass === 'ОС' ? { oneHanded: true } : {}),
       }
     : {};
+  if (command.doubleShot) {
+    const src = { kind: 'talent', id: 'Таланты: Двойной выстрел' };
+    ctx = {
+      ...ctx,
+      modifiers: [
+        ...ctx.modifiers,
+        {
+          id: `${command.id}:talent:Двойной выстрел`,
+          value: 20,
+          source: src,
+          provenance: { source: src, reason: 'Первый выстрел попал' },
+        },
+      ],
+    };
+  }
+  const family = weaponFamily(arsenalWeapon, traits);
+  // «Шквал лазогня»: las bursts get +1 degree if the shooter has not moved this turn.
+  const squall =
+    kind === 'ranged' &&
+    family === 'las' &&
+    attackerTalentsCanon.includes('Шквал лазогня') &&
+    !state.moves.some(
+      (m) => m.actor === command.actor && m.turn === state.wounds.combat.session.turnsStarted,
+    )
+      ? 1
+      : 0;
+  // «Знаток Лаз-оружия»: the target's dodge −5 × degrees of the hit, at most −30.
+  const lasExpert =
+    kind === 'ranged' && family === 'las' && attackerTalentsCanon.includes('Знаток Лаз-оружия');
+  let lasPenalty = 0;
   const info = {
     kind,
     traits,
@@ -2132,13 +2180,28 @@ function resolve(
             mode: command.calledLocation ? 'single' : mode,
             shotsRequested: shots,
             ...dualRequest,
+            ...(squall ? { bonusDegrees: squall } : {}),
             distance,
             dodgeable: true,
             ...(defense === 'DODGE'
               ? {
                   dodge: {
                     id: `${command.id}:dodge`,
-                    context: reactionContext(b, state, command, 'Уклонение'),
+                    context: reactionContext(
+                      b,
+                      state,
+                      command,
+                      'Уклонение',
+                      lasPenalty
+                        ? [
+                            {
+                              id: `${command.id}:las-expert`,
+                              value: lasPenalty,
+                              reason: 'Знаток Лаз-оружия',
+                            },
+                          ]
+                        : [],
+                    ),
                   },
                 }
               : {}),
@@ -2147,11 +2210,15 @@ function resolve(
           src,
         ),
       );
-    const trial = command.defense
-      ? null
-      : runRanged('DECLINE', peekSource).resolution.result.hitsGenerated > 0;
+    const trialRun =
+      command.defense && !(lasExpert && command.defense === 'DODGE')
+        ? null
+        : runRanged('DECLINE', peekSource).resolution.result;
+    const trial = command.defense ? null : (trialRun?.hitsGenerated ?? 0) > 0;
+    if (lasExpert && trialRun?.check.outcome === 'success')
+      lasPenalty = -Math.min(30, 5 * trialRun.check.totalDegrees);
     const defense = askDefense(trial ?? false, false);
-    const resolved = runRanged(defense, command.defense ? rng : realSource);
+    const resolved = runRanged(defense, trialRun ? realSource : rng);
     state.wounds = resolved.state;
     logs.push(resolved.projectionLog, ...resolved.resolution.logs);
     const result = resolved.resolution.result;
@@ -2339,6 +2406,7 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
               weapon: command.second,
               dualPrimary: command.id,
               dualWith: command.weapon,
+              ...(doubleShot(b, command, first) ? { doubleShot: true } : {}),
             },
             rng,
             logs,
@@ -3488,7 +3556,7 @@ export function extractWeapon(
         ...combat,
         actors: {
           ...combat.actors,
-          [stuck.target]: { ...runtime, movement: runtime.movement + 1 },
+          [stuck.target]: { ...runtime, movement: runtime.movement + (stuck.skrLoss ?? 1) },
         },
       };
     }

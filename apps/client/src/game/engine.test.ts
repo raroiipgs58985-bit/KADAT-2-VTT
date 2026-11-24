@@ -565,6 +565,64 @@ describe('Two weapons (rulings 105, 106)', () => {
       melta.range.meters! + 90,
     );
   });
+  it('«Двойной выстрел»: the first shot hit — the second gets +20 (ruling 127)', async () => {
+    const b = await gunslinger(['Двойной выстрел']);
+    takeWeapon(b, { id: 't2', actor: 'gun', weapon: 'gun:1', keep: 'gun:0' });
+    startCombat(b, fixedDice('10:9,10:2'));
+    const seq = [35];
+    let n = 0;
+    const r = attack(
+      b,
+      shot({
+        id: 'pair',
+        actor: 'gun',
+        weapon: 'gun:0',
+        second: 'gun:1',
+        defense: 'DECLINE',
+        answers: { 'cover:pak': 0, 'second:cover:pak': 0 },
+      }),
+      { roll: (sides: number) => (sides === 100 ? (seq[n++] ?? 95) : 5) },
+    );
+    const second = (
+      r as {
+        result: { second: { attack: { check: { modifiers: { id: string; value: number }[] } } } };
+      }
+    ).result.second;
+    expect(
+      second.attack.check.modifiers.find((m) => m.id === 'pair:2:talent:Двойной выстрел')?.value,
+    ).toBe(20);
+  });
+  it('«Знаток Лаз-оружия»: the dodge gets −5 × degrees of the hit, at most −30', async () => {
+    const b = await gunslinger(['Знаток Лаз-оружия']);
+    startCombat(b, fixedDice('10:9,10:2'));
+    const r = attack(
+      b,
+      shot({
+        id: 'las',
+        actor: 'gun',
+        weapon: 'gun:0',
+        defense: 'DODGE',
+        answers: { 'cover:pak': 0 },
+      }),
+      // Attack 05, dodge 50, later checks 99.
+      ((seq: number[]) => {
+        let n = 0;
+        return { roll: (sides: number) => (sides === 100 ? (seq[n++] ?? 99) : 5) };
+      })([5, 50]),
+    );
+    const res = (
+      r as {
+        result: {
+          attack: { check: { totalDegrees: number } };
+          reaction: { check: { modifiers: { id: string; value: number }[] } };
+        };
+      }
+    ).result;
+    const deg = res.attack.check.totalDegrees;
+    expect(res.reaction.check.modifiers.find((m) => m.id === 'las:las-expert')?.value).toBe(
+      -Math.min(30, 5 * deg),
+    );
+  });
   it('a two-handed weapon cannot be one of two weapons', async () => {
     const b = await gunslinger([], 'Лазган');
     expect(() =>

@@ -351,14 +351,17 @@ export function resolveRangedAttack(
   );
   // Default 96+; «Надежное» 100, «Ненадежное» 81+ (ruling 69).
   const malfunction = isMalfunction(prepared.traits, check.result.rawRoll);
+  // «Шквал лазогня»: +1 degree for burst hits, only on a success (ruling 127).
+  const burstDegrees =
+    check.result.totalDegrees + (request.mode !== 'single' ? (request.bonusDegrees ?? 0) : 0);
   const baseHits =
     check.result.outcome !== 'success' || malfunction
       ? 0
       : request.mode === 'single'
         ? 1
         : request.mode === 'short-burst'
-          ? Math.min(hitCap(request), 1 + Math.floor(check.result.totalDegrees / 2))
-          : Math.min(hitCap(request), check.result.totalDegrees);
+          ? Math.min(hitCap(request), 1 + Math.floor(burstDegrees / 2))
+          : Math.min(hitCap(request), burstDegrees);
   // «Шторм (Х)»: +Х hits per degree, never above the declared rate (rulings 66, 70).
   const hitsGenerated = stormHits(prepared.traits, {
     mode: request.mode,

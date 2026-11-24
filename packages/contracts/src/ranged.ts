@@ -30,6 +30,8 @@ export interface RangedAttackRequest extends ActionRequest {
   readonly dodge?: { readonly id: string; readonly context: ResolutionContext };
   /** Basic (ОС) weapon held in one hand: −20 («Бой» A31). */
   readonly oneHanded?: boolean;
+  /** Extra degrees of success for burst hits (talent «Шквал лазогня»). */
+  readonly bonusDegrees?: number;
   /**
    * Tactical advance («Бой» A62): 2 ОД, movement in a mode other than Run/Sprint plus the shot;
    * НС +0 step (Полудвижение), −10 fast step (Полное), −20 charge (Натиск, СКР × 3).
