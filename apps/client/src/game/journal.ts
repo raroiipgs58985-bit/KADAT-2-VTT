@@ -323,7 +323,9 @@ export function describeEntry(
               ? '+10 к следующему выстрелу.'
               : c.type === 'careful-aim'
                 ? '+20 к следующему выстрелу.'
-                : '';
+                : c.type === 'break-free'
+                  ? `Тест ${String(d.characteristic)}${d.modifier ? ` ${String(d.modifier)}` : ''}: ${d.freed ? 'вырвался, путы сброшены.' : 'не вырвался, всё ещё опутан.'} Потрачен весь ход (2 ОД).`
+                  : '';
       return {
         ...base,
         title: `${name(c.actor)}: ${String(d.name)}`,
@@ -331,6 +333,13 @@ export function describeEntry(
         tone: 'success',
       };
     }
+    case 'crippling':
+      return {
+        ...base,
+        title: `${name(d.actor)}: калечащее ранение`,
+        summary: `Потрачен 2-й ОД за ход — −${String(d.wounds)} ран («Калечащее», решение 89).${d.agony ? ' Раны на нуле — агония.' : ''}`,
+        tone: 'warning',
+      };
     case 'take-weapon':
       return {
         ...base,

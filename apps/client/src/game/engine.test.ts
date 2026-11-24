@@ -28,6 +28,7 @@ import {
   pickUpCost,
   weaponDropped,
   weaponHanging,
+  entanglement,
   type AttackCommand,
 } from './engine';
 import { fixedDice } from './dice';
@@ -735,5 +736,82 @@ describe('More weapon properties in the fight', () => {
     const { b, r } = await melee('Дизрапторный кулак Сатурна', (n) => (n === 0 ? 35 : 99));
     expect(r.status).toBe('RESOLVED');
     expect(actorStatus(b, 'pak').life).toBe('DEAD');
+  });
+  const soft = () => ({
+    ...emptyCharacter('soft', 'Мишень'),
+    wounds: 300,
+    armour: { head: 0, torso: 0, arms: 0, legs: 0 },
+  });
+  type Hits = { result: { hits: { effects: { property: string; state?: string }[] }[] } };
+  it('«Деструктор (1)»: damage above ОБ — a separate wound of 1к10 (ruling 88)', async () => {
+    const { b, r } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft());
+    expect(r.status).toBe('RESOLVED');
+    const effects = (r as Hits).result.hits[0]!.effects;
+    expect(effects.find((e) => e.property === 'Деструктор')?.state).toMatch(/отдельное ранение 5/);
+    expect(b.log.some((e) => e.type === 'attack')).toBe(true);
+  });
+  it('«Калечащее (2)»: −2 wounds as soon as the target spends its 2nd ОД (ruling 89)', async () => {
+    // Later d100 (secondary checks of the consequence) pass with 1.
+    const { b, r } = await melee('Клевец', (n) => (n === 0 ? 35 : 1), soft());
+    expect(r.status).toBe('RESOLVED');
+    expect((r as Hits).result.hits[0]!.effects.map((e) => e.property)).toContain('Калечащее');
+    // Light bleeding pulses at the start of the turn (the core rolls for it).
+    nextTurn(b, { roll: (sides: number) => (sides === 100 ? 50 : 1) });
+    expect(getEngine(b).pendingTurn).toBeUndefined();
+    const before = b.hp.pak!;
+    turnAction(b, { id: 'aim1', actor: 'pak', type: 'quick-aim' });
+    expect(b.hp.pak).toBe(before);
+    turnAction(b, { id: 'aim2', actor: 'pak', type: 'quick-aim' });
+    expect(b.hp.pak).toBe(before - 2);
+    expect(b.log.some((e) => e.type === 'crippling')).toBe(true);
+  });
+  it('«Вырваться»: 2 ОД, СЛ test with −10 × Х frees the entangled (ruling 86)', async () => {
+    const { b } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft());
+    // Entangle the target directly as «Опутывающее (1)» would.
+    const state = getEngine(b);
+    const session = state.wounds.combat.session;
+    state.wounds = {
+      ...state.wounds,
+      combat: {
+        ...state.wounds.combat,
+        session: {
+          ...session,
+          conditions: [
+            ...session.conditions,
+            {
+              id: 'net',
+              type: 'Helpless',
+              actor: { actorId: 'pak' },
+              sources: [],
+              provenance: [],
+              stackingRule: 'REJECT',
+              unit: 'round',
+              appliedRound: session.roundNumber,
+              durationRounds: 99,
+              expiresAfterRound: session.roundNumber + 98,
+              effects: [],
+              breakFree: -10,
+            } as never,
+          ],
+        },
+      },
+    };
+    nextTurn(b, fixedDice(''));
+    expect(entanglement(b, 'pak')).toEqual({ id: 'net', modifier: -10 });
+    turnAction(
+      b,
+      { id: 'bf1', actor: 'pak', type: 'break-free', characteristic: 'СЛ' },
+      fixedDice('100:99'),
+    );
+    expect(entanglement(b, 'pak')).not.toBeNull();
+    expect(turnInfo(b).od).toBe(0);
+    nextTurn(b, fixedDice(''));
+    nextTurn(b, fixedDice(''));
+    turnAction(
+      b,
+      { id: 'bf2', actor: 'pak', type: 'break-free', characteristic: 'СЛ' },
+      fixedDice('100:1'),
+    );
+    expect(entanglement(b, 'pak')).toBeNull();
   });
 });

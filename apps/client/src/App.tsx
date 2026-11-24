@@ -988,7 +988,7 @@ export function App() {
                         dropWeapon(b, { id: commandId('drop'), actor: info.active, weapon: id }),
                       )
                     }
-                    onAction={(type, weapon) =>
+                    onAction={(type, weapon, characteristic) =>
                       run((b) =>
                         turnAction(
                           b,
@@ -997,6 +997,7 @@ export function App() {
                             actor: info.active,
                             type,
                             ...(weapon ? { weapon } : {}),
+                            ...(characteristic ? { characteristic } : {}),
                           },
                           source(),
                         ),

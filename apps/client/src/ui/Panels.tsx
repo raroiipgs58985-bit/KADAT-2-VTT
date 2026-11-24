@@ -11,6 +11,7 @@ import {
   pickUpCost,
   readyCost,
   reloadCost,
+  entanglement,
   type TurnActionType,
   type MoveMode,
   type MoveOption,
@@ -545,7 +546,7 @@ export function ActionsPanel(props: {
   actor: ActorId;
   canAct: boolean;
   od: number | null;
-  onAction: (type: TurnActionType, weapon?: WeaponId) => void;
+  onAction: (type: TurnActionType, weapon?: WeaponId, characteristic?: 'СЛ' | 'ЛВ') => void;
   onTake: (weapon: WeaponId) => void;
   onDrop: (weapon: WeaponId) => void;
   onPickUp: (weapon: WeaponId) => void;
@@ -558,8 +559,29 @@ export function ActionsPanel(props: {
   );
   const od = props.od ?? 0;
   const state = (id: WeaponId) => weaponState(props.battle, id);
+  const held = entanglement(props.battle, props.actor);
   return (
     <div className="stack">
+      {held && (
+        <div className="weapon-note badge-blocked">
+          <p>
+            Опутан: другие действия недоступны. Вырваться — весь ход (2 ОД), тест СЛ или ЛВ
+            {held.modifier ? ` ${held.modifier}` : ''} (решение 86).
+          </p>
+          <div className="row">
+            {(['СЛ', 'ЛВ'] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                disabled={!props.canAct || od < 2}
+                onClick={() => props.onAction('break-free', undefined, k)}
+              >
+                Вырваться ({k})
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="action-grid">
         <button
           type="button"

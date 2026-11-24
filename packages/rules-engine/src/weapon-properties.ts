@@ -18,7 +18,7 @@ export const PROPERTY_SOURCES: Readonly<Record<string, string>> = {
   Гибкое: 'Свойства оружия, стр. 11',
   Громоздкое: 'Свойства оружия, стр. 14',
   Дисперсия: 'Свойства оружия, стр. 15',
-  Деструктор: 'Свойства оружия, стр. 16; решение 71',
+  Деструктор: 'Свойства оружия, стр. 16; решения 71, 88',
   Заряд: 'Свойства оружия, стр. 23',
   Когти: 'Свойства оружия, стр. 30; решение 72',
   Контузия: 'Свойства оружия, стр. 28; решение 73',
@@ -467,6 +467,13 @@ export function afterHitTests(
  * «Деструктор (Х)»: when the damage is greater than the armour (ОБ after ББ, ruling 71 — even if
  * бВН absorbs the rest) the target takes Х d10 more that ignore armour.
  */
+/**
+ * «Калечащее (Х)»: unabsorbed damage gives light bleeding and Х wounds lost when the target
+ * spends the 2nd ОД in a turn (ruling 89); null — no property.
+ */
+export const cripplingWounds = (traits: readonly WeaponTrait[]) =>
+  rating(traits, 'Калечащее') ?? null;
+
 export function destroyerDice(
   traits: readonly WeaponTrait[],
   damage: number,

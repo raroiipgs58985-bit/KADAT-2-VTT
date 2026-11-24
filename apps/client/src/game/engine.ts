@@ -21,6 +21,8 @@ import {
   adjustDamageDice,
   concussion,
   instantDeath,
+  destroyerDice,
+  cripplingWounds,
   remainingRounds,
   afterHitTests,
   applyStunned,
@@ -154,6 +156,10 @@ export interface EngineState {
   moves: { turn: number; actor: ActorId; mode: MoveMode }[];
   /** A runner failed the ЛВ test on difficult terrain: the GM picks where they fall (ruling 42). */
   pendingFall?: { actor: ActorId; commandId: string; zone: string };
+  /** «Калечащее (Х)»: wounds lost when the actor spends the 2nd ОД in a turn (ruling 89). */
+  crippling?: Record<ActorId, number>;
+  /** ОД at the start of the current turn and whether «Калечащее» was applied in it. */
+  turnOd?: { turn: number; start: number; applied: boolean };
 }
 export interface AttackCommand {
   id: string;
@@ -307,6 +313,14 @@ function sync(b: Battle, state: EngineState) {
   }
   const active = state.wounds.combat.session.activeActor?.actorId;
   if (active) b.active = active;
+  const crippled = applyCrippling(state);
+  if (crippled) {
+    b.hp[crippled.actor] = Math.max(
+      0,
+      maxWounds(b, crippled.actor) - state.wounds.actors[crippled.actor]!.damageTaken,
+    );
+    append(b, 'crippling', crippled);
+  }
   engines.set(b, state);
 }
 function begin(state: EngineState, rng: DiceSource, logs: unknown[]) {
@@ -347,6 +361,11 @@ function begin(state: EngineState, rng: DiceSource, logs: unknown[]) {
   state.suppression = {
     suppressed: [...sup.state.suppressed],
     processedEventIds: [...sup.state.processedEventIds],
+  };
+  state.turnOd = {
+    turn: state.wounds.combat.session.turnsStarted,
+    start: state.wounds.combat.session.turn?.od ?? 0,
+    applied: false,
   };
 }
 
@@ -453,32 +472,55 @@ function postDamage(
   if (result.result.status !== 'RESOLVED')
     throw new ContextRequired(intentText(result.result.pendingIntents));
   state.wounds = result.result.status === 'RESOLVED' ? result.state : state.wounds;
-  // Ruling 83: wounds down to 0 — Agony as for the consequence «СМЕРТЬ» (2 × бВН rounds).
-  const w = state.wounds.actors[command.target];
-  if (w && w.life.status === 'ALIVE' && w.damageTaken >= w.maxWounds) {
-    const vn = state.wounds.combat.actors[command.target]!.characteristics.ВН!;
-    const bVN = Math.floor(vn.baseValue / 10) + vn.baseSuper;
-    const planned = planDeath(
-      state.wounds,
-      ref(command.target),
-      bVN,
-      {
-        source: { kind: 'author-ruling', id: 'Решение 83: раны 0 — агония' },
-        reason: 'Wounds reached 0: Agony as for the consequence «СМЕРТЬ»',
-      },
-      null,
-    );
-    state.wounds = planned.state;
-    logs.push({ type: 'zero-wounds-agony', actor: command.target, bVN });
-  }
+  zeroWoundsAgony(state, command.target, logs);
   return result.result;
+}
+/** Ruling 83: wounds down to 0 — Agony as for the consequence «СМЕРТЬ» (2 × бВН rounds). */
+function zeroWoundsAgony(state: EngineState, id: ActorId, logs: unknown[]) {
+  const w = state.wounds.actors[id];
+  if (!w || w.life.status !== 'ALIVE' || w.damageTaken < w.maxWounds) return;
+  const vn = state.wounds.combat.actors[id]!.characteristics.ВН!;
+  const bVN = Math.floor(vn.baseValue / 10) + vn.baseSuper;
+  const planned = planDeath(
+    state.wounds,
+    ref(id),
+    bVN,
+    {
+      source: { kind: 'author-ruling', id: 'Решение 83: раны 0 — агония' },
+      reason: 'Wounds reached 0: Agony as for the consequence «СМЕРТЬ»',
+    },
+    null,
+  );
+  state.wounds = planned.state;
+  logs.push({ type: 'zero-wounds-agony', actor: id, bVN });
+}
+/**
+ * «Калечащее (Х)» (ruling 89): the actor loses Х wounds as soon as it spends the 2nd ОД of its
+ * turn; once per turn. Returns the journal record or null.
+ */
+function applyCrippling(state: EngineState) {
+  const session = state.wounds.combat.session;
+  const turn = session.turn;
+  const od = state.turnOd;
+  if (!turn || !od || od.turn !== session.turnsStarted || od.applied) return null;
+  const id = turn.actor.actorId;
+  const x = state.crippling?.[id];
+  if (!x || od.start - turn.od < 2) return null;
+  const w = state.wounds.actors[id];
+  if (!w || w.life.status !== 'ALIVE') return null;
+  state.turnOd = { ...od, applied: true };
+  state.wounds = {
+    ...state.wounds,
+    actors: { ...state.wounds.actors, [id]: { ...w, damageTaken: w.damageTaken + x } },
+  };
+  const logs: unknown[] = [];
+  zeroWoundsAgony(state, id, logs);
+  return { actor: id, wounds: x, agony: logs.length > 0 };
 }
 const sum = (rolls: readonly DiceRoll[]) => rolls.reduce((s, r) => s + r.value, 0);
 
 /** Properties the polygon does not apply automatically yet: shown to the GM after the hit. */
 const MANUAL_PROPERTIES = new Set([
-  'Деструктор',
-  'Калечащее',
   'Токсичное',
   'Огненное',
   'Галлюциногенное',
@@ -903,6 +945,46 @@ function resolveHit(
   setPhase('consequence');
   const wound = postDamage(state, damage.result, command, rng, logs);
   setPhase('property');
+  // «Деструктор (Х)» (rulings 71, 88): damage above ОБ after ББ — Хк10 as a separate wound,
+  // without armour, minus бВН, with its own consequence.
+  const destroyerX = destroyerDice(traits, total, Math.max(0, ob - penetration));
+  let destroyer: { dice: number[]; finalDamage: number } | null = null;
+  if (destroyerX > 0 && state.wounds.actors[command.target]?.life.status !== 'DEAD') {
+    setPhase('damage');
+    const expression = { count: destroyerX, sides: 10, modifier: 0 };
+    const dInput: DamageInput = {
+      ...hit,
+      hitId: `${hit.hitId}:destroyer`,
+      profile: { ...hit.profile, expression },
+      penetration: { ...hit.penetration, value: 0 },
+      transformations: [],
+    };
+    const dRoll = resolveDamageRoll(expression, rng, hit.context).result;
+    const dd = resolveProtectionDamage(
+      {
+        input: dInput,
+        state: protectionFor(state, dInput, 0),
+        endurance: { baseValue: vn.value, baseSuper: vn.super },
+        preRolled: dRoll,
+      },
+      {
+        roll: () => {
+          throw new Error('Unexpected damage reroll');
+        },
+      },
+    );
+    logs.push({ type: 'destroyer', dice: dRoll.rolls }, ...dd.logs);
+    if (dd.result.status !== 'RESOLVED')
+      throw new ContextRequired(JSON.stringify(dd.result.status));
+    state.protection = dd.state;
+    setPhase('consequence');
+    postDamage(state, dd.result, command, rng, logs);
+    setPhase('property');
+    destroyer = {
+      dice: dRoll.rolls.map((r) => r.value),
+      finalDamage: dd.result.finalDamage ?? 0,
+    };
+  }
   const effects = applyAfterHit(
     b,
     state,
@@ -912,6 +994,60 @@ function resolveHit(
     rng,
     logs,
   );
+  if (destroyer)
+    effects.push({
+      property: 'Деструктор',
+      passed: false,
+      state: `отдельное ранение ${destroyer.dice.join('+')} → ${destroyer.finalDamage} ран`,
+    });
+  // «Калечащее (Х)»: unabsorbed damage — light bleeding and Х wounds at the 2nd ОД (ruling 89).
+  const crippleX = cripplingWounds(traits);
+  if (
+    crippleX &&
+    (damage.result.finalDamage ?? 0) > 0 &&
+    state.wounds.actors[command.target]?.life.status === 'ALIVE'
+  ) {
+    state.crippling = {
+      ...state.crippling,
+      [command.target]: Math.max(state.crippling?.[command.target] ?? 0, crippleX),
+    };
+    const injury = wound.injuriesCreated[0];
+    const w = state.wounds.actors[command.target]!;
+    if (injury && !w.bleeding.some((x) => x.id === `${injury.id}:crippling`)) {
+      const session = state.wounds.combat.session;
+      state.wounds = {
+        ...state.wounds,
+        actors: {
+          ...state.wounds.actors,
+          [command.target]: {
+            ...w,
+            bleeding: [
+              ...w.bleeding,
+              {
+                id: `${injury.id}:crippling`,
+                injuryId: injury.id,
+                consequence: injury.consequence,
+                severity: 'LIGHT',
+                location: injury.location,
+                active: true,
+                appliedRound: session.roundNumber,
+                appliedTurn: session.turnsStarted,
+                provenance: {
+                  source: { kind: 'weapon-property', id: 'Свойства оружия: Калечащее' },
+                  reason: 'Непоглощённый урон: лёгкое кровотечение',
+                },
+              },
+            ],
+          },
+        },
+      };
+    }
+    effects.push({
+      property: 'Калечащее',
+      passed: false,
+      state: `лёгкое кровотечение, −${crippleX} ран при 2-м ОД за ход`,
+    });
+  }
   // «Мгновенная смерть»: damage after absorption ≥ 2 × бВН kills on the spot.
   if (
     instantDeath(traits, damage.result.finalDamage ?? 0, damage.result.bVN ?? 0) &&
@@ -2014,13 +2150,16 @@ export function weaponSupport(b: Battle, id: WeaponId): WeaponSupport {
     : { level: 'supported', note: 'Свойства оружия учитываются автоматически.' };
 }
 
-export type TurnActionType = 'quick-aim' | 'careful-aim' | 'wait' | 'reload' | 'clear-malfunction';
+export type TurnActionType =
+  'quick-aim' | 'careful-aim' | 'wait' | 'reload' | 'clear-malfunction' | 'break-free';
 export interface TurnActionCommand {
   id: string;
   actor: ActorId;
   type: TurnActionType;
   /** Weapon for reload and clearing a jam. */
   weapon?: WeaponId;
+  /** «Вырваться»: the characteristic of the test (СЛ or ЛВ, «Опутывающее»). */
+  characteristic?: 'СЛ' | 'ЛВ';
 }
 const turnActionName: Record<TurnActionType, string> = {
   'quick-aim': 'Быстрое прицеливание',
@@ -2028,7 +2167,15 @@ const turnActionName: Record<TurnActionType, string> = {
   wait: 'Выжидание',
   reload: 'Перезарядка',
   'clear-malfunction': 'Исправление осечки',
+  'break-free': 'Вырваться из пут',
 };
+/** The entanglement («Опутывающее») holding the actor, if any. */
+export function entanglement(b: Battle, actorId: ActorId) {
+  const c = getEngine(b).wounds.combat.session.conditions.find(
+    (x) => x.actor.actorId === actorId && x.type === 'Helpless' && 'breakFree' in x,
+  );
+  return c ? { id: c.id, modifier: (c as unknown as { breakFree: number }).breakFree } : null;
+}
 /**
  * Actions of the turn through the accepted Core: aiming (1 / 2 ОД, +10 / +20 to the next
  * shot), waiting (1 ОД), reloading (ОД of the weapon, may go on next turn) and clearing a jam
@@ -2091,6 +2238,47 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
         detail = { ...r.result };
       }
       detail.weaponName = weaponOf(b, command.weapon!)?.name ?? command.weapon;
+    } else if (command.type === 'break-free') {
+      // Ruling 86: 2 ОД (the whole turn), СЛ or ЛВ test with −10 × Х; success frees the actor.
+      const held = entanglement(b, command.actor);
+      if (!held) throw new Error('Персонаж не опутан');
+      const turn = combat.session.turn!;
+      if (turn.od < 2) throw new Error('Нужно 2 ОД — весь ход (решение 86)');
+      const ch = combatant(b, command.actor).character.characteristics;
+      const key = command.characteristic ?? (ch.ЛВ.value > ch.СЛ.value ? 'ЛВ' : 'СЛ');
+      const gm = { kind: 'weapon-property', id: 'Свойства оружия: Опутывающее' };
+      const check = resolveCheck(
+        {
+          baseValue: ch[key].value,
+          finalSuper: ch[key].super,
+          context: {
+            ...base.context,
+            modifiers: held.modifier
+              ? [
+                  {
+                    id: `${command.id}:break-free`,
+                    value: held.modifier,
+                    source: gm,
+                    provenance: { source: gm, reason: 'Вырваться: −10 × Х' },
+                  },
+                ]
+              : [],
+          },
+        },
+        tape,
+      ).result;
+      const freed = check.outcome === 'success';
+      next = {
+        ...combat,
+        session: {
+          ...combat.session,
+          turn: { ...turn, od: 0 },
+          conditions: freed
+            ? combat.session.conditions.filter((c) => c.id !== held.id)
+            : combat.session.conditions,
+        },
+      };
+      detail = { freed, check, characteristic: key, modifier: held.modifier };
     } else {
       next = resolveCombatAction(combat, { ...base, type: command.type }, noDice).state;
     }
