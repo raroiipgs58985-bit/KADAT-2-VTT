@@ -1099,6 +1099,23 @@ export function App() {
                       )
                     }
                     fromHands={heavyFromHands(battle, info.active)}
+                    onCharge={(at) =>
+                      run((b) =>
+                        attack(
+                          b,
+                          {
+                            id: commandId('charge'),
+                            actor: info.active,
+                            target: form.target,
+                            weapon: form.weapon,
+                            targetActivity: form.activity,
+                            modifier: form.modifier,
+                            charge: at,
+                          },
+                          source(),
+                        ),
+                      )
+                    }
                     onDisarm={(weapon) =>
                       run((b) =>
                         disarm(

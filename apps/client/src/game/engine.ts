@@ -22,6 +22,7 @@ import {
   concussion,
   instantDeath,
   destroyerDice,
+  opposedMeleeCheck,
   resolveHitLocations,
   talentDamage,
   talentAttackModifiers,
@@ -245,6 +246,11 @@ export interface AttackCommand {
   dualPrimary?: string;
   /** Internal: the other weapon of the two-weapon attack. */
   dualWith?: WeaponId;
+  /**
+   * «Натиск» (2 ОД, НР +20; «Бой», core base «charge»): the attacker moves in a straight line to
+   * this cell next to the target (at most 3 × СКР) and strikes (ruling 132).
+   */
+  charge?: { x: number; y: number };
   /** «Стремительная» / «Молниеносная атака» in melee (talents, ruling 130). */
   meleeBase?: 'swift' | 'lightning';
   /** Internal: «Двойной выстрел» — the first shot hit, the second gets +20 (ruling 127). */
@@ -756,6 +762,7 @@ function parryRequest(
   state: EngineState,
   command: AttackCommand,
   attackingTraits: readonly WeaponTraitReference[],
+  extra: { id: string; value: number; reason: string }[] = [],
 ) {
   const melee = state.wounds.combat.melee!;
   const weaponId = melee.actors[command.target]?.weaponId;
@@ -773,17 +780,14 @@ function parryRequest(
     type: 'parry' as const,
     weaponId: weapon.id,
     pool: 'normal' as const,
-    context: reactionContext(
-      b,
-      state,
-      command,
-      'Парирование',
-      options.modifiers.map((m, i) => ({
+    context: reactionContext(b, state, command, 'Парирование', [
+      ...options.modifiers.map((m, i) => ({
         id: `${command.id}:parry-property:${i}`,
         value: m.value,
         reason: `${m.property} (${m.source})`,
       })),
-    ),
+      ...extra,
+    ]),
   };
 }
 
@@ -1813,6 +1817,41 @@ function doubleShot(b: Battle, command: AttackCommand, first: { attack: unknown 
     (first.attack as { check?: { outcome?: string } } | null)?.check?.outcome === 'success'
   );
 }
+/**
+ * Why the charge to `at` is impossible: the cell must be free and next to the target (≤ 1.5 m),
+ * the straight path free of walls and closed doors, at most 3 × СКР (ruling 132).
+ */
+export function chargeProblem(
+  b: Battle,
+  actor: ActorId,
+  target: ActorId,
+  at: { x: number; y: number },
+): string | null {
+  const from = posOf(b, actor);
+  const to = posOf(b, target);
+  if (Math.hypot(at.x - to.x, at.y - to.y) > 1.5 + 1e-9)
+    return 'Натиск заканчивается рядом с целью';
+  const skr = getEngine(b).wounds.combat.actors[actor]?.movement ?? 0;
+  const d = Math.hypot(at.x - from.x, at.y - from.y);
+  if (d > skr * 3 + 1e-9) return `Натиск — не дальше 3 × СКР (${skr * 3} м)`;
+  const place = placementProblemFor(b, actor, at);
+  if (place) return place;
+  const wall = sightLineBlocker(from, at, sceneGeometry(b));
+  if (wall) return `Путь натиска перекрыт: ${wall.label}`;
+  return null;
+}
+/** The nearest free cell next to the target for a charge, or null. */
+export function chargeDestination(b: Battle, actor: ActorId, target: ActorId) {
+  const from = posOf(b, actor);
+  const to = posOf(b, target);
+  const cells: { x: number; y: number }[] = [];
+  for (const dx of [-1, 0, 1])
+    for (const dy of [-1, 0, 1]) if (dx || dy) cells.push({ x: to.x + dx, y: to.y + dy });
+  cells.sort(
+    (a, c) => Math.hypot(a.x - from.x, a.y - from.y) - Math.hypot(c.x - from.x, c.y - from.y),
+  );
+  return cells.find((c) => !chargeProblem(b, actor, target, c)) ?? null;
+}
 /** Called-attack penalties («Бой» A52), to cap the talents that reduce them. */
 const CALLED_PENALTY: Record<CalledLocation, number> = {
   Eyes: -50,
@@ -1873,9 +1912,17 @@ function resolve(
     throw new Error('Сейчас ход другого персонажа');
   if (state.wounds.actors[command.actor]!.life.status !== 'ALIVE')
     throw new ContextRequired('Действия в агонии и после смерти не разрешаются.');
-  const p = posOf(b, command.actor)!,
+  const from = posOf(b, command.actor)!;
+  const p = command.charge ?? from,
     q = posOf(b, command.target)!,
     distance = Math.hypot(p.x - q.x, p.y - q.y);
+  const chargeDistance = command.charge
+    ? Math.hypot(command.charge.x - from.x, command.charge.y - from.y)
+    : 0;
+  if (command.charge) {
+    const problem = chargeProblem(b, command.actor, command.target, command.charge);
+    if (problem) throw new Error(problem);
+  }
   let ctx = context(state.wounds.combat, command.actor, command.target);
   if (command.modifier !== undefined) {
     if (!Number.isInteger(command.modifier)) throw new Error('Модификатор должен быть целым');
@@ -2076,6 +2123,43 @@ function resolve(
         ...(kind === 'ranged' && arsenalWeapon.weaponClass === 'ОС' ? { oneHanded: true } : {}),
       }
     : {};
+  if (command.charge && kind !== 'melee') throw new Error('Натиск — только с оружием ближнего боя');
+  // «Яростный натиск»: the charge gives +30 instead of +20 (ruling 132).
+  if (command.charge && attackerTalentsCanon.includes('Яростный натиск')) {
+    const src = { kind: 'talent', id: 'Таланты: Яростный натиск' };
+    ctx = {
+      ...ctx,
+      modifiers: [
+        ...ctx.modifiers,
+        {
+          id: `${command.id}:talent:Яростный натиск`,
+          value: 10,
+          source: src,
+          provenance: { source: src, reason: 'Натиск +30 вместо +20' },
+        },
+      ],
+    };
+  }
+  // «Безумный натиск»: against a smaller target an opposed СЛ test (free action); a win gives
+  // the target −30 to parry and dodge this attack (ruling 132).
+  let frenzyPenalty = 0;
+  if (
+    command.charge &&
+    attackerTalentsCanon.includes('Безумный натиск') &&
+    combatant(b, command.target).character.size < combatant(b, command.actor).character.size
+  ) {
+    const opposed = opposedMeleeCheck(
+      state.wounds.combat,
+      ref(command.actor),
+      ref(command.target),
+      'СЛ',
+      context(state.wounds.combat, command.actor, command.target),
+      context(state.wounds.combat, command.target, command.actor),
+      rng,
+    );
+    logs.push(...opposed.logs);
+    if (opposed.result.winner?.actorId === command.actor) frenzyPenalty = -30;
+  }
   if (command.doubleShot) {
     const src = { kind: 'talent', id: 'Таланты: Двойной выстрел' };
     ctx = {
@@ -2247,10 +2331,38 @@ function resolve(
               id: `${command.id}:dodge`,
               type: 'dodge' as const,
               pool: 'normal' as const,
-              context: reactionContext(b, state, command, 'Уклонение'),
+              context: reactionContext(
+                b,
+                state,
+                command,
+                'Уклонение',
+                frenzyPenalty
+                  ? [
+                      {
+                        id: `${command.id}:frenzy`,
+                        value: frenzyPenalty,
+                        reason: 'Безумный натиск',
+                      },
+                    ]
+                  : [],
+              ),
             }
           : defense === 'PARRY'
-            ? parryRequest(b, state, command, traits)
+            ? parryRequest(
+                b,
+                state,
+                command,
+                traits,
+                frenzyPenalty
+                  ? [
+                      {
+                        id: `${command.id}:frenzy`,
+                        value: frenzyPenalty,
+                        reason: 'Безумный натиск',
+                      },
+                    ]
+                  : [],
+              )
             : null;
       return resolveWoundAwareAction(state.wounds, 'НР', ctx, (combat, context) =>
         resolveMeleeAttack(
@@ -2266,7 +2378,10 @@ function resolve(
               ? 'called'
               : command.counter
                 ? 'free'
-                : (command.meleeBase ?? 'simple'),
+                : command.charge
+                  ? 'charge'
+                  : (command.meleeBase ?? 'simple'),
+            ...(command.charge ? { movementDistance: chargeDistance } : {}),
             ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
             technique: 'normal',
             weaponId: command.weapon,
@@ -2461,6 +2576,15 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
         throw new Error('Оба оружия должны быть в руках (решение 105)');
     }
     const first = resolve(next, b, command, rng, logs);
+    // «Натиск»: the token ends next to the target; the move counts for this turn.
+    if (command.charge) {
+      b.positions[command.actor] = { x: command.charge.x, y: command.charge.y };
+      next.moves.push({
+        turn: next.wounds.combat.session.turnsStarted,
+        actor: command.actor,
+        mode: 'full-move',
+      });
+    }
     let result: typeof first & { second?: ReturnType<typeof resolve> } = first;
     if (command.second) {
       // The same target; questions of the second attack have their own keys.

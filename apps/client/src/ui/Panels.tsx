@@ -17,6 +17,7 @@ import {
   otherWeaponInHand,
   oneHandedWeapon,
   disarmOptions,
+  chargeDestination,
   meleeAttackKinds,
   type TurnActionType,
   type Zone,
@@ -375,6 +376,8 @@ export function AttackPanel(props: {
   onBrace: (weaponId: string) => void;
   /** «Разоружение» of the target's weapon in hand (1 ОД). */
   onDisarm?: (weaponId: string) => void;
+  /** «Натиск» to the cell next to the target (2 ОД). */
+  onCharge?: (at: { x: number; y: number }) => void;
 }) {
   const { form, attacker } = props;
   const own = battleWeapons(props.battle, attacker);
@@ -499,6 +502,25 @@ export function AttackPanel(props: {
             </select>
           </label>
         )}
+      {props.onCharge &&
+        weapon?.arsenal &&
+        weaponKind(weapon.arsenal) === 'melee' &&
+        form.target &&
+        distance(form.target) > 1.5 &&
+        (() => {
+          const at = chargeDestination(props.battle, attacker, form.target);
+          return (
+            <button
+              type="button"
+              disabled={!props.canAct || !at}
+              onClick={() => at && props.onCharge!(at)}
+              title={at ? '' : 'Нет свободной клетки рядом с целью в пределах 3 × СКР'}
+            >
+              Натиск: подбежать и ударить (2 ОД, +20)
+              {at ? '' : ' — недоступен'}
+            </button>
+          );
+        })()}
       {props.onDisarm &&
         disarmOptions(props.battle, attacker, form.target).map((w) => (
           <button

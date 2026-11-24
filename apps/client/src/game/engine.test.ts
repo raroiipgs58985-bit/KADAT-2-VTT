@@ -31,6 +31,7 @@ import {
   entanglement,
   counterattacks,
   disarm,
+  chargeDestination,
   corrodedZones,
   extractWeapon,
   placeLoose,
@@ -637,6 +638,59 @@ describe('Two weapons (rulings 105, 106)', () => {
     expect(() => takeWeapon(h, { id: 't2', actor: 'gun', weapon: 'gun:1', keep: 'gun:0' })).toThrow(
       /Двуручное/,
     );
+  });
+});
+
+describe('«Натиск» (ruling 132)', () => {
+  const setup = async (talents: string[] = [], targetX = 9.5) => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const sword = matchWeaponByName('Цепной меч')!;
+    const runner = {
+      ...emptyCharacter('r', 'Боец'),
+      characteristics: {
+        ...emptyCharacter('x').characteristics,
+        НР: { value: 50, super: 0 },
+        ЛВ: { value: 40, super: 0 },
+      },
+      movement: { options: [{ label: 'бЛВ', skr: 4 }], current: 0 },
+      talents: ['Владение оружием (Цепное)', ...talents],
+      weapons: [{ name: sword.name, ref: sword.id }],
+    };
+    const b = createBattle([
+      { character: runner, side: 'a', at: { x: 3.5, y: 10.5 }, id: 'r' },
+      { character: soft(), side: 'b', at: { x: targetX, y: 10.5 }, id: 'pak' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    return b;
+  };
+  const soft = () => ({
+    ...emptyCharacter('soft', 'Мишень'),
+    wounds: 300,
+    armour: { head: 90, torso: 90, arms: 90, legs: 90 },
+  });
+  it('runs to the target (≤ 3 × СКР) and strikes with +20; «Яростный натиск» +30', async () => {
+    for (const [talents, bonus] of [
+      [[], undefined],
+      [['Яростный натиск'], 10],
+    ] as const) {
+      const b = await setup([...talents]);
+      const at = chargeDestination(b, 'r', 'pak')!;
+      expect(at).toEqual({ x: 8.5, y: 10.5 });
+      const r = attack(b, shot({ id: 'ch', actor: 'r', weapon: 'r:0', charge: at }), {
+        roll: (sides: number) => (sides === 100 ? 35 : 5),
+      });
+      expect(r.status).toBe('RESOLVED');
+      const mods = (r as { result: { attack: { modifiers: { id: string; value: number }[] } } })
+        .result.attack.modifiers;
+      expect(mods.find((m) => m.id === 'melee:base')?.value).toBe(20);
+      expect(mods.find((m) => m.id === 'ch:talent:Яростный натиск')?.value).toBe(bonus);
+      expect(b.positions.r).toEqual(at);
+      expect(turnInfo(b).od).toBe(0);
+    }
+  });
+  it('a target farther than 3 × СКР cannot be charged', async () => {
+    const b = await setup([], 18.5);
+    expect(chargeDestination(b, 'r', 'pak')).toBeNull();
   });
 });
 
