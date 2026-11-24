@@ -213,7 +213,11 @@ export function clearMalfunction(
     [],
     ['action:clear-malfunction'],
   );
-  const action = definition('clear-malfunction', 2);
+  // Talent «Ритуал освобождения (Тех-трюк)»: clearing a jam takes 1 ОД.
+  const ritual = (state.actors[request.actor.actorId]?.talents ?? []).includes(
+    'Ритуал освобождения (Тех-трюк)',
+  );
+  const action = definition('clear-malfunction', ritual ? 1 : 2);
   validateResources(state, request, action, context, 'own-turn');
   const characteristic = resolveCharacteristic('НС', actor.characteristics.НС, context);
   const check = resolveCheck(

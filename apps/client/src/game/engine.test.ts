@@ -998,6 +998,72 @@ describe('States after a hit (weapon properties)', () => {
   });
 });
 
+describe('Talents against the hit (ruling 126)', () => {
+  it('«Железная челюсть»: a ВН+0 test saves from «Оглушающее»', async () => {
+    const { arsenal } = await import('./arsenal');
+    const mace = arsenal.weapons.find((w) => w.name === 'Булава')!;
+    const thug = {
+      ...emptyCharacter('thug', 'Громила'),
+      talents: ['Владение оружием (Примитив)'],
+      weapons: [{ name: mace.name, ref: mace.id }],
+    };
+    const pak = characterFromProfile('pak');
+    const b = createBattle([
+      { character: thug, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'thug' },
+      {
+        character: { ...pak, talents: [...pak.talents, 'Железная челюсть'] },
+        side: 'b',
+        at: { x: 6.5, y: 10.5 },
+        id: 'pak',
+      },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    // Hit 35, the ВН test against «Оглушающее» fails (99), «Железная челюсть» passes (01).
+    const seq = [35, 99, 1];
+    let n = 0;
+    const r = attack(b, shot({ id: 'bonk', actor: 'thug', weapon: 'thug:0' }), {
+      roll: (sides: number) => (sides === 100 ? (seq[n++] ?? 1) : 5),
+    });
+    const hits = (r as { result: { hits: { effects: { property: string; passed: boolean }[] }[] } })
+      .result.hits;
+    expect(hits[0]?.effects[0]).toMatchObject({ property: 'Оглушающее', passed: true });
+    expect(actorStatus(b, 'pak').conditions).not.toContain('Stunned');
+  });
+  it('«Мастер Стаб-оружия»: stub weapons get «Проверенное (½ бНС)»', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const gun = matchWeaponByName('Стаб-пистолет')!;
+    const shooter = (talents: string[]) => ({
+      ...emptyCharacter('s', 'Стрелок'),
+      characteristics: { ...emptyCharacter('x').characteristics, НС: { value: 50, super: 0 } },
+      talents: ['Владение оружием (Стаб)', ...talents],
+      weapons: [{ name: gun.name, ref: gun.id }],
+    });
+    const total = (talents: string[]) => {
+      const b = createBattle([
+        { character: shooter(talents), side: 'a', at: { x: 5.5, y: 10.5 }, id: 's' },
+        {
+          character: characterFromProfile('pak'),
+          side: 'b',
+          at: { x: 9.5, y: 10.5 },
+          id: 'pak',
+        },
+      ]);
+      startCombat(b, fixedDice('10:9,10:2'));
+      let n = 0;
+      const r = attack(
+        b,
+        shot({ id: 'p', actor: 's', weapon: 's:0', answers: { 'cover:pak': 0 } }),
+        {
+          roll: (sides: number) => (sides === 100 ? (n++ === 0 ? 35 : 99) : 1),
+        },
+      );
+      return (r as { result: { hits: { total: number }[] } }).result.hits[0]!.total;
+    };
+    // Damage dice show 1; with «Проверенное (3)» (бНС 5 → 3) each die counts as 3.
+    expect(total(['Мастер Стаб-оружия']) - total([])).toBe(2 * gun.damage!.count);
+  });
+});
+
 describe('More weapon properties in the fight', () => {
   const melee = async (
     weaponName: string,

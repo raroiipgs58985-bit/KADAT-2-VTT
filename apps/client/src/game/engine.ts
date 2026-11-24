@@ -907,6 +907,26 @@ function applyAfterHit(
       out.push({ property: test.property, passed: true });
       continue;
     }
+    // «Железная челюсть»: a ВН+0 test saves from being stunned (ruling 126).
+    if (
+      test.onFailure === 'stunned' &&
+      canonicalTalents(combatant(b, command.target).character.talents).includes('Железная челюсть')
+    ) {
+      const vn = combatant(b, command.target).character.characteristics.ВН;
+      const jaw = resolveCheck(
+        {
+          baseValue: vn.value,
+          finalSuper: vn.super,
+          context: context(state.wounds.combat, command.target, command.actor),
+        },
+        rng,
+      ).result;
+      logs.push({ type: 'iron-jaw', check: jaw });
+      if (jaw.outcome === 'success') {
+        out.push({ property: test.property, passed: true, state: 'Железная челюсть' });
+        continue;
+      }
+    }
     const rounds = Math.max(1, check.failureDegrees ?? 1);
     const combat = state.wounds.combat;
     const session = combat.session;
@@ -1090,7 +1110,18 @@ function resolveHit(
   const armour = zoneArmour(b, state, command, hit.location);
   setPhase('damage');
   const roll = resolveDamageRoll(hit.profile.expression, rng, hit.context).result;
-  const dice = adjustDamageDice(traits, roll.rolls, rng);
+  // «Знаток Цепного оружия»: one more к10 for the damage, the lowest die is dropped (ruling 126).
+  let rolled = roll.rolls;
+  if (
+    hasTrait(traits, 'Цепное') &&
+    hit.profile.expression.sides === 10 &&
+    canonicalTalents(attacker.talents).includes('Знаток Цепного оружия')
+  ) {
+    const all = [...roll.rolls, rollDie(10, rng)];
+    const low = all.reduce((m, r, i) => (r.value < all[m]!.value ? i : m), 0);
+    rolled = all.filter((_, i) => i !== low);
+  }
+  const dice = adjustDamageDice(traits, rolled, rng);
   const bonus = damageBonus(traits, {
     kind: info.kind,
     degrees: info.degrees,
@@ -1115,6 +1146,14 @@ function resolveHit(
       notes.push(`Цепное: +${half} (½ бСЛ вверх)`);
     }
   }
+  // «Мастер Мельта-оружия»: when «Мельта» works, ББ + 2 × ½ degrees of НС, up (ruling 126).
+  const meltaMaster =
+    hasTrait(traits, 'Мельта') &&
+    bonus.penetrationMultiplier > 1 &&
+    canonicalTalents(attacker.talents).includes('Мастер Мельта-оружия')
+      ? 2 * Math.ceil(Math.max(0, info.degrees) / 2)
+      : 0;
+  if (meltaMaster) notes.push(`Мастер Мельта-оружия: ББ +${meltaMaster}`);
   // Talents (ruling 121): «Сокрушительный удар/выстрел», «Мастер Болт/Лаз/Плазменного оружия».
   const talentBonus = talentDamage({
     talents: canonicalTalents(attacker.talents),
@@ -1138,7 +1177,8 @@ function resolveHit(
   const penetration =
     hit.penetration.value * bonus.penetrationMultiplier +
     bonus.penetrationAdd +
-    talentBonus.penetration.reduce((a, t) => a + t.value, 0);
+    talentBonus.penetration.reduce((a, t) => a + t.value, 0) +
+    meltaMaster;
   for (const t of talentBonus.penetration) notes.push(`${t.talent}: ББ +${t.value}`);
   // «Цепное»: the armour element loses ОБ equal to ББ at once (rulings 5, 16).
   if (hasTrait(traits, 'Цепное') && armour.zone) {
@@ -1158,6 +1198,16 @@ function resolveHit(
     notes.push(
       `Плавящее: броня −${Math.min(melt, before)} ОБ${rest ? `, остаток +${rest} к урону` : ''}`,
     );
+  }
+  // «Ловец стрел»: + бНР of the target to the ОБ against primitive ranged attacks (ruling 126).
+  if (
+    info.kind === 'ranged' &&
+    hasTrait(traits, 'Примитивное') &&
+    canonicalTalents(target.talents).includes('Ловец стрел')
+  ) {
+    const nr = bonusOf(target, 'НР');
+    armour.ob += nr;
+    notes.push(`Ловец стрел: ОБ +${nr}`);
   }
   // Лэнс / Примитивное change the armour before ББ; the core subtracts ББ.
   const ob = armourAfterProperties(traits, {
@@ -1721,6 +1771,22 @@ function resolveHit(
   };
 }
 
+/**
+ * «Мастер Стаб-оружия» (ruling 126): stub weapons get «Проверенное (½ бНС)», rounded up; a
+ * higher rating of the weapon stays.
+ */
+function withTalentTraits(
+  traits: WeaponTraitReference[],
+  w: ArsenalWeapon,
+  c: CharacterDocument,
+): WeaponTraitReference[] {
+  if (w.sheet !== 'Стаб и РПУ' || !canonicalTalents(c.talents).includes('Мастер Стаб-оружия'))
+    return traits;
+  const value = Math.ceil(bonusOf(c, 'НС') / 2);
+  const own = traits.find((t) => t.name === 'Проверенное');
+  if (own && (own.value ?? 0) >= value) return traits;
+  return [...traits.filter((t) => t.name !== 'Проверенное'), { name: 'Проверенное', value }];
+}
 /** Called-attack penalties («Бой» A52), to cap the talents that reduce them. */
 const CALLED_PENALTY: Record<CalledLocation, number> = {
   Eyes: -50,
@@ -1803,7 +1869,11 @@ function resolve(
     };
   }
   const kind = weaponKind(arsenalWeapon);
-  const traits = impliedTraits(weaponTraits(arsenalWeapon).traits);
+  const traits = withTalentTraits(
+    impliedTraits(weaponTraits(arsenalWeapon).traits),
+    arsenalWeapon,
+    combatant(b, command.actor).character,
+  );
   if (command.counter && kind !== 'melee')
     throw new Error('Контратака — только оружием ближнего боя');
   // «Раны и лечение»: a blinded character fails НС automatically, НР without «Бой вслепую».
