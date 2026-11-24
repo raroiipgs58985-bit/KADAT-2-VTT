@@ -116,6 +116,7 @@ export {
   reloadWeapon,
   QUICK_DRAW_TALENT,
   AMBIDEXTROUS_TALENT,
+  transferWeapon,
   twoHandedWeapon,
   RAPID_RELOAD_TALENT,
   type DropWeaponRequest,

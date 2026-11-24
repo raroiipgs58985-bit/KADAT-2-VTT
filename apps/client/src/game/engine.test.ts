@@ -32,6 +32,8 @@ import {
   counterattacks,
   disarm,
   placeLoose,
+  pendingLoose,
+  takeDisarmed,
   type AttackCommand,
 } from './engine';
 import { fixedDice } from './dice';
@@ -543,12 +545,13 @@ describe('Two weapons (rulings 105, 106)', () => {
 });
 
 describe('«Разоружение» (rulings 107, 108)', () => {
-  const setup = async (talents = ['Разоружение']) => {
+  const setup = async (talents = ['Разоружение'], nr = 30) => {
     const { matchWeaponByName } = await import('./arsenal');
     const sword = matchWeaponByName('Цепной меч')!;
     const duelist = {
       ...emptyCharacter('duelist', 'Дуэлянт'),
       talents: ['Владение оружием (Цепное)', ...talents],
+      characteristics: { ...emptyCharacter('x').characteristics, НР: { value: nr, super: 0 } },
       weapons: [{ name: sword.name, ref: sword.id }],
     };
     const b = createBattle([
@@ -564,6 +567,23 @@ describe('«Разоружение» (rulings 107, 108)', () => {
     startCombat(b, fixedDice('10:9,10:2'));
     return b;
   };
+  it('5+ degrees and a free hand: the attacker takes the weapon; it can be knocked back (ruling 114)', async () => {
+    // НР 80: a roll of 01 gives 5+ degrees.
+    const b = await setup(['Разоружение'], 80);
+    const r = disarm(
+      b,
+      { id: 'd5', actor: 'duelist', target: 'kelus-drakar', weapon: 'kelus-drakar:1' },
+      fixedDice('100:1,100:99,10:3'),
+    );
+    expect(r.degrees).toBeGreaterThanOrEqual(5);
+    expect(pendingLoose(b)?.taker).toBe('duelist');
+    takeDisarmed(b);
+    expect(b.taken?.['kelus-drakar:1']).toBe('duelist');
+    expect(weaponInHand(b, 'kelus-drakar:1')).toBe(true);
+    expect(weaponInHand(b, 'duelist:0')).toBe(true);
+    const replayed = importReplay(JSON.parse(JSON.stringify(exportReplay(b))));
+    expect(replayed.taken?.['kelus-drakar:1']).toBe('duelist');
+  });
   it('needs the talent', async () => {
     const b = await setup([]);
     expect(() =>

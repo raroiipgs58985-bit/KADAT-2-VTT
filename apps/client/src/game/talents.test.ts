@@ -24,6 +24,11 @@ describe('Talent names', () => {
       'Параноик',
       'Параноя',
       'Враг (Арбитры)',
+      'Быстрая атака',
+      'Стрельба на бегу',
+      'Крепкий',
+      'Полевой хирургеон',
+      'Технический трюк',
     ]);
     expect(mapped).toContain('Сопротивляемость (Яды)');
     for (const name of mapped) expect(talentInSheets(name), name).toBe(true);

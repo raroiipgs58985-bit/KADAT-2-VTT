@@ -56,21 +56,22 @@ export const actorName = (b: Battle, id: ActorId) => b.roster[id]?.character.nam
 export const maxWounds = (b: Battle, id: ActorId) => combatant(b, id).character.wounds;
 export const skrOf = (b: Battle, id: ActorId) => currentSkr(combatant(b, id).character);
 export function battleWeapons(b: Battle, owner?: ActorId): BattleWeapon[] {
-  return actorIds(b)
-    .filter((id) => owner === undefined || id === owner)
-    .flatMap((id) =>
-      combatant(b, id).character.weapons.map((w, i) => {
-        const arsenal = w.ref ? (weaponById(w.ref) ?? null) : null;
-        return {
-          id: `${id}:${i}`,
-          owner: id,
-          name: w.name,
-          arsenal,
-          capacity: arsenal?.magazine ?? null,
-          sling: !!w.sling,
-        };
-      }),
-    );
+  const all = actorIds(b).flatMap((id) =>
+    combatant(b, id).character.weapons.map((w, i) => {
+      const arsenal = w.ref ? (weaponById(w.ref) ?? null) : null;
+      const weaponId = `${id}:${i}`;
+      return {
+        id: weaponId,
+        // Ruling 114: a weapon taken by «Разоружение» belongs to the taker till the fight ends.
+        owner: b.taken?.[weaponId] ?? id,
+        name: w.name,
+        arsenal,
+        capacity: arsenal?.magazine ?? null,
+        sling: !!w.sling,
+      };
+    }),
+  );
+  return owner === undefined ? all : all.filter((w) => w.owner === owner);
 }
 export const weaponOf = (b: Battle, id: WeaponId) =>
   battleWeapons(b).find((w) => w.id === id) ?? null;
@@ -111,6 +112,8 @@ export interface Battle {
   ammo: Record<WeaponId, number | null>;
   /** Weapons knocked out of the hand lying on the map (ruling 108), centre in metres. */
   loose?: Record<WeaponId, { x: number; y: number }>;
+  /** Weapons taken from the enemy by «Разоружение» with 5+ degrees: new owner (ruling 114). */
+  taken?: Record<WeaponId, ActorId>;
   log: LogEntry[];
 }
 export function append(b: Battle, type: string, detail: unknown) {

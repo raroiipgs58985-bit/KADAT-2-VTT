@@ -37,6 +37,7 @@ import {
   disarm,
   placeLoose,
   pendingLoose,
+  takeDisarmed,
   looseWeapons,
   type MoveMode,
 } from './game/engine';
@@ -969,6 +970,11 @@ export function App() {
                       ? 'Атакующий выбирает направление (3+ ст.)'
                       : 'Ведущий выбирает случайное направление'}
                     : щёлкните клетку на карте.
+                    {pendingLoose(battle)!.taker && (
+                      <button type="button" onClick={() => run((b) => takeDisarmed(b))}>
+                        Забрать себе (5+ ст.)
+                      </button>
+                    )}
                   </p>
                 )}
                 {fallActor && (

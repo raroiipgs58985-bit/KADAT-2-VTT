@@ -16,6 +16,11 @@ export const TALENT_ALIASES: Readonly<Record<string, string>> = {
   'Стальная челюсть': 'Железная челюсть',
   Параноик: 'Паранойя',
   Параноя: 'Паранойя',
+  'Быстрая атака': 'Стремительная атака',
+  'Стрельба на бегу': 'Стрельба от бедра',
+  Крепкий: 'Крепкий орешек',
+  'Полевой хирургеон': 'Мастер-хирургеон',
+  'Технический трюк': 'Ритуал освобождения (Тех-трюк)',
 };
 const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase().replace(/ё/g, 'е');
 const aliasByNorm = new Map(Object.entries(TALENT_ALIASES).map(([k, v]) => [norm(k), v]));

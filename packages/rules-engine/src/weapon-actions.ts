@@ -140,6 +140,35 @@ export function readyWeapon(
     logs: [actionLog(state, execution)],
   };
 }
+/**
+ * «Разоружение» with 5+ degrees (ruling 114): the knocked-out weapon goes into the taker's hand
+ * and is his till the end of the fight; `keep` stays in the other hand.
+ */
+export function transferWeapon(
+  state: CombatActionState,
+  weaponId: string,
+  newOwner: string,
+  keep?: string,
+): CombatActionState {
+  const ranged = state.weapons[weaponId];
+  const blade = state.melee?.weapons[weaponId];
+  if (!ranged && !blade) throw new Error('Invalid weapon');
+  if (!state.actors[newOwner]) throw new Error('Unknown actor');
+  const owner = { actorId: newOwner };
+  const moved: CombatActionState = {
+    ...state,
+    weapons: ranged ? { ...state.weapons, [weaponId]: { ...ranged, owner } } : state.weapons,
+    ...(blade && state.melee
+      ? {
+          melee: {
+            ...state.melee,
+            weapons: { ...state.melee.weapons, [weaponId]: { ...blade, owner } },
+          },
+        }
+      : {}),
+  };
+  return putInHand(moved, newOwner, weaponId, keep);
+}
 /** The owner holds only `weaponId` (null — empty hands); used by actions and before the fight. */
 export function putInHand(
   state: CombatActionState,

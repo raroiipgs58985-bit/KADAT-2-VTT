@@ -390,7 +390,7 @@ export function describeEntry(
         ...base,
         title: `${name(c.actor)} пытается разоружить ${name(c.target)}`,
         summary: d.won
-          ? `Встречный тест НР выигран (${String(d.degrees)} ст.): ${String(d.weaponName)} выбито и отлетает на ${String(d.distance)} м${Number(d.degrees) >= 3 ? ', направление выбирает атакующий' : ' в случайную сторону'}.${Number(d.degrees) >= 5 ? ' 5+ ст.: можно вооружиться им при свободной руке — пока вручную.' : ''} Потрачен 1 ОД.`
+          ? `Встречный тест НР выигран (${String(d.degrees)} ст.): ${String(d.weaponName)} выбито и отлетает на ${String(d.distance)} м${Number(d.degrees) >= 3 ? ', направление выбирает атакующий' : ' в случайную сторону'}.${Number(d.degrees) >= 5 ? ' 5+ ст.: атакующий со свободной рукой может забрать его себе.' : ''} Потрачен 1 ОД.`
           : `Встречный тест НР не выигран — оружие осталось в руках. Потрачен 1 ОД.`,
         tone: d.won ? 'success' : 'info',
       };
@@ -401,6 +401,14 @@ export function describeEntry(
         title: 'Разоружить не удалось',
         summary: String(d.reason),
         tone: 'warning',
+      };
+    case 'weapon-taken':
+      return {
+        ...base,
+        title: `${name(d.actor)} забирает ${String(d.weaponName)}`,
+        summary:
+          'Выбитое оружие теперь в его руке до конца боя; его можно выбить обратно (решение 114).',
+        tone: 'success',
       };
     case 'weapon-landed':
       return {

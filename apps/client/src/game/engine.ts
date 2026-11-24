@@ -22,6 +22,7 @@ import {
   concussion,
   instantDeath,
   destroyerDice,
+  transferWeapon,
   resolveMeleeOpposedAction,
   twoHandedWeapon,
   radDice,
@@ -172,6 +173,8 @@ export interface EngineState {
     /** Who chooses: the GM (random direction) or the attacker (3+ degrees). */
     chooser: 'gm' | 'attacker';
     commandId: string;
+    /** 5+ degrees and a free hand: the attacker may take the weapon (ruling 114). */
+    taker?: ActorId;
   };
   /** «Калечащее (Х)»: wounds lost when the actor spends the 2nd ОД in a turn (ruling 89). */
   crippling?: Record<ActorId, number>;
@@ -2905,6 +2908,9 @@ export function disarm(
         maxDistance: distance,
         chooser: degrees >= 3 ? 'attacker' : 'gm',
         commandId: command.id,
+        ...(degrees >= 5 && freeHand(b, next, command.actor, command.weapon) !== null
+          ? { taker: command.actor }
+          : {}),
       };
     }
     sync(b, next);
@@ -2951,6 +2957,45 @@ export function placeLoose(b: Battle, at: { x: number; y: number }) {
   });
 }
 export const pendingLoose = (b: Battle) => getEngine(b).pendingLoose ?? null;
+/**
+ * A free hand for the weapon: '' — both hands free; a weapon ID — the one-handed weapon that
+ * stays in the other hand; null — no free hand.
+ */
+function freeHand(b: Battle, state: EngineState, actor: ActorId, weapon: WeaponId) {
+  const held = battleWeapons(b, actor).filter((w) => weaponInHandState(state, w.id));
+  if (held.length === 0) return '';
+  const combat = state.wounds.combat;
+  if (
+    held.length === 1 &&
+    !twoHandedWeapon(combat, held[0]!.id) &&
+    !twoHandedWeapon(combat, weapon)
+  )
+    return held[0]!.id;
+  return null;
+}
+/** «Разоружение» with 5+ degrees: the attacker takes the knocked-out weapon (ruling 114). */
+export function takeDisarmed(b: Battle) {
+  const state = getEngine(b);
+  const loose = state.pendingLoose;
+  if (!loose?.taker)
+    throw new Error('Забрать выбитое оружие нельзя (нужно 5+ ст. и свободная рука)');
+  const keep = freeHand(b, state, loose.taker, loose.weapon);
+  if (keep === null) throw new Error('Нет свободной руки');
+  const next = structuredClone(state);
+  delete next.pendingLoose;
+  next.wounds = {
+    ...next.wounds,
+    combat: transferWeapon(next.wounds.combat, loose.weapon, loose.taker, keep || undefined),
+  };
+  b.taken = { ...b.taken, [loose.weapon]: loose.taker };
+  sync(b, next);
+  append(b, 'weapon-taken', {
+    weapon: loose.weapon,
+    weaponName: weaponOf(b, loose.weapon)?.name ?? loose.weapon,
+    actor: loose.taker,
+    commandId: loose.commandId,
+  });
+}
 /** «Разоружение» is available: the talent and weapons in the target's hands (ruling 107). */
 export function disarmOptions(b: Battle, actor: ActorId, target: ActorId) {
   if (!target || !canonicalTalents(combatant(b, actor).character.talents).includes('Разоружение'))
