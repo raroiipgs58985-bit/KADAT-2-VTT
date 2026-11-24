@@ -15,7 +15,17 @@ import type {
   WeaponTraitReference,
 } from './weapons.js';
 
-export type MeleeBase = 'simple' | 'cautious' | 'reckless' | 'charge' | 'free' | 'called';
+export type MeleeBase =
+  | 'simple'
+  | 'cautious'
+  | 'reckless'
+  | 'charge'
+  | 'free'
+  | 'called'
+  /** Talent «Стремительная атака»: 1 ОД, НР+0, +1 hit per 2nd degree (ruling 130). */
+  | 'swift'
+  /** Talent «Молниеносная атака»: 1 ОД, НР−10, +1 hit per degree, at most бНР (ruling 130). */
+  | 'lightning';
 export type MeleeTechnique = 'normal' | 'wide-sweep' | 'stun' | 'knockdown' | 'grapple' | 'lunge';
 export type MeleeStance = 'standard' | 'defensive' | 'palisade';
 export type MeleeGrip = 'one-handed' | 'two-handed' | 'close' | 'fist' | 'mordhau';
@@ -256,6 +266,8 @@ export interface MeleeAttackResult {
     readonly chosenAvoidance: 'parry' | 'dodge' | null;
     readonly avoidance: ParryResult | DodgeResult | null;
     readonly hit: MeleeHitRecord | null;
+    /** Hits that got through (swift / lightning attacks may land several, ruling 130). */
+    readonly hitCount?: number;
     readonly intents: readonly MeleeEffectIntent[];
   }[];
 }

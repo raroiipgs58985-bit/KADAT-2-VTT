@@ -22,6 +22,7 @@ import {
   concussion,
   instantDeath,
   destroyerDice,
+  resolveHitLocations,
   talentDamage,
   talentAttackModifiers,
   criticalBonus,
@@ -244,6 +245,8 @@ export interface AttackCommand {
   dualPrimary?: string;
   /** Internal: the other weapon of the two-weapon attack. */
   dualWith?: WeaponId;
+  /** «Стремительная» / «Молниеносная атака» in melee (talents, ruling 130). */
+  meleeBase?: 'swift' | 'lightning';
   /** Internal: «Двойной выстрел» — the first shot hit, the second gets +20 (ruling 127). */
   doubleShot?: boolean;
 }
@@ -2259,7 +2262,11 @@ function resolve(
             ...(command.counter
               ? { origin: 'COUNTERATTACK' as const, opportunityId: command.counter }
               : { origin: 'NORMAL' as const }),
-            base: command.calledLocation ? 'called' : command.counter ? 'free' : 'simple',
+            base: command.calledLocation
+              ? 'called'
+              : command.counter
+                ? 'free'
+                : (command.meleeBase ?? 'simple'),
             ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
             technique: 'normal',
             weaponId: command.weapon,
@@ -2334,7 +2341,15 @@ function resolve(
     const target = resolved.resolution.result.targets[0]!;
     attack = target.check;
     degrees = target.check.totalDegrees;
-    if (target.hit) hits.push(damageInputFromHit(target.hit as MeleeHitRecord));
+    if (target.hit) {
+      const first = damageInputFromHit(target.hit as MeleeHitRecord);
+      const count = target.hitCount ?? 1;
+      // Several hits (swift / lightning attack): locations as for a burst (ruling 130).
+      const locations = count > 1 ? resolveHitLocations(target.hit.rawAttackRoll, count, rng) : [];
+      hits.push(first);
+      for (let k = 1; k < count; k++)
+        hits.push({ ...first, hitId: `${first.hitId}:${k + 1}`, location: locations[k]!.location });
+    }
     if (target.avoidance) reaction = target.avoidance;
   }
   if (officer) {
@@ -2394,6 +2409,7 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
           'defense',
           'counter',
           'second',
+          'meleeBase',
         ] as const
       ).every((key) => current.pending!.command[key] === command[key]))
   )
@@ -3529,6 +3545,14 @@ export function disarmOptions(b: Battle, actor: ActorId, target: ActorId) {
   return battleWeapons(b, target)
     .filter((w) => weaponInHandState(state, w.id))
     .map((w) => ({ id: w.id, name: w.name }));
+}
+/** Melee attack kinds the actor's talents allow (ruling 130). */
+export function meleeAttackKinds(b: Battle, actor: ActorId) {
+  const t = canonicalTalents(combatant(b, actor).character.talents);
+  return [
+    ...(t.includes('Стремительная атака') ? (['swift'] as const) : []),
+    ...(t.includes('Молниеносная атака') ? (['lightning'] as const) : []),
+  ];
 }
 /** Loose weapons for the map. */
 export const looseWeapons = (b: Battle) =>

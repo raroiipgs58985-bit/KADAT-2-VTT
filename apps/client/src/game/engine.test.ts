@@ -1454,6 +1454,38 @@ describe('More weapon properties in the fight', () => {
     const { r: plain } = await melee('Пневмо-копье', (n) => seq[n] ?? 99, soft());
     expect((plain as { result: { hits: unknown[] } }).result.hits).toHaveLength(0);
   });
+  it('«Стремительная атака»: +1 hit per 2nd degree; needs the talent (ruling 130)', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const w = matchWeaponByName('Цепной меч')!;
+    const fighter = (talents: string[]) => ({
+      ...emptyCharacter('f', 'Боец'),
+      characteristics: { ...emptyCharacter('x').characteristics, НР: { value: 60, super: 0 } },
+      talents: ['Владение оружием (Цепное)', ...talents],
+      weapons: [{ name: w.name, ref: w.id }],
+    });
+    const run = (talents: string[]) => {
+      const b = createBattle([
+        { character: fighter(talents), side: 'a', at: { x: 5.5, y: 10.5 }, id: 'f' },
+        {
+          character: { ...soft(), armour: { head: 90, torso: 90, arms: 90, legs: 90 } },
+          side: 'b',
+          at: { x: 6.5, y: 10.5 },
+          id: 'pak',
+        },
+      ]);
+      startCombat(b, fixedDice('10:9,10:2'));
+      let n = 0;
+      return attack(b, shot({ id: 'sw', actor: 'f', weapon: 'f:0', meleeBase: 'swift' }), {
+        roll: (sides: number) => (sides === 100 ? (n++ === 0 ? 5 : 99) : n % 2 ? 1 : 2),
+      });
+    };
+    expect(() => run([])).toThrow();
+    const r = run(['Стремительная атака']);
+    const res = (
+      r as { result: { attack: { totalDegrees: number }; hits: { location: string }[] } }
+    ).result;
+    expect(res.hits).toHaveLength(1 + Math.floor(res.attack.totalDegrees / 2));
+  });
   it('«Вырваться»: 2 ОД, СЛ test with −10 × Х frees the entangled (ruling 86)', async () => {
     const { b } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft());
     // Entangle the target directly as «Опутывающее (1)» would.

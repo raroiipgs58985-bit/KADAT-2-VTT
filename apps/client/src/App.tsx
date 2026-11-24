@@ -1137,6 +1137,9 @@ export function App() {
                             ...(form.called ? { calledLocation: form.called } : {}),
                             targetActivity: form.activity,
                             modifier: form.modifier,
+                            ...(form.meleeBase && !form.called
+                              ? { meleeBase: form.meleeBase }
+                              : {}),
                             ...(() => {
                               const other = form.dual
                                 ? otherWeaponInHand(battle, info.active, form.weapon)

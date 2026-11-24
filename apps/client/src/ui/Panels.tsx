@@ -17,6 +17,7 @@ import {
   otherWeaponInHand,
   oneHandedWeapon,
   disarmOptions,
+  meleeAttackKinds,
   type TurnActionType,
   type Zone,
   type MoveMode,
@@ -351,6 +352,8 @@ export interface AttackForm {
   defense: 'DECLINE' | 'DODGE' | 'PARRY';
   /** Attack with both weapons in hand (ruling 105). */
   dual?: boolean;
+  /** «Стремительная» / «Молниеносная атака» (ruling 130). */
+  meleeBase?: 'swift' | 'lightning' | '';
 }
 
 export function AttackPanel(props: {
@@ -476,6 +479,26 @@ export function AttackPanel(props: {
           )}
         </div>
       )}
+      {weapon?.arsenal &&
+        weaponKind(weapon.arsenal) === 'melee' &&
+        meleeAttackKinds(props.battle, attacker).length > 0 && (
+          <label>
+            Тип атаки
+            <select
+              value={form.meleeBase ?? ''}
+              onChange={(e) => set({ meleeBase: e.target.value as 'swift' | 'lightning' | '' })}
+            >
+              <option value="">Обычная</option>
+              {meleeAttackKinds(props.battle, attacker).map((k) => (
+                <option key={k} value={k}>
+                  {k === 'swift'
+                    ? 'Стремительная (1 ОД, +1 попадание за 2 ст.)'
+                    : 'Молниеносная (1 ОД, −10, +1 попадание за ст., до бНР)'}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       {props.onDisarm &&
         disarmOptions(props.battle, attacker, form.target).map((w) => (
           <button

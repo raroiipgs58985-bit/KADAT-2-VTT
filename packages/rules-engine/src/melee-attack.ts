@@ -21,6 +21,7 @@ import {
   meleeSource,
 } from './melee-profile.js';
 import { requireMelee, updateMeleeActor } from './melee-state.js';
+import { swiftAttackAllowed } from './weapon-properties.js';
 import {
   meleeCharacteristic,
   meleeContext,
@@ -30,7 +31,7 @@ import {
 } from './melee-context.js';
 import {
   prepareMeleeDodge,
-  resolveMeleeDodge,
+  resolveMeleeDodgeHits,
   prepareParry,
   resolveParry,
 } from './melee-reactions.js';
@@ -103,7 +104,19 @@ export function prepareMeleeAttack(state: CombatActionState, request: MeleeAttac
     !(request.technique in meleeTechniques)
   )
     throw new Error('Invalid melee composition');
+  const talentFor = { swift: 'Стремительная атака', lightning: 'Молниеносная атака' } as const;
+  if (
+    (request.base === 'swift' || request.base === 'lightning') &&
+    !(state.actors[request.actor.actorId]?.talents ?? []).includes(talentFor[request.base])
+  )
+    throw new Error(`The attack needs the talent «${talentFor[request.base]}»`);
   const weapon = requireHeldWeapon(state, request.actor, request.weaponId);
+  // «Громоздкое»: no swift attacks with this weapon.
+  if (
+    (request.base === 'swift' || request.base === 'lightning') &&
+    !swiftAttackAllowed(weapon.template.traits ?? [])
+  )
+    throw new Error('Unwieldy weapon cannot make swift attacks');
   const composition = composeMeleeProfile(weapon, actor.grip, request.technique);
   if (
     request.targets.length === 0 ||
@@ -401,18 +414,39 @@ export function resolveMeleeAttack(
       dice: [],
       baseValues: { ...check.log.baseValues, sharedAttackRawRoll: raw.value },
     });
+    // Swift / lightning attacks land several hits; avoidance works as against a burst (ruling 130).
+    const generated =
+      check.result.outcome !== 'success'
+        ? 0
+        : request.base === 'swift'
+          ? 1 + Math.floor(check.result.totalDegrees / 2)
+          : request.base === 'lightning'
+            ? Math.max(
+                1,
+                Math.min(
+                  1 + check.result.totalDegrees,
+                  meleeCharacteristic(state, request.actor, 'НР', entry.context).result.finalBonus,
+                ),
+              )
+            : 1;
     let avoidance: MeleeAttackResult['targets'][number]['avoidance'] = null;
     if (check.result.outcome === 'success' && entry.avoidance) {
       const defense =
         entry.avoidance.type === 'parry'
-          ? resolveParry(next, entry.avoidance, 1, source)
-          : resolveMeleeDodge(next, entry.avoidance, entry.target.avoidance!.pool, source);
+          ? resolveParry(next, entry.avoidance, generated, source)
+          : resolveMeleeDodgeHits(
+              next,
+              entry.avoidance,
+              entry.target.avoidance!.pool,
+              generated,
+              source,
+            );
       next = defense.state;
       avoidance = defense.result;
       logs.push(...defense.logs);
     }
-    const survived =
-      check.result.outcome === 'success' && (!avoidance || avoidance.survivingHits === 1);
+    const hitCount = avoidance ? avoidance.survivingHits : generated;
+    const survived = check.result.outcome === 'success' && hitCount > 0;
     const intents: MeleeEffectIntent[] = [];
     let hit: MeleeHitRecord | null = null;
     if (survived) {
@@ -488,6 +522,7 @@ export function resolveMeleeAttack(
       chosenAvoidance: entry.avoidance?.type ?? null,
       avoidance,
       hit,
+      ...(hit && hitCount > 1 ? { hitCount } : {}),
       intents,
     });
   }

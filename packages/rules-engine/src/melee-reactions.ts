@@ -98,13 +98,23 @@ export function resolveMeleeDodge(
   pool: AvoidancePool,
   source: DiceSource,
 ) {
+  return resolveMeleeDodgeHits(state, request, pool, 1, source);
+}
+/** Dodge against several melee hits at once (swift / lightning attacks, ruling 130). */
+export function resolveMeleeDodgeHits(
+  state: CombatActionState,
+  request: ActionRequest,
+  pool: AvoidancePool,
+  hits: number,
+  source: DiceSource,
+) {
   const prepared = prepareMeleeDodge(state, request, pool);
   return restoreScopedReaction(
     state,
     resolveDodge(
       scopedReactionState(state, request.actor.actorId, pool),
       { ...request, context: prepared.context },
-      1,
+      hits,
       true,
       source,
     ),
