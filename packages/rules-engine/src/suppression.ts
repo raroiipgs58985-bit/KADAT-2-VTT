@@ -36,7 +36,28 @@ export function createSuppressionEquipmentState(
   validateActionState(combat);
   return { combat, equipment, suppressed: [], processedEventIds: [] };
 }
+/** Talent «Стальные нервы»: a failed suppression test is rerolled once. */
+export const STEEL_NERVE_TALENT = 'Стальные нервы';
+/** Talent «Бесстрашие»: immune to suppression. */
+export const FEARLESS_TALENT = 'Бесстрашие';
 export function suppressionSWCheck(
+  state: SuppressionEquipmentState,
+  context: ResolutionContext,
+  source: DiceSource,
+  wounds?: WoundRuntimeState,
+) {
+  const first = suppressionSWCheckOnce(state, context, source, wounds);
+  const talents = state.combat.actors[context.actor.actorId]?.talents ?? [];
+  if (first.result.outcome === 'success' || !talents.includes(STEEL_NERVE_TALENT)) return first;
+  const second = suppressionSWCheckOnce(state, context, source, wounds);
+  return {
+    result: second.result,
+    // Both tests stay in the log: the failed one and the reroll.
+    logs: [...first.logs, ...second.logs],
+    rerolledBy: STEEL_NERVE_TALENT,
+  };
+}
+function suppressionSWCheckOnce(
   state: SuppressionEquipmentState,
   context: ResolutionContext,
   source: DiceSource,
@@ -145,7 +166,10 @@ export function resolveSuppression(
       equipment: [],
       pending: [],
     };
-    if (!suppressionTargetAffected(event, c)) {
+    if (
+      !suppressionTargetAffected(event, c) ||
+      (state.combat.actors[c.actor.actorId]?.talents ?? []).includes(FEARLESS_TALENT)
+    ) {
       targets.push(empty);
       continue;
     }

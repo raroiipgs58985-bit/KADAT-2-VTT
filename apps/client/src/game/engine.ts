@@ -241,11 +241,18 @@ const intentText = (intents: readonly unknown[]) =>
     .join('; ')}`;
 
 function participants(b: Battle, rolls?: DiceSource): CombatSession {
-  const entries = actorIds(b).map((id) => ({
-    actor: ref(id),
-    agilityBonus: bonusOf(combatant(b, id).character, 'ЛВ'),
-    reactions: { capacity: 1, remaining: 1 },
-  }));
+  const entries = actorIds(b).map((id) => {
+    const c = combatant(b, id).character;
+    const talents = canonicalTalents(c.talents);
+    return {
+      actor: ref(id),
+      // «Боевое чутьё»: бВС instead of бЛВ for initiative.
+      agilityBonus: bonusOf(c, talents.includes('Боевое чутьё') ? 'ВС' : 'ЛВ'),
+      reactions: { capacity: 1, remaining: 1 },
+      // «Молниеносные рефлексы»: two initiative rolls, the higher counts.
+      ...(talents.includes('Молниеносные рефлексы') ? { initiativeRolls: 2 } : {}),
+    };
+  });
   if (rolls) return createCombatSession('local-combat', release, entries, rolls).result;
   // Before the fight: no initiative is rolled yet, the order is the roster order.
   return {

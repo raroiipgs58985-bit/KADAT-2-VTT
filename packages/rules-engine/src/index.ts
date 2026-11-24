@@ -93,7 +93,12 @@ export {
   suppressionTrigger,
   suppressionTargetAffected,
 } from './suppression-triggers.js';
-export { createSuppressionEquipmentState, resolveSuppression } from './suppression.js';
+export {
+  createSuppressionEquipmentState,
+  resolveSuppression,
+  STEEL_NERVE_TALENT,
+  FEARLESS_TALENT,
+} from './suppression.js';
 export {
   resolveSuppressionTurnStart,
   beginSuppressionEquipmentTurn,

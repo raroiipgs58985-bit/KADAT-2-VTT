@@ -53,6 +53,25 @@ const started = (setup?: (b: Battle) => void) => {
 };
 
 describe('Initiative (step 4)', () => {
+  const talented = (talent: string) => {
+    const b = createBattle();
+    const c = b.roster.pak!.character;
+    b.roster.pak = { ...b.roster.pak!, character: { ...c, talents: [...c.talents, talent] } };
+    return b;
+  };
+  it('«Молниеносные рефлексы»: two rolls, the higher counts', () => {
+    const b = talented('Молниеносные рефлексы');
+    startCombat(b, fixedDice('10:2,10:3,10:9'));
+    expect(turnInfo(b).initiative.pak).toBe(13);
+  });
+  it('«Боевое чутьё»: бВС instead of бЛВ', () => {
+    const b = talented('Боевое чутьё');
+    const c = b.roster.pak!.character;
+    startCombat(b, fixedDice('10:2,10:9'));
+    expect(turnInfo(b).initiative.pak).toBe(
+      9 + Math.floor(c.characteristics.ВС.value / 10) + c.characteristics.ВС.super,
+    );
+  });
   it('rolls 1к10 + бЛВ at the start; the higher result acts first', () => {
     const b = createBattle();
     startCombat(b, fixedDice('10:2,10:9'));
@@ -573,6 +592,31 @@ describe('Suppression («Бой» A12–A15)', () => {
     nextTurn(b, fixedDice(''));
     expect(turnInfo(b).active).toBe('pak');
     expect(turnInfo(b).od).toBe(1);
+  });
+  const withTalent = (talent: string) =>
+    started((b) => {
+      const c = b.roster.pak!.character;
+      b.roster.pak = { ...b.roster.pak!, character: { ...c, talents: [...c.talents, talent] } };
+    });
+  it('«Стальные нервы»: a failed suppression test is rerolled once', () => {
+    const b = withTalent('Стальные нервы');
+    let n = 0;
+    // Attack 01; the СВ test fails (99), the reroll passes (01).
+    const r = attack(b, shot({ id: 'nerve', answers: { 'cover:pak': 0 } }), {
+      roll: (sides: number) => (sides === 100 ? ([1, 99, 1][n++] ?? 99) : 5),
+    });
+    const sup = (r as { result: { suppression: { targets: { status: string }[] } } }).result
+      .suppression;
+    expect(sup.targets[0]?.status).toBe('PASSED');
+  });
+  it('«Бесстрашие»: immune to suppression', () => {
+    const b = withTalent('Бесстрашие');
+    const r = attack(b, shot({ id: 'fear', answers: { 'cover:pak': 0 } }), {
+      roll: (sides: number) => (sides === 100 ? 1 : 5),
+    });
+    const sup = (r as { result: { suppression: { targets: { status: string }[] } } }).result
+      .suppression;
+    expect(sup.targets.every((t) => t.status === 'NOT_AFFECTED')).toBe(true);
   });
 });
 let supRolls = 0;

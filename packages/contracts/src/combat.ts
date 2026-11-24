@@ -12,6 +12,8 @@ export interface CombatParticipant {
   readonly agilityBonus: number;
   /** Supplied by the caller; refresh/spending rules belong to the later Action Engine. */
   readonly reactions: ReactionPool;
+  /** 1к10 rolled for initiative, the highest counts (talent «Молниеносные рефлексы»: 2). */
+  readonly initiativeRolls?: number;
 }
 
 export interface InitiativeEntry extends CombatParticipant {
@@ -19,6 +21,8 @@ export interface InitiativeEntry extends CombatParticipant {
   readonly initiative: number;
   /** 1к10 rerolls that ordered equal initiative (author ruling 23), in roll order. */
   readonly tieRolls?: readonly DiceRoll[];
+  /** Lower initiative rolls that were not taken («Молниеносные рефлексы»). */
+  readonly discardedRolls?: readonly DiceRoll[];
 }
 
 export interface TurnState {

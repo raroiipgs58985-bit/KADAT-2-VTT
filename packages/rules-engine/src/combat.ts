@@ -75,11 +75,17 @@ function initiative(
   validateParticipants(participants);
   const rolled: InitiativeEntry[] = participants
     .map((participant) => {
-      const roll = rollDie(10, source);
+      const count = participant.initiativeRolls ?? 1;
+      if (!Number.isInteger(count) || count < 1) throw new Error('Invalid initiative rolls');
+      const rolls = Array.from({ length: count }, () => rollDie(10, source));
+      const best = rolls.reduce((a, r) => (r.value > a.value ? r : a));
+      const roll = best;
+      const discarded = rolls.filter((r) => r !== best);
       return {
         actor: { ...participant.actor },
         agilityBonus: participant.agilityBonus,
         reactions: { ...participant.reactions },
+        ...(count > 1 ? { initiativeRolls: count, discardedRolls: discarded } : {}),
         roll,
         initiative: roll.value + participant.agilityBonus,
       };
