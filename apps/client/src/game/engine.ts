@@ -203,6 +203,8 @@ export interface EngineState {
   >;
   /** Zone ОБ before losses, recorded when corrosion starts (turn-start steps have no battle). */
   zoneArmour?: Record<string, number>;
+  /** Once-a-round talent rerolls: `${actor}:${talent}` → round used. */
+  rerolls?: Record<string, number>;
   /** «Проникающее» (rulings 118–120): weapons stuck in a wound, by weapon ID. */
   impaled?: Record<WeaponId, { target: ActorId; location: string; skr: boolean; skrLoss?: number }>;
 }
@@ -301,7 +303,10 @@ function participants(b: Battle, rolls?: DiceSource): CombatSession {
       actor: ref(id),
       // «Боевое чутьё»: бВС instead of бЛВ for initiative.
       agilityBonus: bonusOf(c, talents.includes('Боевое чутьё') ? 'ВС' : 'ЛВ'),
-      reactions: { capacity: 1, remaining: 1 },
+      // «Шаг в сторону»: one more avoidance a round (not twice against one attack, ruling 128).
+      reactions: talents.includes('Шаг в сторону')
+        ? { capacity: 2, remaining: 2 }
+        : { capacity: 1, remaining: 1 },
       // «Молниеносные рефлексы»: two initiative rolls, the higher counts.
       ...(talents.includes('Молниеносные рефлексы') ? { initiativeRolls: 2 } : {}),
     };
@@ -2135,7 +2140,11 @@ function resolve(
       return rng.roll(sides);
     },
   };
-  const askDefense = (hit: boolean, canParry: boolean): 'DECLINE' | 'DODGE' | 'PARRY' => {
+  const askDefense = (
+    hit: boolean,
+    canParry: boolean,
+    key = 'reaction',
+  ): 'DECLINE' | 'DODGE' | 'PARRY' => {
     if (command.counter) return 'DECLINE';
     if (command.defense) return command.defense;
     const entry = state.wounds.combat.session.initiativeOrder.find(
@@ -2144,7 +2153,7 @@ function resolve(
     if (!hit || !entry?.reactions.remaining) return 'DECLINE';
     if (state.wounds.actors[command.target]?.life.status !== 'ALIVE') return 'DECLINE';
     const answer = ask(command, {
-      key: 'reaction',
+      key,
       text: `${actorName(b, command.target)}: по вам попали (${actorName(b, command.actor)}). Ваша реакция?`,
       options: [
         { label: 'Без реакции', value: 0 },
@@ -2273,7 +2282,53 @@ function resolve(
         ? null
         : !!runMelee('DECLINE', peekSource).resolution.result.targets[0]?.hit;
     const defense = askDefense(trial ?? false, targetParries());
-    const resolved = runMelee(defense, command.defense ? rng : realSource);
+    let resolved = runMelee(defense, command.defense ? rng : realSource);
+    // Rerolls of a failed melee attack (ruling 128): «Мастер клинков» once a round,
+    // «Мастер Цепного оружия» with a «Цепное» weapon when the roll is 70+.
+    const first = resolved.resolution.result.targets[0]!;
+    const rerollBy =
+      first.check.outcome === 'success' || command.counter
+        ? null
+        : hasTrait(traits, 'Цепное') &&
+            first.check.rawRoll >= 70 &&
+            attackerTalentsCanon.includes('Мастер Цепного оружия')
+          ? 'Мастер Цепного оружия'
+          : attackerTalentsCanon.includes('Мастер клинков') &&
+              state.rerolls?.[`${command.actor}:Мастер клинков`] !==
+                state.wounds.combat.session.roundNumber
+            ? 'Мастер клинков'
+            : null;
+    if (rerollBy) {
+      if (rerollBy === 'Мастер клинков')
+        state.rerolls = {
+          ...state.rerolls,
+          [`${command.actor}:Мастер клинков`]: state.wounds.combat.session.roundNumber,
+        };
+      logs.push({ type: 'talent-reroll', talent: rerollBy, failed: first.check });
+      // A new attack roll; the target decides its reaction again if the reroll hits.
+      let again: number | null = null;
+      const peek2: DiceSource = {
+        roll(sides) {
+          if (again === null) {
+            again = rng.roll(sides);
+            return again;
+          }
+          return 1;
+        },
+      };
+      const hit2 = !!runMelee('DECLINE', peek2).resolution.result.targets[0]?.hit;
+      const defense2 = askDefense(hit2, targetParries(), 'reaction:reroll');
+      let reused = false;
+      resolved = runMelee(defense2, {
+        roll(sides) {
+          if (!reused) {
+            reused = true;
+            return again!;
+          }
+          return rng.roll(sides);
+        },
+      });
+    }
     state.wounds = resolved.state;
     logs.push(resolved.projectionLog, ...resolved.resolution.logs);
     const target = resolved.resolution.result.targets[0]!;

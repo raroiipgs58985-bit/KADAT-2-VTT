@@ -76,12 +76,17 @@ export function planBleedingPulse(
       });
     } else {
       const value = activity === 'PHYSICAL_ACTION' ? -30 : activity === 'HOLDING_WOUND' ? 20 : -10;
-      const checked = resolveWoundCheck(state, 'ВН', context, source, {
-        id: `bleeding:${s.id}:activity`,
-        value,
-        provenance: s.provenance,
-      });
+      const modifier = { id: `bleeding:${s.id}:activity`, value, provenance: s.provenance };
+      let checked = resolveWoundCheck(state, 'ВН', context, source, modifier);
       logs.push(checked.characteristicLog, checked.log);
+      // Talent «Крепкий орешек»: two ВН rolls against bleeding, the better one counts (ruling 128).
+      if (
+        checked.result.outcome !== 'success' &&
+        (state.combat.actors[actor.actorId]?.talents ?? []).includes('Крепкий орешек')
+      ) {
+        checked = resolveWoundCheck(state, 'ВН', context, source, modifier);
+        logs.push(checked.characteristicLog, checked.log);
+      }
       entries.push({
         source: s,
         activity,

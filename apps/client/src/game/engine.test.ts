@@ -71,6 +71,11 @@ describe('Initiative (step 4)', () => {
     startCombat(b, fixedDice('10:2,10:3,10:9'));
     expect(turnInfo(b).initiative.pak).toBe(13);
   });
+  it('«Шаг в сторону»: two avoidances a round', () => {
+    const b = talented('Шаг в сторону');
+    startCombat(b, fixedDice('10:2,10:9'));
+    expect(turnInfo(b).reactions.pak).toBe(2);
+  });
   it('«Боевое чутьё»: бВС instead of бЛВ', () => {
     const b = talented('Боевое чутьё');
     const c = b.roster.pak!.character;
@@ -1440,6 +1445,14 @@ describe('More weapon properties in the fight', () => {
     expect((await notes([])).some((n) => n.startsWith('Сокрушительный удар'))).toBe(false);
     // НР 60 → бНР 6 → +3.
     expect(await notes(['Сокрушительный удар'])).toContain('Сокрушительный удар: +3');
+  });
+  it('«Мастер клинков»: a failed melee attack is rerolled once a round (ruling 128)', async () => {
+    const seq = [99, 35];
+    const { r } = await melee('Пневмо-копье', (n) => seq[n] ?? 99, soft(), ['Мастер клинков']);
+    expect(r.status).toBe('RESOLVED');
+    expect((r as { result: { hits: unknown[] } }).result.hits).toHaveLength(1);
+    const { r: plain } = await melee('Пневмо-копье', (n) => seq[n] ?? 99, soft());
+    expect((plain as { result: { hits: unknown[] } }).result.hits).toHaveLength(0);
   });
   it('«Вырваться»: 2 ОД, СЛ test with −10 × Х frees the entangled (ruling 86)', async () => {
     const { b } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft());
