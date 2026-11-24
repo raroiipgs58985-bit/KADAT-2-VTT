@@ -313,6 +313,18 @@ export function describeEntry(
           }.`
         : '';
       const counterText = (a.command as { counter?: string }).counter ? 'Контратака. ' : '';
+      const heat = (
+        a.result as { overheat?: { dropped: boolean; finalDamage?: number; location?: string } }
+      ).overheat;
+      if (heat)
+        return {
+          ...base,
+          title: `${name(a.command.actor)}: перегрев (${weapon})`,
+          summary: heat.dropped
+            ? 'Выстрела нет. Оружие брошено (СД), остывает раунд.'
+            : `Выстрела нет. Урон в руку (${locationName(heat.location ?? '')}): ${String(heat.finalDamage)} ран. Оружие остывает раунд.`,
+          tone: 'warning',
+        };
       const summary = `${counterText}${summary0}${secondText}${supText}`;
       return {
         ...base,

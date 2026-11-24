@@ -32,6 +32,8 @@ export interface RangedAttackRequest extends ActionRequest {
   readonly oneHanded?: boolean;
   /** Extra degrees of success for burst hits (talent «Шквал лазогня»). */
   readonly bonusDegrees?: number;
+  /** «Перегрев» from this НС roll on (91; «Знаток Плазменного оружия» 99, ruling 137). */
+  readonly overheatFrom?: number;
   /**
    * Tactical advance («Бой» A62): 2 ОД, movement in a mode other than Run/Sprint plus the shot;
    * НС +0 step (Полудвижение), −10 fast step (Полное), −20 charge (Натиск, СКР × 3).
@@ -95,6 +97,8 @@ export interface RangedAttackResult {
   readonly shotsFired: number;
   readonly ammoSpent: number;
   readonly malfunction: boolean;
+  /** «Перегрев»: no shot, no ammo spent; the hand takes the weapon's damage (ruling 137). */
+  readonly overheated?: boolean;
   readonly jammed: boolean;
   readonly hitsGenerated: number;
   readonly dodge: DodgeResult | null;

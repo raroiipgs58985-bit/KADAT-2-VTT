@@ -207,6 +207,8 @@ export interface EngineState {
   zoneArmour?: Record<string, number>;
   /** «Первоклассный стрелок» used this fight: `${actor}:${weapon kind}`. */
   firstClassUsed?: string[];
+  /** «Перегрев»: weapon → round it overheated (ruling 137). */
+  overheated?: Record<WeaponId, number>;
   /** Once-a-round talent rerolls: `${actor}:${talent}` → round used. */
   rerolls?: Record<string, number>;
   /** «Проникающее» (rulings 118–120): weapons stuck in a wound, by weapon ID. */
@@ -1902,6 +1904,118 @@ export function firstClassKind(b: Battle, actor: ActorId, state = getEngine(b)) 
   }
   return null;
 }
+/**
+ * «Перегрев» (ruling 137): the shooter throws the weapon away for the Free Action, or the hand
+ * holding it (a random one for a two-handed weapon) takes the weapon's damage with ББ 0 —
+ * through the arm armour and бВН, with a consequence. The weapon cools down a round.
+ */
+function applyOverheat(
+  b: Battle,
+  state: EngineState,
+  command: AttackCommand,
+  w: ArsenalWeapon,
+  rng: DiceSource,
+  logs: unknown[],
+) {
+  state.overheated = {
+    ...state.overheated,
+    [command.weapon]: state.wounds.combat.session.roundNumber,
+  };
+  const name = actorName(b, command.actor);
+  const drop =
+    ask(command, {
+      key: 'overheat',
+      text: `${name}: «Перегрев» (${w.name})! Бросить оружие за СД или принять урон в руку? (решение 137)`,
+      options: [
+        { label: 'Бросить оружие (СД)', value: 1 },
+        { label: 'Урон в руку', value: 0 },
+      ],
+    }) === 1;
+  const combat = state.wounds.combat;
+  if (drop) {
+    const spent = resolveCombatAction(
+      combat,
+      {
+        id: `${command.id}:overheat-drop`,
+        type: 'free-action',
+        actor: ref(command.actor),
+        context: context(combat, command.actor),
+      },
+      noDice,
+    ).state;
+    const weapon = spent.weapons[command.weapon]!;
+    state.wounds = {
+      ...state.wounds,
+      combat: {
+        ...spent,
+        weapons: {
+          ...spent.weapons,
+          [command.weapon]: { ...weapon, readied: false, dropped: true },
+        },
+      },
+    };
+    logs.push({ type: 'overheat', dropped: true });
+    return { dropped: true };
+  }
+  const twoHanded = twoHandedWeapon(combat, command.weapon) || w.weaponClass === 'ОС';
+  const left = twoHanded
+    ? rollDie(2, rng).value === 1
+    : ask(command, {
+        key: 'overheat-hand',
+        text: `${name}: в какой руке ${w.name}?`,
+        options: [
+          { label: 'Левая', value: 1 },
+          { label: 'Правая', value: 0 },
+        ],
+      }) === 1;
+  const location = left ? 'Left Arm' : 'Right Arm';
+  const self: AttackCommand = { ...command, target: command.actor };
+  const template = combat.weapons[command.weapon]!.template.profile;
+  const src = { kind: 'weapon-property', id: 'Свойства оружия: Перегрев' };
+  const input: DamageInput = {
+    hitId: `${command.id}:overheat`,
+    attackId: command.id,
+    attacker: ref(command.actor),
+    target: ref(command.actor),
+    location,
+    profile: template.damage,
+    penetration: { source: src, value: 0 },
+    transformations: [],
+    tags: ['overheat'],
+    context: context(combat, command.actor, command.actor),
+    provenance: [{ source: src, reason: 'Перегрев: урон по профилю, ББ 0' }],
+  };
+  setPhase('damage');
+  const roll = resolveDamageRoll(template.damage.expression, rng, input.context).result;
+  const armour = zoneArmour(b, state, self, location);
+  const vn = state.wounds.combat.actors[command.actor]!.characteristics.ВН!;
+  const damage = resolveProtectionDamage(
+    {
+      input,
+      state: protectionFor(state, input, armour.ob),
+      endurance: { baseValue: vn.baseValue, baseSuper: vn.baseSuper },
+      preRolled: roll,
+    },
+    {
+      roll: () => {
+        throw new Error('Unexpected damage reroll');
+      },
+    },
+  );
+  logs.push({ type: 'overheat', dice: roll.rolls }, ...damage.logs);
+  if (damage.result.status !== 'RESOLVED')
+    throw new ContextRequired(JSON.stringify(damage.result.status));
+  state.protection = damage.state;
+  setPhase('consequence');
+  postDamage(state, damage.result, self, rng, logs);
+  setPhase('attack');
+  return {
+    dropped: false,
+    location,
+    dice: roll.rolls.map((r) => r.value),
+    finalDamage: damage.result.finalDamage ?? 0,
+  };
+}
 /** Called-attack penalties («Бой» A52), to cap the talents that reduce them. */
 const CALLED_PENALTY: Record<CalledLocation, number> = {
   Eyes: -50,
@@ -2292,6 +2406,11 @@ function resolve(
   let attack: unknown, degrees: number;
   let reaction: unknown = null;
   let suppression: unknown = null;
+  let overheat: unknown = null;
+  // «Перегрев»: the weapon cools down — no shots this round and the next (ruling 137).
+  const cooling = state.overheated?.[command.weapon];
+  if (cooling !== undefined && state.wounds.combat.session.roundNumber <= cooling + 1)
+    throw new Error(`${selected.name} остывает после перегрева (решение 137)`);
   // The target decides its reaction once it is hit: a trial run reads only the attack roll
   // (kept for the real run) to see whether anything hits; then the target is asked.
   let peeked: number | null = null;
@@ -2364,6 +2483,10 @@ function resolve(
             shotsRequested: shots,
             ...dualRequest,
             ...(squall ? { bonusDegrees: squall } : {}),
+            // «Знаток Плазменного оружия»: overheat only on 99+ (ruling 137).
+            ...(family === 'plasma' && attackerTalentsCanon.includes('Знаток Плазменного оружия')
+              ? { overheatFrom: 99 }
+              : {}),
             distance,
             dodgeable: true,
             ...(defense === 'DODGE'
@@ -2409,7 +2532,18 @@ function resolve(
     degrees = result.check.totalDegrees;
     hits.push(...result.hits.map((h) => damageInputFromHit(h)));
     if (result.dodge) reaction = result.dodge;
-    suppression = applySuppression(b, state, command, arsenalWeapon.weaponClass, result, rng, logs);
+    if (result.overheated) {
+      overheat = applyOverheat(b, state, command, arsenalWeapon, rng, logs);
+    } else
+      suppression = applySuppression(
+        b,
+        state,
+        command,
+        arsenalWeapon.weaponClass,
+        result,
+        rng,
+        logs,
+      );
   } else {
     const runMelee = (defense: 'DECLINE' | 'DODGE' | 'PARRY', src: DiceSource) => {
       const meleeAvoidance =
@@ -2576,6 +2710,7 @@ function resolve(
     hits: damage,
     reaction: reaction ?? 'declined',
     ...(suppression ? { suppression } : {}),
+    ...(overheat ? { overheat } : {}),
   };
 }
 

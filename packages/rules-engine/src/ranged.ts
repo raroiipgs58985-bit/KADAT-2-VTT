@@ -28,6 +28,7 @@ import {
   aimGivesBonus,
   ammoForAttack,
   attackTestModifiers,
+  hasTrait,
   isMalfunction,
   stormHits,
 } from './weapon-properties.js';
@@ -350,12 +351,15 @@ export function resolveRangedAttack(
     source,
   );
   // Default 96+; «Надежное» 100, «Ненадежное» 81+ (ruling 69).
-  const malfunction = isMalfunction(prepared.traits, check.result.rawRoll);
+  // «Перегрев» (ruling 137): on 91+ (talent: 99+) the weapon does not fire at all.
+  const overheated =
+    hasTrait(prepared.traits, 'Перегрев') && check.result.rawRoll >= (request.overheatFrom ?? 91);
+  const malfunction = !overheated && isMalfunction(prepared.traits, check.result.rawRoll);
   // «Шквал лазогня»: +1 degree for burst hits, only on a success (ruling 127).
   const burstDegrees =
     check.result.totalDegrees + (request.mode !== 'single' ? (request.bonusDegrees ?? 0) : 0);
   const baseHits =
-    check.result.outcome !== 'success' || malfunction
+    check.result.outcome !== 'success' || malfunction || overheated
       ? 0
       : request.mode === 'single'
         ? 1
@@ -414,7 +418,7 @@ export function resolveRangedAttack(
     context: prepared.context,
     provenance: prepared.effective.provenance,
   }));
-  const ammoSpent = prepared.ammoNeeded;
+  const ammoSpent = overheated ? 0 : prepared.ammoNeeded;
   const nextWeapon = {
     ...prepared.weapon,
     jammed: malfunction,
@@ -471,9 +475,10 @@ export function resolveRangedAttack(
     modeModifier: prepared.modeModifier,
     aim: prepared.actor.aim ?? null,
     shotsRequested: request.shotsRequested,
-    shotsFired: request.shotsRequested,
+    shotsFired: overheated ? 0 : request.shotsRequested,
     ammoSpent,
     malfunction,
+    ...(overheated ? { overheated } : {}),
     jammed: nextWeapon.jammed,
     hitsGenerated,
     dodge: dodge?.result ?? null,

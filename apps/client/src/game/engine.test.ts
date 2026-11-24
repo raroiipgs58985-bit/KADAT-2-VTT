@@ -664,6 +664,30 @@ describe('Two weapons (rulings 105, 106)', () => {
     const expert = await run(['Знаток Стаб-оружия']);
     expect(expert.left).toBe(expert.full - 1);
   });
+  it('«Перегрев»: 91+ — no shot, no ammo; the hand takes the damage; cooling down (ruling 137)', async () => {
+    const b = await gunslinger([], 'Плазма-бластер');
+    takeWeapon(b, { id: 't', actor: 'gun', weapon: 'gun:1' });
+    startCombat(b, fixedDice('10:9,10:2'));
+    const ammo = b.ammo['gun:1'];
+    const r = attack(
+      b,
+      shot({
+        id: 'hot',
+        actor: 'gun',
+        weapon: 'gun:1',
+        answers: { overheat: 0, 'cover:pak': 0 },
+      }),
+      { roll: (sides: number) => (sides === 100 ? 95 : 1) },
+    );
+    expect(r.status).toBe('RESOLVED');
+    const res = (r as { result: { overheat: { dropped: boolean }; hits: unknown[] } }).result;
+    expect(res.overheat.dropped).toBe(false);
+    expect(res.hits).toEqual([]);
+    expect(b.ammo['gun:1']).toBe(ammo);
+    expect(() =>
+      attack(b, shot({ id: 'hot2', actor: 'gun', weapon: 'gun:1' }), fixedDice('100:50')),
+    ).toThrow(/остывает/);
+  });
   it('a two-handed weapon cannot be one of two weapons', async () => {
     const b = await gunslinger([], 'Лазган');
     expect(() =>
