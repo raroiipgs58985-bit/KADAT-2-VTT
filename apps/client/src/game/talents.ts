@@ -14,6 +14,20 @@ export const TALENT_ALIASES: Readonly<Record<string, string>> = {
 const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase().replace(/ё/g, 'е');
 const aliasByNorm = new Map(Object.entries(TALENT_ALIASES).map(([k, v]) => [norm(k), v]));
 export const canonicalTalent = (name: string) => aliasByNorm.get(norm(name)) ?? name.trim();
+/**
+ * «Парное оружие» is taken separately for НС and НР (ruling 106): «(НС)», «(Стрельба)» →
+ * «Парное оружие (Стрелковое)»; «(НР)», «(Рукопашная)» → «Парное оружие (Рукопашное)»; both
+ * may be named at once. Without a specification the name stays and the GM is asked.
+ */
+function dualWeaponTalents(name: string): string[] {
+  const m = /^парное оружие\s*\((.+)\)$/.exec(norm(name));
+  if (!m) return [name];
+  const spec = m[1]!;
+  const out: string[] = [];
+  if (/нс|стрел/.test(spec)) out.push('Парное оружие (Стрелковое)');
+  if (/нр|рукопаш/.test(spec)) out.push('Парное оружие (Рукопашное)');
+  return out.length ? out : [name];
+}
 export const canonicalTalents = (names: readonly string[]) => [
-  ...new Set(names.map(canonicalTalent)),
+  ...new Set(names.map(canonicalTalent).flatMap(dualWeaponTalents)),
 ];

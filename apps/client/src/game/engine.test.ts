@@ -464,6 +464,82 @@ describe('Counterattack after a parry', () => {
   });
 });
 
+describe('Two weapons (rulings 105, 106)', () => {
+  const gunslinger = async (talents: string[] = [], second = 'Стаб-пистолет') => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const a = matchWeaponByName('Лазпистолет')!;
+    const c = matchWeaponByName(second)!;
+    const pistolero = {
+      ...emptyCharacter('gun', 'Стрелок'),
+      characteristics: { ...emptyCharacter('x').characteristics, НС: { value: 50, super: 0 } },
+      talents: ['Владение оружием (Лаз)', 'Владение оружием (Стаб)', ...talents],
+      weapons: [
+        { name: a.name, ref: a.id },
+        { name: c.name, ref: c.id },
+      ],
+    };
+    const b = createBattle([
+      { character: pistolero, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'gun' },
+      { character: characterFromProfile('pak'), side: 'b', at: { x: 12.5, y: 10.5 }, id: 'pak' },
+    ]);
+    return b;
+  };
+  const modsOf = (r: unknown) =>
+    (r as { result: { attack: { check: { modifiers: { id: string; value: number }[] } } } }).result
+      .attack.check.modifiers;
+  const fire = (b: Battle) =>
+    attack(
+      b,
+      shot({
+        id: 'pair',
+        actor: 'gun',
+        weapon: 'gun:0',
+        second: 'gun:1',
+        answers: { 'cover:pak': 0, 'second:cover:pak': 0 },
+      }),
+      { roll: (sides: number) => (sides === 100 ? 95 : 5) },
+    );
+  it('the second pistol goes into the other hand; both shoot for one action with −30 each', async () => {
+    const b = await gunslinger();
+    takeWeapon(b, { id: 't2', actor: 'gun', weapon: 'gun:1', keep: 'gun:0' });
+    expect(weaponInHand(b, 'gun:0')).toBe(true);
+    expect(weaponInHand(b, 'gun:1')).toBe(true);
+    startCombat(b, fixedDice('10:9,10:2'));
+    const r = fire(b);
+    expect(r.status).toBe('RESOLVED');
+    expect(modsOf(r).find((m) => m.id === 'ranged:two-weapons')?.value).toBe(-30);
+    const second = (
+      r as {
+        result: { second: { attack: { check: { modifiers: { id: string; value: number }[] } } } };
+      }
+    ).result.second;
+    expect(second.attack.check.modifiers.find((m) => m.id === 'ranged:two-weapons')?.value).toBe(
+      -30,
+    );
+  });
+  it('«Амбидекстрия»: −20; «Парное оружие (НС)»: no penalty', async () => {
+    for (const [talent, value] of [
+      ['Амбидекстрия', -20],
+      ['Парное оружие (НС)', undefined],
+    ] as const) {
+      const b = await gunslinger([talent]);
+      takeWeapon(b, { id: 't2', actor: 'gun', weapon: 'gun:1', keep: 'gun:0' });
+      startCombat(b, fixedDice('10:9,10:2'));
+      expect(modsOf(fire(b)).find((m) => m.id === 'ranged:two-weapons')?.value).toBe(value);
+    }
+  });
+  it('a two-handed weapon cannot be one of two weapons', async () => {
+    const b = await gunslinger([], 'Лазган');
+    expect(() =>
+      takeWeapon(b, { id: 't2', actor: 'gun', weapon: 'gun:1', keep: 'gun:0' }),
+    ).not.toThrow();
+    const h = await gunslinger([], 'Тяжелый болтер');
+    expect(() => takeWeapon(h, { id: 't2', actor: 'gun', weapon: 'gun:1', keep: 'gun:0' })).toThrow(
+      /Двуручное/,
+    );
+  });
+});
+
 describe('Turn actions', () => {
   it('quick aim (1 ОД) adds +10 to the next shot of the turn', () => {
     const b = started();

@@ -114,6 +114,8 @@ export {
   readyWeapon,
   reloadWeapon,
   QUICK_DRAW_TALENT,
+  AMBIDEXTROUS_TALENT,
+  twoHandedWeapon,
   RAPID_RELOAD_TALENT,
   type DropWeaponRequest,
   type PickUpWeaponRequest,

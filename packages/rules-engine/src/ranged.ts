@@ -179,7 +179,14 @@ export function prepareRangedAttack(
           ),
         ]
       : []),
-    ...(request.dualWield && !dualTalent ? [ruleModifier('ranged:two-weapons', -30)] : []),
+    ...(request.dualWield && !dualTalent
+      ? [
+          ruleModifier(
+            'ranged:two-weapons',
+            (actor.talents ?? []).includes('Амбидекстрия') ? -20 : -30,
+          ),
+        ]
+      : []),
     ...(actor.aim && aimGivesBonus(traits) ? [ruleModifier('ranged:aim', actor.aim.modifier)] : []),
     ...attackTestModifiers(traits, {
       kind: 'ranged',

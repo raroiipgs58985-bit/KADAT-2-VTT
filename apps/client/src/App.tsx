@@ -33,6 +33,7 @@ import {
   startCombat,
   turnInfo,
   counterattacks,
+  otherWeaponInHand,
   type MoveMode,
 } from './game/engine';
 import type { JournalTone } from './game/journal';
@@ -1050,9 +1051,14 @@ export function App() {
                     braced={(id) => weaponBraced(battle, id)}
                     inHand={(id) => weaponInHand(battle, id)}
                     readyCost={combatStarted(battle) ? readyCost(battle, info.active) : 'до боя'}
-                    onTake={(id) =>
+                    onTake={(id, keep) =>
                       run((b) =>
-                        takeWeapon(b, { id: commandId('take'), actor: info.active, weapon: id }),
+                        takeWeapon(b, {
+                          id: commandId('take'),
+                          actor: info.active,
+                          weapon: id,
+                          ...(keep ? { keep } : {}),
+                        }),
                       )
                     }
                     fromHands={heavyFromHands(battle, info.active)}
@@ -1080,6 +1086,12 @@ export function App() {
                             ...(form.called ? { calledLocation: form.called } : {}),
                             targetActivity: form.activity,
                             modifier: form.modifier,
+                            ...(() => {
+                              const other = form.dual
+                                ? otherWeaponInHand(battle, info.active, form.weapon)
+                                : null;
+                              return other ? { second: other } : {};
+                            })(),
                           },
                           source(),
                         ),

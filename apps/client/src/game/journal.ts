@@ -300,7 +300,20 @@ export function describeEntry(
         : reaction && reaction.cancelledHits > 0
           ? `${fire}${react}Урона нет.`
           : `${fire}Промах — урон не бросается.`;
-      const summary = `${summary0}${supText}`;
+      const second = (
+        a.result as { second?: { hits?: { location: string; finalDamage: number }[] } }
+      ).second;
+      const secondText = second
+        ? ` Второе оружие: ${
+            second.hits?.length
+              ? second.hits
+                  .map((h) => `${locationName(h.location)} — урон ${h.finalDamage}`)
+                  .join('; ')
+              : 'промах'
+          }.`
+        : '';
+      const counterText = (a.command as { counter?: string }).counter ? 'Контратака. ' : '';
+      const summary = `${counterText}${summary0}${secondText}${supText}`;
       return {
         ...base,
         title: `${name(a.command.actor)} → ${name(a.command.target)} (${weapon})`,
@@ -375,7 +388,9 @@ export function describeEntry(
       return {
         ...base,
         title: `${name((d.command as { actor: string }).actor)} берёт ${String(d.weaponName)}`,
-        summary: `Оружие в руках (${String(d.cost)}). Остальное убрано.`,
+        summary: (d.command as { keep?: string }).keep
+          ? `Взято во вторую руку (${String(d.cost)}): теперь два оружия (решение 105).`
+          : `Оружие в руках (${String(d.cost)}). Остальное убрано.`,
         tone: 'success',
       };
     case 'drop-weapon':

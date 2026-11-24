@@ -268,7 +268,14 @@ export function prepareMeleeAttack(state: CombatActionState, request: MeleeAttac
     meleeModifier('melee:grip', composition.nrModifier),
     ...(request.dualWield &&
     !(state.actors[request.actor.actorId]!.talents ?? []).includes('Парное оружие (Рукопашное)')
-      ? [meleeModifier('melee:two-weapons', -30)]
+      ? [
+          meleeModifier(
+            'melee:two-weapons',
+            (state.actors[request.actor.actorId]!.talents ?? []).includes('Амбидекстрия')
+              ? -20
+              : -30,
+          ),
+        ]
       : []),
     ...(opportunity ? [meleeModifier('melee:counterattack', opportunity.modifier)] : []),
     ...(request.calledLocation

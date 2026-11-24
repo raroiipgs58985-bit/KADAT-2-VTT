@@ -12,6 +12,8 @@ import {
   readyCost,
   reloadCost,
   entanglement,
+  otherWeaponInHand,
+  oneHandedWeapon,
   type TurnActionType,
   type MoveMode,
   type MoveOption,
@@ -343,6 +345,8 @@ export interface AttackForm {
   activity: BleedingActivity;
   /** Reaction of the target chosen by its player or the GM. */
   defense: 'DECLINE' | 'DODGE' | 'PARRY';
+  /** Attack with both weapons in hand (ruling 105). */
+  dual?: boolean;
 }
 
 export function AttackPanel(props: {
@@ -358,7 +362,7 @@ export function AttackPanel(props: {
   /** Weapon in hand (ruling 81) and the cost of taking another. */
   inHand: (weaponId: string) => boolean;
   readyCost: string;
-  onTake: (weaponId: string) => void;
+  onTake: (weaponId: string, keep?: string) => void;
   /** Talent «Бугрящиеся бицепсы»: heavy weapons from the hands without penalties. */
   fromHands: boolean;
   onBrace: (weaponId: string) => void;
@@ -384,6 +388,13 @@ export function AttackPanel(props: {
     return Number(Math.hypot(from.x - to.x, from.y - to.y).toFixed(2));
   };
   const set = (patch: Partial<AttackForm>) => props.onChange({ ...form, ...patch });
+  const other = weapon ? otherWeaponInHand(props.battle, attacker, weapon.id) : null;
+  const handHeld = own.find((w) => w.id !== weapon?.id && props.inHand(w.id));
+  const canSecond =
+    !!weapon &&
+    !!handHeld &&
+    oneHandedWeapon(props.battle, weapon.id) &&
+    oneHandedWeapon(props.battle, handHeld.id);
   const lineProblem = form.target ? attackLineProblem(props.battle, attacker, form.target) : null;
   const modeName: Record<FireMode, string> = {
     single: 'Одиночный',
@@ -448,7 +459,27 @@ export function AttackPanel(props: {
           >
             Взять в руки ({props.readyCost})
           </button>
+          {canSecond && (
+            <button
+              type="button"
+              disabled={!props.canAct && props.readyCost !== 'до боя'}
+              onClick={() => props.onTake(weapon.id, handHeld!.id)}
+            >
+              Взять во вторую руку, оставив {handHeld!.name} ({props.readyCost})
+            </button>
+          )}
         </div>
+      )}
+      {weapon && other && props.inHand(weapon.id) && (
+        <label className="row">
+          <input
+            type="checkbox"
+            checked={!!form.dual}
+            onChange={(e) => set({ dual: e.target.checked })}
+          />
+          Атаковать обоими: вторая атака — {own.find((w) => w.id === other)?.name}. Без «Парного
+          оружия» каждая −30, с «Амбидекстрией» −20 (решение 105).
+        </label>
       )}
       {heavy && weapon && (
         <div className="stack">

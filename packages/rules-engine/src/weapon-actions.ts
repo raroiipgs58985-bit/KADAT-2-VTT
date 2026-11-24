@@ -75,7 +75,20 @@ const hasTalent = (state: CombatActionState, actorId: string, name: string) =>
 export interface ReadyWeaponRequest extends ActionRequest {
   readonly type: 'ready-weapon';
   readonly weaponId: string;
+  /** A weapon already in hand that stays in the other hand (two weapons, ruling 105). */
+  readonly keep?: string;
 }
+/** Talent «Амбидекстрия»: penalties for fighting with two hands are 10 lower. */
+export const AMBIDEXTROUS_TALENT = 'Амбидекстрия';
+/** Weapons that need both hands and cannot be one of two weapons in hand. */
+export function twoHandedWeapon(state: CombatActionState, weaponId: string): boolean {
+  const ranged = state.weapons[weaponId];
+  if (ranged) return ['ТО', 'СТ'].includes(ranged.template.profile.weaponClass);
+  const melee = state.melee?.weapons[weaponId];
+  return melee?.template.profile.handedness === 'two-handed';
+}
+const inHand = (state: CombatActionState, weaponId: string) =>
+  state.weapons[weaponId]?.readied ?? state.melee?.weapons[weaponId]?.held ?? false;
 /**
  * Change weapons (ruling 81): put away what is in hand and take `weaponId` — 1 ОД, or the turn's
  * Free Action with «Быстрое выхватывание». Ranged and melee weapons of the owner are both
@@ -95,11 +108,19 @@ export function readyWeapon(
     throw new Error('Invalid actor/selected weapon');
   if (ranged?.dropped || ranged?.hanging || melee?.dropped || melee?.hanging)
     throw new Error('Weapon must be picked up');
+  if (request.keep !== undefined) {
+    const kept = state.weapons[request.keep] ?? state.melee?.weapons[request.keep];
+    if (!kept || kept.owner.actorId !== actorId || !inHand(state, request.keep))
+      throw new Error('The kept weapon is not in hand');
+    if (request.keep === request.weaponId) throw new Error('Invalid actor/selected weapon');
+    if (twoHandedWeapon(state, request.keep) || twoHandedWeapon(state, request.weaponId))
+      throw new Error('Two-handed weapon cannot be one of two weapons');
+  }
   const free = hasTalent(state, actorId, QUICK_DRAW_TALENT);
   const context = scopedContext(state, request.actor, request.context, [], ['action:ready-weapon']);
   const action = free ? definition('free-action', 0) : definition('ready-weapon', 1);
   const spent = spendResources(state, request, action, context, 'own-turn');
-  const next = putInHand(spent.state, actorId, request.weaponId);
+  const next = putInHand(spent.state, actorId, request.weaponId, request.keep);
   const execution = {
     ...spent.execution,
     mutations: [
@@ -124,12 +145,15 @@ export function putInHand(
   state: CombatActionState,
   actorId: string,
   weaponId: string | null,
+  /** The second weapon that stays in the other hand. */
+  offHand?: string,
 ): CombatActionState {
+  const held = (id: string) => id === weaponId || id === offHand;
   const weapons = Object.fromEntries(
     Object.values(state.weapons)
       .filter((w) => w.owner.actorId === actorId)
       .map((w) => {
-        const next = { ...w, readied: w.id === weaponId, braced: false };
+        const next = { ...w, readied: held(w.id), braced: false };
         if (w.id === weaponId) {
           delete (next as { dropped?: boolean }).dropped;
           delete (next as { hanging?: boolean }).hanging;
@@ -146,8 +170,8 @@ export function putInHand(
         w.id,
         {
           ...w,
-          held: w.id === weaponId,
-          readied: w.id === weaponId,
+          held: held(w.id),
+          readied: held(w.id),
           dropped: w.id === weaponId ? false : w.dropped,
           ...(w.id === weaponId ? { hanging: false } : {}),
         },

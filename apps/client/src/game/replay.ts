@@ -51,7 +51,7 @@ type Step =
   | { type: 'turn-action'; command: TurnActionCommand; rolls: DiceRoll[] }
   | {
       type: 'take-weapon' | 'drop-weapon' | 'pick-up-weapon';
-      command: { id: string; actor: ActorId; weapon: string };
+      command: { id: string; actor: ActorId; weapon: string; keep?: string };
     }
   | { type: 'footprint'; actor: ActorId; footprint: Footprint }
   // v0.4: geometry-sensitive commands.

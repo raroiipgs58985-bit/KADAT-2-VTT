@@ -22,6 +22,7 @@ import {
   concussion,
   instantDeath,
   destroyerDice,
+  twoHandedWeapon,
   radDice,
   meltingLoss,
   toxicProperty,
@@ -77,6 +78,7 @@ import {
 } from '@kadat/rules-engine';
 import {
   actorIds,
+  battleWeapons,
   actorName,
   fpOf,
   posOf,
@@ -199,6 +201,13 @@ export interface AttackCommand {
    * attacker; it cannot be dodged or parried.
    */
   counter?: string;
+  /**
+   * Two weapons (ruling 105): the weapon in the other hand strikes or shoots as a second attack
+   * of the same action. Without «Парное оружие» each attack has −30 («Амбидекстрия»: −20).
+   */
+  second?: WeaponId;
+  /** Internal: this attack is the follow-up of the two-weapon attack with this primary ID. */
+  dualPrimary?: string;
 }
 export class ContextRequired extends Error {
   override readonly name = 'ContextRequired';
@@ -209,7 +218,10 @@ export class QuestionRequired extends ContextRequired {
     super(question.text);
   }
 }
-function ask(command: AttackCommand, question: GmQuestion): number {
+/** Prefix of question keys: the second weapon's attack asks its own questions (ruling 105). */
+let askScope = '';
+function ask(command: AttackCommand, asked: GmQuestion): number {
+  const question = askScope ? { ...asked, key: askScope + asked.key } : asked;
   const answer = command.answers?.[question.key];
   if (answer === undefined) throw new QuestionRequired(question);
   if (!Number.isInteger(answer)) throw new Error('Ответ ведущего должен быть целым числом');
@@ -1646,6 +1658,42 @@ function resolve(
       ],
     };
   }
+  // Two weapons (rulings 105, 106): both attacks carry the two-weapon flag; a basic ranged
+  // weapon is then fired with one hand (−20, «Бой»).
+  const dual = Boolean(command.second || command.dualPrimary);
+  if (dual) {
+    const owned = canonicalTalents(combatant(b, command.actor).character.talents);
+    const core = kind === 'ranged' ? 'Парное оружие (Стрелковое)' : 'Парное оружие (Рукопашное)';
+    const runtime = state.wounds.combat.actors[command.actor]!;
+    if (!(runtime.talents ?? []).includes(core) && owned.includes('Парное оружие')) {
+      const covers =
+        ask(command, {
+          key: `dual-talent:${kind}`,
+          text: `${actorName(b, command.actor)}: «Парное оружие» без уточнения. Оно для ${kind === 'ranged' ? 'стрельбы (НС)' : 'ближнего боя (НР)'}? (решение 106)`,
+          options: [
+            { label: 'Да', value: 1 },
+            { label: 'Нет', value: 0 },
+          ],
+        }) === 1;
+      if (covers)
+        state.wounds = {
+          ...state.wounds,
+          combat: {
+            ...state.wounds.combat,
+            actors: {
+              ...state.wounds.combat.actors,
+              [command.actor]: { ...runtime, talents: [...(runtime.talents ?? []), core] },
+            },
+          },
+        };
+    }
+  }
+  const dualRequest: { dualWield?: { primaryId?: string }; oneHanded?: boolean } = dual
+    ? {
+        dualWield: command.dualPrimary ? { primaryId: command.dualPrimary } : {},
+        ...(kind === 'ranged' && arsenalWeapon.weaponClass === 'ОС' ? { oneHanded: true } : {}),
+      }
+    : {};
   const info = {
     kind,
     traits,
@@ -1723,6 +1771,7 @@ function resolve(
             weaponId: command.weapon,
             mode: command.calledLocation ? 'single' : mode,
             shotsRequested: shots,
+            ...dualRequest,
             distance,
             dodgeable: true,
             ...(defense === 'DODGE'
@@ -1778,6 +1827,7 @@ function resolve(
             ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
             technique: 'normal',
             weaponId: command.weapon,
+            ...(dualRequest.dualWield ? { dualWield: dualRequest.dualWield } : {}),
             targets: [
               {
                 actor: ref(command.target),
@@ -1848,6 +1898,7 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
           'modifier',
           'defense',
           'counter',
+          'second',
         ] as const
       ).every((key) => current.pending!.command[key] === command[key]))
   )
@@ -1893,7 +1944,31 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
   delete next.pending;
   const logs: unknown[] = [];
   try {
-    const result = resolve(next, b, command, rng, logs);
+    if (command.second) {
+      if (command.second === command.weapon) throw new Error('Выберите второе оружие');
+      if (!weaponInHandState(next, command.weapon) || !weaponInHandState(next, command.second))
+        throw new Error('Оба оружия должны быть в руках (решение 105)');
+    }
+    const first = resolve(next, b, command, rng, logs);
+    let result: typeof first & { second?: ReturnType<typeof resolve> } = first;
+    if (command.second) {
+      // The same target; questions of the second attack have their own keys.
+      askScope = 'second:';
+      try {
+        result = {
+          ...first,
+          second: resolve(
+            next,
+            b,
+            { ...command, id: `${command.id}:2`, weapon: command.second, dualPrimary: command.id },
+            rng,
+            logs,
+          ),
+        };
+      } finally {
+        askScope = '';
+      }
+    }
     next.committed.push(command.id);
     sync(b, next);
     append(b, 'attack', {
@@ -2737,6 +2812,31 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
   }
 }
 
+const weaponInHandState = (state: EngineState, weaponId: WeaponId) => {
+  const combat = state.wounds.combat;
+  return combat.weapons[weaponId]?.readied ?? combat.melee?.weapons[weaponId]?.held ?? false;
+};
+/** The other usable weapon in the owner's hands besides `weaponId` (two weapons, ruling 105). */
+export function otherWeaponInHand(b: Battle, actorId: ActorId, weaponId: WeaponId) {
+  const state = getEngine(b);
+  return (
+    battleWeapons(b, actorId).find(
+      (w) =>
+        w.id !== weaponId &&
+        w.arsenal &&
+        !weaponProblem(w.arsenal) &&
+        weaponInHandState(state, w.id),
+    )?.id ?? null
+  );
+}
+/** Whether the weapon can be one of two weapons in hand (not two-handed, ruling 105). */
+export function oneHandedWeapon(b: Battle, weaponId: WeaponId) {
+  const combat = getEngine(b).wounds.combat;
+  return (
+    Boolean(combat.weapons[weaponId] ?? combat.melee?.weapons[weaponId]) &&
+    !twoHandedWeapon(combat, weaponId)
+  );
+}
 /** Whether the weapon is in the owner's hands now (ruling 81). */
 export function weaponInHand(b: Battle, weaponId: WeaponId): boolean {
   const combat = getEngine(b).wounds.combat;
@@ -2812,7 +2912,10 @@ export function reloadCost(b: Battle, actorId: ActorId, weaponId: WeaponId): str
  * Take a weapon in hand (ruling 81). Before the fight it is free (setting up); in the fight it
  * costs 1 ОД, or the Free Action with «Быстрое выхватывание».
  */
-export function takeWeapon(b: Battle, command: { id: string; actor: ActorId; weapon: WeaponId }) {
+export function takeWeapon(
+  b: Battle,
+  command: { id: string; actor: ActorId; weapon: WeaponId; keep?: WeaponId },
+) {
   const state = getEngine(b);
   try {
     combatant(b, command.actor);
@@ -2823,7 +2926,16 @@ export function takeWeapon(b: Battle, command: { id: string; actor: ActorId; wea
       throw new Error(`${chosen?.name ?? 'Оружие'}: в бою пока не используется — ${unusable}`);
     let combat: CombatActionState;
     let cost = 'до боя';
-    if (!combatStarted(b)) combat = putInHand(state.wounds.combat, command.actor, command.weapon);
+    if (command.keep && !weaponInHandState(state, command.keep))
+      throw new Error('Первое оружие уже не в руках');
+    if (
+      command.keep &&
+      (twoHandedWeapon(state.wounds.combat, command.keep) ||
+        twoHandedWeapon(state.wounds.combat, command.weapon))
+    )
+      throw new Error('Двуручное оружие нельзя держать вторым (решение 105)');
+    if (!combatStarted(b))
+      combat = putInHand(state.wounds.combat, command.actor, command.weapon, command.keep);
     else {
       movementGate(state, command.actor);
       const r = coreReadyWeapon(state.wounds.combat, {
@@ -2831,6 +2943,7 @@ export function takeWeapon(b: Battle, command: { id: string; actor: ActorId; wea
         type: 'ready-weapon',
         actor: ref(command.actor),
         weaponId: command.weapon,
+        ...(command.keep ? { keep: command.keep } : {}),
         context: context(state.wounds.combat, command.actor),
       });
       combat = r.state;
