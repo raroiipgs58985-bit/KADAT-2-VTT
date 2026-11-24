@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { importProfilesLists, type ProfilesListsSnapshot } from '../src/profiles-lists.js';
 
 const snapshot = JSON.parse(
-  readFileSync(new URL('../sources/profiles-lists-2026-11-23.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../sources/profiles-lists-2026-11-24.json', import.meta.url), 'utf8'),
 ) as ProfilesListsSnapshot;
 const lists = importProfilesLists(snapshot);
 
@@ -30,5 +30,14 @@ describe('Skill and talent names from «Профили персонажей»', 
       readFileSync(new URL('../dataset/profiles-lists.json', import.meta.url), 'utf8'),
     );
     expect(dataset).toEqual(JSON.parse(JSON.stringify(lists)));
+  });
+});
+
+describe('Old sheet «Таланты»', () => {
+  it('adds only talents absent from «Таланты (обновлены)», marked legacy', () => {
+    const legacy = lists.talents.filter((t) => t.legacy).map((t) => t.name);
+    expect(legacy).toContain('Враг');
+    expect(legacy).not.toContain('Паранойя');
+    expect(lists.talents.filter((t) => t.name === 'Паранойя')).toHaveLength(1);
   });
 });

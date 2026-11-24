@@ -11,11 +11,23 @@ export const skillCharacteristic = (name: string) =>
 export const talentEntries = profilesLists.talents.map((t) => ({
   id: `talent-${t.row}-${t.tier}`,
   name: t.name,
-  sheet: `Таланты ${t.tier} ур.`,
+  sheet: `Таланты ${t.tier} ур.${t.legacy ? ' (старый лист)' : ''}`,
   group: t.requirements || null,
   description: t.description,
 }));
 export type TalentEntry = (typeof talentEntries)[number];
+const base = (s: string) =>
+  s
+    .replace(/\s*\(.*\)\s*$/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, 'е');
+const talentBases = new Set(profilesLists.talents.map((t) => base(t.name)));
+/**
+ * Whether the talent is in the talent sheets (a specialisation in brackets may differ: «Владение
+ * оружием (Лаз)» is «Владение оружием»). Others are not counted in the fight.
+ */
+export const talentInSheets = (name: string) => talentBases.has(base(name));
 export const talentSummary = (t: TalentEntry) =>
   [t.group ? `треб.: ${t.group.replace(/\s*\n\s*/g, ', ')}` : null, t.description.slice(0, 120)]
     .filter(Boolean)

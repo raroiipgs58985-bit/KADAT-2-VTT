@@ -1,6 +1,7 @@
 /**
- * Skill and talent names from «Профили персонажей» (sheets «Навыки», «Таланты (обновлены)»),
- * read from a committed snapshot (ADR 0005). Used only to suggest names in the character
+ * Skill and talent names from «Профили персонажей» (sheets «Навыки», «Таланты (обновлены)» and,
+ * for talents absent from it, the old sheet «Таланты»), read from a committed snapshot
+ * (ADR 0005). The spreadsheets are the primary source (author decision 2026-11-24). Used only to suggest names in the character
  * editor; no rule is derived from the descriptions here.
  */
 export type ListCell = string | number | boolean | null;
@@ -30,6 +31,8 @@ export interface ProfileTalent {
   readonly requirements: string;
   readonly description: string;
   readonly row: number;
+  /** From the old sheet «Таланты»: absent from «Таланты (обновлены)». */
+  readonly legacy?: boolean;
 }
 export interface ProfilesLists {
   readonly format: 'kadat-profiles-lists';
@@ -41,6 +44,15 @@ export interface ProfilesLists {
 
 const SKILLS = 'Навыки';
 const TALENTS = 'Таланты (обновлены)';
+const OLD_TALENTS = 'Таланты';
+/** Name without «†» and a specialisation in brackets, for comparing the two talent sheets. */
+const baseName = (name: string) =>
+  name
+    .replace(/\s*†\s*/g, ' ')
+    .replace(/\s*\(.*\)\s*$/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, 'е');
 /** Rows after this one in «Навыки» list professions (crafts), not combat skills. */
 const LAST_SKILL_ROW = 300;
 const text = (c: ListCell | undefined) => (c === null || c === undefined ? '' : String(c)).trim();
@@ -81,6 +93,31 @@ export function importProfilesLists(snapshot: ProfilesListsSnapshot): ProfilesLi
         row: i + 1,
       });
     }
+  });
+  // The old sheet: three groups one under another, «Таланты N-ого уровня» headings.
+  const oldRows = snapshot.sheets[OLD_TALENTS] ?? [];
+  const known = new Set(talents.map((t) => baseName(t.name)));
+  let tier = 1;
+  oldRows.forEach((row, i) => {
+    const raw = text(row[0]).replace(/\s+/g, ' ');
+    const heading = /Таланты (\d)-/.exec(raw);
+    if (heading) {
+      tier = Number(heading[1]);
+      return;
+    }
+    const name = raw.replace(/\s*†\s*/g, ' ').trim();
+    const description = text(row[2]);
+    if (!name || !description || name === 'Талант' || known.has(baseName(name))) return;
+    known.add(baseName(name));
+    talents.push({
+      name,
+      marked: /†/.test(raw),
+      tier,
+      requirements: text(row[1]),
+      description,
+      row: i + 1,
+      legacy: true,
+    });
   });
   return { format: 'kadat-profiles-lists', version: 1, source: snapshot.source, skills, talents };
 }

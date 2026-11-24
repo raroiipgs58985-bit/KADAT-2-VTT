@@ -1,3 +1,4 @@
+import { canonicalTalent } from '../game/talents';
 import { useEffect, useState } from 'react';
 import {
   ARMOUR_ZONES,
@@ -30,6 +31,7 @@ import {
   skillCharacteristic,
   skillNames,
   talentEntries,
+  talentInSheets,
   talentSummary,
 } from '../game/profiles-lists';
 import {
@@ -489,6 +491,17 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
             onBlur={() => set({ talents: doc.talents.map((t) => t.trim()).filter(Boolean) })}
           />
         </label>
+        {(() => {
+          const unknown = doc.talents
+            .map((t) => t.trim())
+            .filter((t) => t && !talentInSheets(canonicalTalent(t)));
+          return unknown.length ? (
+            <p className="weapon-note badge-partial">
+              Нет в листах талантов «Профилей персонажей» — в бою не учитываются:{' '}
+              {unknown.join(', ')}.
+            </p>
+          ) : null;
+        })()}
         <ArsenalSearch
           label="Найти талант в «Профилях персонажей»"
           placeholder="например: спринт, мастер, парное"
