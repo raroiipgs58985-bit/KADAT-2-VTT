@@ -731,7 +731,7 @@ function applyCrippling(state: EngineState) {
 const sum = (rolls: readonly DiceRoll[]) => rolls.reduce((s, r) => s + r.value, 0);
 
 /** Properties the polygon does not apply automatically yet: shown to the GM after the hit. */
-const MANUAL_PROPERTIES = new Set(['Галлюциногенное', 'Взрыв', 'Спрей', 'Частичное опутывание']);
+const MANUAL_PROPERTIES = new Set(['Галлюциногенное', 'Взрыв', 'Частичное опутывание']);
 
 /**
  * Context of the target's reaction with its skill (ruling 49): the skill bonus is added;
@@ -1132,6 +1132,8 @@ function resolveHit(
   },
   rng: DiceSource,
   logs: unknown[],
+  /** One damage roll shared by several targets («Спрей», «Взрыв»). */
+  preRoll?: ReturnType<typeof resolveDamageRoll>['result'],
 ) {
   const attacker = combatant(b, command.actor).character;
   const target = combatant(b, command.target).character;
@@ -1149,7 +1151,7 @@ function resolveHit(
       : info.traits;
   const armour = zoneArmour(b, state, command, hit.location);
   setPhase('damage');
-  const roll = resolveDamageRoll(hit.profile.expression, rng, hit.context).result;
+  const roll = preRoll ?? resolveDamageRoll(hit.profile.expression, rng, hit.context).result;
   // «Знаток Цепного оружия»: one more к10 for the damage, the lowest die is dropped (ruling 126).
   let rolled = roll.rolls;
   if (
@@ -2276,6 +2278,149 @@ function segmentHitsRect(
   }
   return true;
 }
+/**
+ * «Спрей» (rulings 144–145): a 45° sector on the optimal range towards the chosen target hits
+ * everyone in it not behind a wall. Who can leave the zone or get behind solid cover within
+ * СКР (the GM says) makes an Уклонение +0 test; a success avoids. One damage roll, torso.
+ * 1 ОД and one charge.
+ */
+function sprayResolve(
+  b: Battle,
+  state: EngineState,
+  command: AttackCommand,
+  info: Parameters<typeof resolveHit>[4],
+  rng: DiceSource,
+  logs: unknown[],
+) {
+  const combat = state.wounds.combat;
+  const weapon = combat.weapons[command.weapon]!;
+  const container = weapon.loadedContainerId
+    ? combat.containers[weapon.loadedContainerId]
+    : undefined;
+  if (!container || container.currentRounds < 1) throw new Error('Нет зарядов');
+  const turn = combat.session.turn!;
+  if (turn.od < 1) throw new Error('Нужен 1 ОД');
+  if (turn.flags.some((f) => f.startsWith('attack:'))) throw new Error('Атака в этот ход уже была');
+  state.wounds = {
+    ...state.wounds,
+    combat: {
+      ...combat,
+      session: {
+        ...combat.session,
+        turn: { ...turn, od: turn.od - 1, flags: [...turn.flags, `attack:${command.id}`] },
+      },
+      containers: {
+        ...combat.containers,
+        [container.id]: { ...container, currentRounds: container.currentRounds - 1 },
+      },
+    },
+  };
+  const from = posOf(b, command.actor),
+    aim = posOf(b, command.target);
+  const heading = Math.atan2(aim.y - from.y, aim.x - from.x);
+  const range = weapon.template.profile.optimalRange;
+  const inside = actorIds(b).filter((id) => {
+    if (id === command.actor || state.wounds.actors[id]?.life.status === 'DEAD') return false;
+    const p = posOf(b, id);
+    const d = Math.hypot(p.x - from.x, p.y - from.y);
+    if (d > range + 1e-9 || d === 0) return false;
+    let diff = Math.abs(Math.atan2(p.y - from.y, p.x - from.x) - heading);
+    if (diff > Math.PI) diff = 2 * Math.PI - diff;
+    if (diff > Math.PI / 8 + 1e-9) return false;
+    return !sightLine(from, p, sceneGeometry(b)).blocker;
+  });
+  setPhase('damage');
+  const template = weapon.template.profile;
+  const roll = resolveDamageRoll(
+    template.damage.expression,
+    rng,
+    context(combat, command.actor),
+  ).result;
+  setPhase('attack');
+  const targets: unknown[] = [];
+  for (const id of inside) {
+    const name = actorName(b, id);
+    const canLeave =
+      ask(command, {
+        key: `spray:${id}`,
+        text: `«Спрей»: может ли ${name} уйти из зоны или за сплошное укрытие в пределах СКР? (тест Уклонения +0)`,
+        options: [
+          { label: 'Да — тест Уклонения', value: 1 },
+          { label: 'Нет — попадание', value: 0 },
+        ],
+      }) === 1;
+    let avoided = false;
+    if (canLeave) {
+      const c = combatant(b, id).character;
+      const skill = c.skills.find((s) => s.name.toLowerCase() === 'уклонение');
+      const bonus =
+        skill?.bonus ??
+        ask(command, {
+          key: `spray-untrained:${id}`,
+          text: `${name}: нет навыка «Уклонение». Какой штраф к тесту? (решение 49)`,
+          min: -60,
+          max: 0,
+        });
+      const src = { kind: 'gm', id: 'Уклонение от Спрея' };
+      const check = resolveCheck(
+        {
+          baseValue: c.characteristics.ЛВ.value,
+          finalSuper: c.characteristics.ЛВ.super,
+          context: {
+            ...context(state.wounds.combat, id, command.actor),
+            modifiers: bonus
+              ? [
+                  {
+                    id: `${command.id}:spray-dodge:${id}`,
+                    value: bonus,
+                    source: src,
+                    provenance: { source: src, reason: skill ? 'навык' : 'штраф ведущего' },
+                  },
+                ]
+              : [],
+          },
+        },
+        rng,
+      ).result;
+      logs.push({ type: 'spray-dodge', actor: id, check });
+      avoided = check.outcome === 'success';
+    }
+    if (avoided) {
+      targets.push({ actor: id, avoided: true });
+      continue;
+    }
+    const src = { kind: 'weapon-property', id: 'Свойства оружия: Спрей' };
+    const hit: DamageInput = {
+      hitId: `${command.id}:spray:${id}`,
+      attackId: command.id,
+      attacker: ref(command.actor),
+      target: ref(id),
+      location: 'Torso',
+      profile: template.damage,
+      penetration: template.penetration,
+      transformations: [],
+      tags: ['spray'],
+      context: context(state.wounds.combat, command.actor, id),
+      provenance: [{ source: src, reason: 'Спрей: автоматическое попадание' }],
+    };
+    const p = posOf(b, id);
+    targets.push({
+      actor: id,
+      avoided: false,
+      ...resolveHit(
+        b,
+        state,
+        { ...command, target: id },
+        hit,
+        { ...info, degrees: 0, distance: Math.hypot(p.x - from.x, p.y - from.y) },
+        rng,
+        logs,
+        roll,
+      ),
+    });
+  }
+  return { dice: roll.rolls.map((r) => r.value), targets };
+}
 /** Called-attack penalties («Бой» A52), to cap the talents that reduce them. */
 const CALLED_PENALTY: Record<CalledLocation, number> = {
   Eyes: -50,
@@ -2694,6 +2839,7 @@ function resolve(
   let suppression: unknown = null;
   let overheat: unknown = null;
   let knockdownDamage: unknown = null;
+  let spray: unknown = null;
   let stunned: unknown = null;
   // «Перегрев»: the weapon cools down — no shots this round and the next (ruling 137).
   const cooling = state.overheated?.[command.weapon];
@@ -2750,7 +2896,9 @@ function resolve(
     const w = wid ? melee?.weapons[wid] : undefined;
     return !!w && w.held && w.template.profile.family !== 'natural';
   };
-  if (kind === 'ranged') {
+  if (kind === 'ranged' && hasTrait(traits, 'Спрей')) {
+    spray = sprayResolve(b, state, command, { ...info, degrees: 0 }, rng, logs);
+  } else if (kind === 'ranged') {
     const mode = command.mode ?? 'single';
     // Ruling 78: a mode fires exactly the weapon's rate (short burst 3 — three shots).
     const rate = fireModes(arsenalWeapon).find((m) => m.mode === mode);
@@ -3059,6 +3207,7 @@ function resolve(
     ...(suppression ? { suppression } : {}),
     ...(overheat ? { overheat } : {}),
     ...(knockdownDamage ? { knockdownDamage } : {}),
+    ...(spray ? { spray } : {}),
     ...(stunned ? { stunned } : {}),
     ...(command.technique === 'grapple' &&
     state.wounds.combat.melee?.grapples.some(

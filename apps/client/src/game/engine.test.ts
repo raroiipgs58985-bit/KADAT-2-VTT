@@ -937,6 +937,53 @@ describe('Cover (ruling 142)', () => {
   });
 });
 
+describe('«Спрей» (rulings 144–145)', () => {
+  it('hits everyone in the 45° cone; a successful Уклонение escapes; one damage roll', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const flamer = matchWeaponByName('Огнемёт')!;
+    const target = (id: string) => ({ ...emptyCharacter(id, id), wounds: 80 });
+    const b = createBattle([
+      {
+        character: {
+          ...emptyCharacter('f', 'Огнемётчик'),
+          talents: ['Владение оружием (Огнемёт)'],
+          weapons: [{ name: flamer.name, ref: flamer.id }],
+        },
+        side: 'a',
+        at: { x: 3.5, y: 10.5 },
+        id: 'f',
+      },
+      { character: target('a'), side: 'b', at: { x: 7.5, y: 10.5 }, id: 'a' },
+      { character: target('b'), side: 'b', at: { x: 8.5, y: 11.5 }, id: 'b' },
+      { character: target('c'), side: 'b', at: { x: 7.5, y: 16.5 }, id: 'c' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2,10:3,10:4'));
+    const r = attack(
+      b,
+      shot({
+        id: 'sp',
+        actor: 'f',
+        target: 'a',
+        weapon: 'f:0',
+        answers: {
+          'proficiency:f:0': 1,
+          'spray:a': 0,
+          'spray:b': 1,
+          'spray-untrained:b': -20,
+          'burning-ob:a': 0,
+        },
+      }),
+      { roll: (sides: number) => (sides === 100 ? 1 : 5) },
+    );
+    expect(r.status).toBe('RESOLVED');
+    const spray = (r as { result: { spray: { targets: { actor: string; avoided: boolean }[] } } })
+      .result.spray;
+    expect(spray.targets.map((t) => t.actor).sort()).toEqual(['a', 'b']);
+    expect(spray.targets.find((t) => t.actor === 'b')?.avoided).toBe(true);
+    expect(spray.targets.find((t) => t.actor === 'a')?.avoided).toBe(false);
+  });
+});
+
 describe('«Натиск» (ruling 132)', () => {
   const setup = async (talents: string[] = [], targetX = 9.5) => {
     const { matchWeaponByName } = await import('./arsenal');

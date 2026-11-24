@@ -318,6 +318,29 @@ export function describeEntry(
         stunned?: { rounds: number };
         knockdownDamage?: { finalDamage: number };
       };
+      const sprayed = (
+        a.result as {
+          spray?: {
+            dice: number[];
+            targets: { actor: string; avoided: boolean; finalDamage?: number }[];
+          };
+        }
+      ).spray;
+      if (sprayed)
+        return {
+          ...base,
+          title: `${name(a.command.actor)}: спрей (${weapon})`,
+          summary: sprayed.targets.length
+            ? `Урон ${sprayed.dice.join('+')}. ${sprayed.targets
+                .map((t) =>
+                  t.avoided
+                    ? `${name(t.actor)} — увернулся`
+                    : `${name(t.actor)} — ${t.finalDamage} ран`,
+                )
+                .join('; ')}.`
+            : 'В конусе никого.',
+          tone: 'success',
+        };
       const tech = (a.command as { technique?: string }).technique;
       if (tech === 'grapple' || tech === 'stun' || tech === 'knockdown')
         return {
