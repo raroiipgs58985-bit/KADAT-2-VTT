@@ -704,7 +704,7 @@ function applyAfterHit(
     const id = `${command.id}:${test.property}:${command.target}`;
     const actor = ref(command.target);
     const prov = { source: gm, reason: `Провал теста против «${test.property}»` };
-    let next = session;
+    let next: typeof session;
     if (test.onFailure === 'stunned') {
       next = applyStunned(session, {
         id,
