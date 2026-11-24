@@ -1,6 +1,7 @@
 import type {
   BleedingActivity,
   CalledLocation,
+  ConditionInstance,
   CombatActionState,
   CombatSession,
   DamageInput,
@@ -18,6 +19,12 @@ import type {
 } from '@kadat/contracts';
 import {
   adjustDamageDice,
+  concussion,
+  instantDeath,
+  remainingRounds,
+  afterHitTests,
+  applyStunned,
+  resolveCheck,
   planDeath,
   dropWeapon as coreDropWeapon,
   pickUpWeapon as corePickUpWeapon,
@@ -188,7 +195,7 @@ function ask(command: AttackCommand, question: GmQuestion): number {
 }
 const engines = new WeakMap<Battle, EngineState>();
 /** What the next die of an attack is rolled for; read by the dice tape for the GM view. */
-type RollPhase = 'turn' | 'attack' | 'suppression' | 'damage' | 'consequence';
+type RollPhase = 'turn' | 'attack' | 'suppression' | 'damage' | 'consequence' | 'property';
 let rollPhase: RollPhase = 'attack';
 const setPhase = (p: RollPhase) => {
   rollPhase = p;
@@ -199,6 +206,7 @@ export function rollPurpose(phase: RollPhase, sides: number): string {
   if (phase === 'attack')
     return sides === 100 ? 'тест попадания' : sides === 2 ? 'сторона попадания' : 'атака';
   if (phase === 'suppression') return 'тест подавления (СВ)';
+  if (phase === 'property') return 'тест против свойства оружия';
   if (phase === 'damage') return 'урон';
   return sides === 100
     ? 'тест последствия ранения'
@@ -470,18 +478,12 @@ const sum = (rolls: readonly DiceRoll[]) => rolls.reduce((s, r) => s + r.value, 
 /** Properties the polygon does not apply automatically yet: shown to the GM after the hit. */
 const MANUAL_PROPERTIES = new Set([
   'Деструктор',
-  'Оглушающее',
-  'Ослепляющее',
-  'Шоковое',
-  'Опутывающее',
-  'Контузия',
   'Калечащее',
   'Токсичное',
   'Огненное',
   'Галлюциногенное',
   'Проникающее',
   'Рад',
-  'Мгновенная смерть',
   'Плавящее',
   'Взрыв',
   'Спрей',
@@ -653,6 +655,120 @@ function applySuppression(
   return { status: r.status, targets: summary };
 }
 
+const AFTER_HIT_NAME = { stunned: 'оглушён', blinded: 'ослеплён', immobilised: 'опутан' } as const;
+/**
+ * Tests the target makes after a hit (properties «Оглушающее», «Ослепляющее», «Шоковое»,
+ * «Опутывающее»): ВН or ЛВ with −10 × rating. A failure gives the state for as many rounds as
+ * degrees of failure; «Опутывающее» holds until the target breaks free (СЛ or ЛВ − 10 × Х).
+ */
+function applyAfterHit(
+  b: Battle,
+  state: EngineState,
+  command: AttackCommand,
+  traits: readonly WeaponTraitReference[],
+  finalDamage: number,
+  rng: DiceSource,
+  logs: unknown[],
+) {
+  const out: { property: string; passed: boolean; state?: string; rounds?: number }[] = [];
+  const life = state.wounds.actors[command.target]?.life.status;
+  if (life !== 'ALIVE') return out;
+  for (const test of afterHitTests(traits, finalDamage)) {
+    const c = combatant(b, command.target).character.characteristics[test.characteristic];
+    const gm = { kind: 'weapon-property', id: `Свойства оружия: ${test.property}` };
+    const ctx = {
+      ...context(state.wounds.combat, command.target, command.actor),
+      modifiers: test.modifier
+        ? [
+            {
+              id: `${command.id}:${test.property}`,
+              value: test.modifier,
+              source: gm,
+              provenance: { source: gm, reason: `${test.property}: −10 × рейтинг` },
+            },
+          ]
+        : [],
+    };
+    const check = resolveCheck(
+      { baseValue: c.value, finalSuper: c.super, context: ctx },
+      rng,
+    ).result;
+    logs.push({ type: 'after-hit-test', property: test.property, check });
+    if (check.outcome === 'success') {
+      out.push({ property: test.property, passed: true });
+      continue;
+    }
+    const rounds = Math.max(1, check.failureDegrees ?? 1);
+    const combat = state.wounds.combat;
+    const session = combat.session;
+    const id = `${command.id}:${test.property}:${command.target}`;
+    const actor = ref(command.target);
+    const prov = { source: gm, reason: `Провал теста против «${test.property}»` };
+    let next = session;
+    if (test.onFailure === 'stunned') {
+      next = applyStunned(session, {
+        id,
+        actor,
+        source: gm,
+        provenance: prov,
+        durationRounds: rounds,
+      }).result;
+    } else {
+      const type = test.onFailure === 'blinded' ? 'Blinded' : 'Helpless';
+      // Blinded lasts the degrees of failure; entangled holds until the target breaks free.
+      const duration = test.onFailure === 'blinded' ? rounds : 99;
+      const effects =
+        type === 'Helpless'
+          ? (['action'] as const).map((permission) => ({
+              id: `${id}:${permission}`,
+              source: gm,
+              targetActor: actor,
+              provenance: prov,
+              definition: {
+                id: `Entangled:${permission}`,
+                target: { kind: 'permission' as const, permission },
+                operation: 'restrict' as const,
+                value: 1,
+                stage: 'temporary' as const,
+                stackingGroup: `Entangled:${permission}`,
+                stackingRule: 'independent' as const,
+                tags: ['Entangled'],
+                provenance: prov,
+              },
+            }))
+          : [];
+      next = {
+        ...session,
+        conditions: [
+          ...session.conditions,
+          {
+            id,
+            type,
+            actor,
+            sources: [gm],
+            provenance: [prov],
+            stackingRule: 'REJECT' as const,
+            unit: 'round' as const,
+            appliedRound: session.roundNumber,
+            durationRounds: duration,
+            expiresAfterRound: session.roundNumber + duration - 1,
+            effects,
+            ...(type === 'Helpless' ? { breakFree: -10 * Math.abs(test.modifier / 10) } : {}),
+          } as ConditionInstance,
+        ],
+      };
+    }
+    state.wounds = { ...state.wounds, combat: { ...combat, session: next } };
+    out.push({
+      property: test.property,
+      passed: false,
+      state: AFTER_HIT_NAME[test.onFailure],
+      ...(test.onFailure === 'immobilised' ? {} : { rounds }),
+    });
+  }
+  return out;
+}
+
 /** Damage of one hit: dice, weapon properties, zone armour, endurance and wounds. */
 function resolveHit(
   b: Battle,
@@ -786,7 +902,92 @@ function resolveHit(
   state.protection = damage.state;
   setPhase('consequence');
   const wound = postDamage(state, damage.result, command, rng, logs);
+  setPhase('property');
+  const effects = applyAfterHit(
+    b,
+    state,
+    command,
+    traits,
+    damage.result.finalDamage ?? 0,
+    rng,
+    logs,
+  );
+  // «Мгновенная смерть»: damage after absorption ≥ 2 × бВН kills on the spot.
+  if (
+    instantDeath(traits, damage.result.finalDamage ?? 0, damage.result.bVN ?? 0) &&
+    state.wounds.actors[command.target]?.life.status !== 'DEAD'
+  ) {
+    state.wounds = planDeath(
+      state.wounds,
+      ref(command.target),
+      damage.result.bVN ?? 0,
+      {
+        source: { kind: 'weapon-property', id: 'Свойства оружия: Мгновенная смерть' },
+        reason: 'Урон после поглощения ≥ 2 × бВН',
+      },
+      'TORSO',
+    ).state;
+    effects.push({ property: 'Мгновенная смерть', passed: false, state: 'убит на месте' });
+  }
+  // «Контузия (Х)»: −10 × Х to НС, НР and СВ tests for ½Х rounds rounded up (ruling 73).
+  const conc = concussion(traits);
+  if (conc && state.wounds.actors[command.target]?.life.status === 'ALIVE') {
+    const session = state.wounds.combat.session;
+    const src = { kind: 'weapon-property', id: 'Свойства оружия: Контузия' };
+    const prov = { source: src, reason: `Контузия: ${conc.modifier} на ${conc.rounds} р.` };
+    const id = `${command.id}:Контузия:${command.target}:${hit.hitId}`;
+    const effect = (tag: string) => ({
+      id: `${id}:${tag}`,
+      source: src,
+      targetActor: ref(command.target),
+      provenance: prov,
+      definition: {
+        id: `Concussion:${tag}`,
+        target: { kind: 'check' as const },
+        operation: 'add' as const,
+        value: conc.modifier,
+        stage: 'temporary' as const,
+        condition: { requiresTags: [tag] },
+        stackingGroup: `Concussion:${tag}`,
+        stackingRule: 'largest' as const,
+        tags: ['Concussion'],
+        provenance: prov,
+      },
+    });
+    state.wounds = {
+      ...state.wounds,
+      combat: {
+        ...state.wounds.combat,
+        session: {
+          ...session,
+          conditions: [
+            ...session.conditions,
+            {
+              id,
+              type: 'Concussed',
+              actor: ref(command.target),
+              sources: [src],
+              provenance: [prov],
+              stackingRule: 'REJECT',
+              unit: 'round',
+              appliedRound: session.roundNumber,
+              durationRounds: conc.rounds,
+              expiresAfterRound: session.roundNumber + conc.rounds - 1,
+              effects: [effect('ranged'), effect('melee'), effect('check:suppression')],
+            },
+          ],
+        },
+      },
+    };
+    effects.push({
+      property: 'Контузия',
+      passed: false,
+      state: `контужен (${conc.modifier})`,
+      rounds: conc.rounds,
+    });
+  }
   return {
+    effects,
     location: hit.location,
     total,
     penetration,
@@ -846,6 +1047,37 @@ function resolve(
   }
   const kind = weaponKind(arsenalWeapon);
   const traits = impliedTraits(weaponTraits(arsenalWeapon).traits);
+  // «Раны и лечение»: a blinded character fails НС automatically, НР without «Бой вслепую».
+  const conditionsOf = (id: string) =>
+    state.wounds.combat.session.conditions.filter(
+      (c) =>
+        c.actor.actorId === id && remainingRounds(c, state.wounds.combat.session.roundNumber) > 0,
+    );
+  if (conditionsOf(command.actor).some((c) => c.type === 'Blinded')) {
+    const blindFighter = canonicalTalents(combatant(b, command.actor).character.talents).includes(
+      'Бой вслепую',
+    );
+    if (kind === 'ranged' || !blindFighter)
+      throw new Error(
+        `${actorName(b, command.actor)} ослеплён: тесты ${kind === 'ranged' ? 'НС' : 'НР'} проваливаются автоматически («Раны и лечение», Слепота)`,
+      );
+  }
+  // «Раны и лечение»: attacks on a stunned target get +20.
+  if (conditionsOf(command.target).some((c) => c.type === 'Stunned')) {
+    const src = { kind: 'canonical', id: 'Раны и лечение: Оглушён — атаки по цели +20' };
+    ctx = {
+      ...ctx,
+      modifiers: [
+        ...ctx.modifiers,
+        {
+          id: `${command.id}:target-stunned`,
+          value: 20,
+          source: src,
+          provenance: { source: src, reason: 'Цель оглушена' },
+        },
+      ],
+    };
+  }
   // Ruling 84: without «Владение оружием» of this kind −30 (the GM decides unclear kinds).
   const weaponKindLabel = weaponKindName(arsenalWeapon);
   const attackerTalents = combatant(b, command.actor).character.talents;

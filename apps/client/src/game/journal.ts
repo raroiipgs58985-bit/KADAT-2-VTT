@@ -56,7 +56,12 @@ interface AttackDetail {
   maxHp?: number;
   result: {
     attack?: { mode?: string; shotsFired?: number; ammoSpent?: number; hitsGenerated?: number };
-    hits?: { location: string; finalDamage: number; manual?: string[] }[];
+    hits?: {
+      location: string;
+      finalDamage: number;
+      manual?: string[];
+      effects?: { property: string; passed: boolean; state?: string; rounds?: number }[];
+    }[];
     suppression?: { status: string; targets: { actor: string; status: string }[] };
     reaction?:
       | 'declined'
@@ -215,6 +220,14 @@ export function describeEntry(
           ? `${modeName[r.mode] ?? r.mode}: выстрелов ${r.shotsFired}, зарядов ${r.ammoSpent}, попаданий ${r.hitsGenerated}. `
           : '';
       const manual = [...new Set(hits.flatMap((h) => h.manual ?? []))];
+      const effectText = hits
+        .flatMap((h) => h.effects ?? [])
+        .map((e) =>
+          e.passed
+            ? `${e.property}: устоял`
+            : `${e.property}: ${e.state}${e.rounds ? ` на ${e.rounds} р.` : ' до освобождения'}`,
+        )
+        .join('; ');
       const reaction =
         a.result.reaction && a.result.reaction !== 'declined' ? a.result.reaction : null;
       const reactionName =
@@ -252,7 +265,7 @@ export function describeEntry(
             .map((h) => `${locationName(h.location)} — урон ${h.finalDamage}`)
             .join('; ')}. ${name(a.command.target)}: ${a.hp[a.command.target]}${
             a.maxHp ? `/${a.maxHp}` : ''
-          } ран.${manual.length ? ` Ведущему применить: ${manual.join(', ')}.` : ''}`
+          } ран.${effectText ? ` ${effectText}.` : ''}${manual.length ? ` Ведущему применить: ${manual.join(', ')}.` : ''}`
         : reaction && reaction.cancelledHits > 0
           ? `${fire}${react}Урона нет.`
           : `${fire}Промах — урон не бросается.`;

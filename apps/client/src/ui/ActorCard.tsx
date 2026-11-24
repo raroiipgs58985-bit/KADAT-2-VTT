@@ -18,6 +18,8 @@ const conditionLabel: Record<string, string> = {
   Prone: 'Лежит',
   Blinded: 'Ослеплён',
   Suppressed: 'Подавлен',
+  Concussed: 'Контужен',
+  Agony: 'Агония',
 };
 const bleedingLabel = { LIGHT: 'лёгкое', MEDIUM: 'среднее', HEAVY: 'тяжёлое' } as const;
 const supportLabel = { supported: 'работает', partial: 'частично', blocked: 'не подключено' };

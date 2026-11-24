@@ -664,3 +664,76 @@ describe('Exotic (xenos) weapons', () => {
     expect(hasExoticProficiency([`Владение экзотическим оружием (${xeno.name})`], xeno)).toBe(true);
   });
 });
+
+describe('States after a hit (weapon properties)', () => {
+  it('«Оглушающее»: a failed ВН test stuns for the degrees of failure; attacks on it get +20', async () => {
+    const { arsenal } = await import('./arsenal');
+    const mace = arsenal.weapons.find((w) => w.name === 'Булава')!;
+    const thug = {
+      ...emptyCharacter('thug', 'Громила'),
+      talents: ['Владение оружием (Примитив)'],
+      weapons: [{ name: mace.name, ref: mace.id }],
+    };
+    const b = createBattle([
+      { character: thug, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'thug' },
+      { character: characterFromProfile('pak'), side: 'b', at: { x: 6.5, y: 10.5 }, id: 'pak' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    // Hit, then every other d100 (the ВН test) fails with 99.
+    let n = 0;
+    const r = attack(b, shot({ id: 'bonk', actor: 'thug', weapon: 'thug:0' }), {
+      roll: (sides: number) => (sides === 100 ? (n++ === 0 ? 35 : 99) : 5),
+    });
+    const hits = (r as { result: { hits: { effects: { property: string; passed: boolean }[] }[] } })
+      .result.hits;
+    expect(hits[0]?.effects[0]).toMatchObject({ property: 'Оглушающее', passed: false });
+    expect(actorStatus(b, 'pak').conditions).toContain('Stunned');
+  });
+});
+
+describe('More weapon properties in the fight', () => {
+  const melee = async (
+    weaponName: string,
+    roll100: (n: number) => number,
+    target = characterFromProfile('pak'),
+  ) => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const w = matchWeaponByName(weaponName)!;
+    const brute = {
+      ...emptyCharacter('brute', 'Боец'),
+      characteristics: {
+        ...emptyCharacter('x').characteristics,
+        НР: { value: 60, super: 0 },
+        СЛ: { value: 60, super: 0 },
+      },
+      weapons: [{ name: w.name, ref: w.id }],
+    };
+    const b = createBattle([
+      { character: brute, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'brute' },
+      { character: target, side: 'b', at: { x: 6.5, y: 10.5 }, id: 'pak' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    let n = 0;
+    const r = attack(
+      b,
+      shot({ id: 'hit', actor: 'brute', weapon: 'brute:0', answers: { 'proficiency:brute:0': 1 } }),
+      { roll: (sides: number) => (sides === 100 ? roll100(n++) : 5) },
+    );
+    return { b, r };
+  };
+  it('«Контузия (4)»: −40 for 2 rounds', async () => {
+    const tank = {
+      ...emptyCharacter('tank', 'Танк'),
+      wounds: 300,
+      armour: { head: 60, torso: 60, arms: 60, legs: 60 },
+    };
+    const { b, r } = await melee('Сотрясающий молот Сатурна', (n) => (n === 0 ? 35 : 99), tank);
+    expect(r.status).toBe('RESOLVED');
+    expect(actorStatus(b, 'pak').conditions).toContain('Concussed');
+  });
+  it('«Мгновенная смерть»: damage ≥ 2 × бВН kills on the spot', async () => {
+    const { b, r } = await melee('Дизрапторный кулак Сатурна', (n) => (n === 0 ? 35 : 99));
+    expect(r.status).toBe('RESOLVED');
+    expect(actorStatus(b, 'pak').life).toBe('DEAD');
+  });
+});
