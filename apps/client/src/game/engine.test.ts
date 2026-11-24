@@ -30,6 +30,8 @@ import {
   weaponHanging,
   entanglement,
   counterattacks,
+  disarm,
+  placeLoose,
   type AttackCommand,
 } from './engine';
 import { fixedDice } from './dice';
@@ -537,6 +539,69 @@ describe('Two weapons (rulings 105, 106)', () => {
     expect(() => takeWeapon(h, { id: 't2', actor: 'gun', weapon: 'gun:1', keep: 'gun:0' })).toThrow(
       /Двуручное/,
     );
+  });
+});
+
+describe('«Разоружение» (rulings 107, 108)', () => {
+  const setup = async (talents = ['Разоружение']) => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const sword = matchWeaponByName('Цепной меч')!;
+    const duelist = {
+      ...emptyCharacter('duelist', 'Дуэлянт'),
+      talents: ['Владение оружием (Цепное)', ...talents],
+      weapons: [{ name: sword.name, ref: sword.id }],
+    };
+    const b = createBattle([
+      { character: duelist, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'duelist' },
+      {
+        character: characterFromProfile('kelus-drakar'),
+        side: 'b',
+        at: { x: 6.5, y: 10.5 },
+        id: 'kelus-drakar',
+      },
+    ]);
+    takeWeapon(b, { id: 'sword', actor: 'kelus-drakar', weapon: 'kelus-drakar:1' });
+    startCombat(b, fixedDice('10:9,10:2'));
+    return b;
+  };
+  it('needs the talent', async () => {
+    const b = await setup([]);
+    expect(() =>
+      disarm(b, { id: 'd', actor: 'duelist', target: 'kelus-drakar', weapon: 'kelus-drakar:1' }),
+    ).toThrow();
+  });
+  it('a won opposed НР knocks the weapon out; it lies on the map and is picked up next to it', async () => {
+    const b = await setup();
+    // Attacker 05, defender 99; the weapon flies 4 m.
+    const r = disarm(
+      b,
+      { id: 'd', actor: 'duelist', target: 'kelus-drakar', weapon: 'kelus-drakar:1' },
+      fixedDice('100:5,100:99,10:4'),
+    );
+    expect(r).toMatchObject({ disarmed: true, distance: 4 });
+    expect(weaponInHand(b, 'kelus-drakar:1')).toBe(false);
+    expect(turnInfo(b).od).toBe(1);
+    expect(() => placeLoose(b, { x: 12.5, y: 10.5 })).toThrow(/не дальше 4 м/);
+    placeLoose(b, { x: 9.5, y: 10.5 });
+    expect(b.loose?.['kelus-drakar:1']).toEqual({ x: 9.5, y: 10.5 });
+    nextTurn(b, fixedDice(''));
+    expect(() =>
+      pickUpWeapon(b, { id: 'far', actor: 'kelus-drakar', weapon: 'kelus-drakar:1' }),
+    ).toThrow(/подойдите/);
+    // Next to it the weapon is picked up and leaves the map.
+    const c = await setup();
+    disarm(
+      c,
+      { id: 'd', actor: 'duelist', target: 'kelus-drakar', weapon: 'kelus-drakar:1' },
+      fixedDice('100:5,100:99,10:1'),
+    );
+    placeLoose(c, { x: 7.5, y: 10.5 });
+    nextTurn(c, fixedDice(''));
+    pickUpWeapon(c, { id: 'near', actor: 'kelus-drakar', weapon: 'kelus-drakar:1' });
+    expect(weaponInHand(c, 'kelus-drakar:1')).toBe(true);
+    expect(c.loose?.['kelus-drakar:1']).toBeUndefined();
+    const replayed = importReplay(JSON.parse(JSON.stringify(exportReplay(b))));
+    expect(replayed.loose?.['kelus-drakar:1']).toEqual({ x: 9.5, y: 10.5 });
   });
 });
 

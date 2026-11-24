@@ -34,6 +34,10 @@ import {
   turnInfo,
   counterattacks,
   otherWeaponInHand,
+  disarm,
+  placeLoose,
+  pendingLoose,
+  looseWeapons,
   type MoveMode,
 } from './game/engine';
 import type { JournalTone } from './game/journal';
@@ -732,6 +736,13 @@ export function App() {
               onRoutePoint={(p) => setRoute((r) => [...(r ?? []), p])}
               fallActor={mode === 'combat' ? fallActor : null}
               onPlaceFall={(id, p) => run((b) => placeFallen(b, id, p))}
+              loose={looseWeapons(battle)}
+              placingLoose={
+                mode === 'combat' && pendingLoose(battle)
+                  ? { from: pendingLoose(battle)!.from, max: pendingLoose(battle)!.maxDistance }
+                  : null
+              }
+              onPlaceLoose={(p) => run((b) => placeLoose(b, p))}
               onPlace={(id, x, y) => run((b) => placeActor(b, id, x, y))}
               onDraftPlace={(id, x, y) =>
                 edit((d) => placeToken(d, id, { x, y }, posOf(battle, id)))
@@ -951,6 +962,15 @@ export function App() {
                     Действия
                   </button>
                 </div>
+                {pendingLoose(battle) && (
+                  <p className="note-warning">
+                    Оружие выбито и отлетает на {pendingLoose(battle)!.maxDistance} м.{' '}
+                    {pendingLoose(battle)!.chooser === 'attacker'
+                      ? 'Атакующий выбирает направление (3+ ст.)'
+                      : 'Ведущий выбирает случайное направление'}
+                    : щёлкните клетку на карте.
+                  </p>
+                )}
                 {fallActor && (
                   <p className="note-warning" data-testid="fall-note">
                     {actorName(battle, fallActor)} упал на трудной местности. Щёлкните на карте
@@ -1062,6 +1082,20 @@ export function App() {
                       )
                     }
                     fromHands={heavyFromHands(battle, info.active)}
+                    onDisarm={(weapon) =>
+                      run((b) =>
+                        disarm(
+                          b,
+                          {
+                            id: commandId('disarm'),
+                            actor: info.active,
+                            target: form.target,
+                            weapon,
+                          },
+                          source(),
+                        ),
+                      )
+                    }
                     onBrace={(id) =>
                       run((b) =>
                         braceWeapon(b, { id: commandId('brace'), actor: info.active, weapon: id }),

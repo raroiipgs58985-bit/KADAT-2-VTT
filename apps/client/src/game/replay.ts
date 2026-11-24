@@ -6,6 +6,8 @@ import {
   getEngine,
   moveActor,
   placeFallen,
+  disarm,
+  placeLoose,
   nextTurn,
   placeActor,
   setDoorOpen,
@@ -54,6 +56,12 @@ type Step =
       command: { id: string; actor: ActorId; weapon: string; keep?: string };
     }
   | { type: 'footprint'; actor: ActorId; footprint: Footprint }
+  | {
+      type: 'disarm';
+      command: { id: string; actor: ActorId; target: ActorId; weapon: string };
+      rolls: DiceRoll[];
+    }
+  | { type: 'loose'; x: number; y: number }
   // v0.4: geometry-sensitive commands.
   // v0.5: the map geometry is a reference into the replay's shared snapshot store.
   | {
@@ -76,7 +84,18 @@ type Step =
   | { type: 'journal'; entry: { type: JournalOnly; detail: unknown } };
 
 /** Journal entries of refused commands: no game effect, replayed into the journal only. */
-const JOURNAL_ONLY = ['move-rejected', 'posture-rejected', 'rejected'] as const;
+const JOURNAL_ONLY = [
+  'move-rejected',
+  'posture-rejected',
+  'rejected',
+  // Rejected weapon and turn actions change nothing; they stay in the journal only.
+  'take-weapon-rejected',
+  'drop-weapon-rejected',
+  'pick-up-weapon-rejected',
+  'turn-action-rejected',
+  'brace-rejected',
+  'disarm-rejected',
+] as const;
 type JournalOnly = (typeof JOURNAL_ONLY)[number];
 const isJournalOnly = (type: string): type is JournalOnly =>
   (JOURNAL_ONLY as readonly string[]).includes(type);
@@ -193,6 +212,17 @@ export function exportReplay(b: Battle): Replay {
       const r = entry.detail as { command: TurnActionCommand; rolls?: DiceRoll[] };
       steps.push({ type: 'turn-action', command: r.command, rolls: r.rolls ?? [] });
     }
+    if (entry.type === 'disarm') {
+      const r = entry.detail as {
+        command: { id: string; actor: ActorId; target: ActorId; weapon: string };
+        rolls?: DiceRoll[];
+      };
+      steps.push({ type: 'disarm', command: r.command, rolls: r.rolls ?? [] });
+    }
+    if (entry.type === 'weapon-landed') {
+      const r = entry.detail as { at: Point };
+      steps.push({ type: 'loose', x: r.at.x, y: r.at.y });
+    }
     if (entry.type === 'brace') {
       const r = entry.detail as { command: { id: string; actor: ActorId; weapon: string } };
       steps.push({ type: 'brace', command: r.command });
@@ -286,6 +316,8 @@ export function importReplay(value: unknown): Battle {
     else if (step.type === 'pick-up-weapon') pickUpWeapon(b, step.command);
     else if (step.type === 'turn-action') turnAction(b, step.command, dice(step.rolls));
     else if (step.type === 'footprint') setFootprint(b, step.actor, step.footprint);
+    else if (step.type === 'disarm') disarm(b, step.command, dice(step.rolls));
+    else if (step.type === 'loose') placeLoose(b, { x: step.x, y: step.y });
     else if (step.type === 'map') {
       if (r.format === REPLAY_FORMAT && typeof step.snapshot !== 'string')
         throw new Error('Шаг карты replay без ссылки на снимок');

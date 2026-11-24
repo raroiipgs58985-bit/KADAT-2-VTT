@@ -22,6 +22,7 @@ import {
   concussion,
   instantDeath,
   destroyerDice,
+  resolveMeleeOpposedAction,
   twoHandedWeapon,
   radDice,
   meltingLoss,
@@ -163,6 +164,15 @@ export interface EngineState {
   moves: { turn: number; actor: ActorId; mode: MoveMode }[];
   /** A runner failed the ЛВ test on difficult terrain: the GM picks where they fall (ruling 42). */
   pendingFall?: { actor: ActorId; commandId: string; zone: string };
+  /** A knocked-out weapon waits to be placed on the map (ruling 108). */
+  pendingLoose?: {
+    weapon: WeaponId;
+    from: { x: number; y: number };
+    maxDistance: number;
+    /** Who chooses: the GM (random direction) or the attacker (3+ degrees). */
+    chooser: 'gm' | 'attacker';
+    commandId: string;
+  };
   /** «Калечащее (Х)»: wounds lost when the actor spends the 2nd ОД in a turn (ruling 89). */
   crippling?: Record<ActorId, number>;
   /** ОД at the start of the current turn and whether «Калечащее» was applied in it. */
@@ -2305,6 +2315,7 @@ function movementGate(state: EngineState, actorId: ActorId) {
   if (state.pending || state.pendingTurn)
     throw new Error('Сначала завершите сохранённую pending-операцию');
   if (state.pendingFall) throw new Error('Сначала укажите на карте, где упал персонаж');
+  if (state.pendingLoose) throw new Error('Сначала укажите на карте, куда упало выбитое оружие');
   const session = state.wounds.combat.session;
   if (session.phase === 'ready') throw new Error('Бой ещё не начат: нажмите «Начать бой»');
   if (session.phase !== 'turn-active' || session.activeActor?.actorId !== actorId)
@@ -2837,6 +2848,127 @@ export function oneHandedWeapon(b: Battle, weaponId: WeaponId) {
     !twoHandedWeapon(combat, weaponId)
   );
 }
+/**
+ * «Разоружение» (rulings 107, 108): talent, 1 ОД, opposed НР+0 against НР+0. A win knocks the
+ * weapon out of the hand: it flies 1к10 m — the GM places it (random direction) or, with 3+
+ * degrees, the attacker chooses the direction. With 5+ degrees and a free hand the attacker may
+ * take it — not supported yet, the journal tells the GM.
+ */
+export function disarm(
+  b: Battle,
+  command: { id: string; actor: ActorId; target: ActorId; weapon: WeaponId },
+  source: DiceSource = noDice,
+) {
+  const state = getEngine(b);
+  const used: DiceRoll[] = [];
+  const tape: DiceSource = {
+    roll(sides) {
+      const value = source.roll(sides);
+      used.push({ sides, value });
+      return value;
+    },
+  };
+  try {
+    combatant(b, command.actor);
+    combatant(b, command.target);
+    if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
+    movementGate(state, command.actor);
+    const reach = meleeReach(b, command.actor);
+    const p = posOf(b, command.actor),
+      q = posOf(b, command.target);
+    if (Math.hypot(p.x - q.x, p.y - q.y) > reach + 1e-9)
+      throw new Error(`Цель вне досягаемости ближнего боя (${reach} м)`);
+    const combat = state.wounds.combat;
+    const r = resolveMeleeOpposedAction(
+      combat,
+      {
+        id: command.id,
+        type: 'disarm',
+        actor: ref(command.actor),
+        target: ref(command.target),
+        weaponId: command.weapon,
+        context: context(combat, command.actor, command.target),
+        opponentContext: context(combat, command.target, command.actor),
+      },
+      tape,
+    );
+    const next = structuredClone(state);
+    next.wounds = { ...next.wounds, combat: r.state };
+    next.committed.push(command.id);
+    const degrees = r.result.opposed.winnerDegrees ?? 0;
+    let distance = 0;
+    if (r.result.disarmed) {
+      distance = rollDie(10, tape).value;
+      next.pendingLoose = {
+        weapon: command.weapon,
+        from: q,
+        maxDistance: distance,
+        chooser: degrees >= 3 ? 'attacker' : 'gm',
+        commandId: command.id,
+      };
+    }
+    sync(b, next);
+    append(b, 'disarm', {
+      command,
+      rolls: used,
+      won: Boolean(r.result.disarmed),
+      degrees,
+      distance,
+      weaponName: weaponOf(b, command.weapon)?.name ?? command.weapon,
+      opposed: r.result.opposed,
+      committed: true,
+    });
+    return { status: 'RESOLVED' as const, disarmed: Boolean(r.result.disarmed), distance, degrees };
+  } catch (error) {
+    append(b, 'disarm-rejected', { command, reason: explainEngineError(error), committed: false });
+    throw error;
+  }
+}
+/** Reach of the actor's melee weapon in hand (bare hands — 1 m). */
+function meleeReach(b: Battle, actorId: ActorId) {
+  const melee = getEngine(b).wounds.combat.melee;
+  const weaponId = melee?.actors[actorId]?.weaponId;
+  const w = weaponId ? melee?.weapons[weaponId] : undefined;
+  return w?.held ? w.template.profile.reach : 1;
+}
+/** The knocked-out weapon lands at `at`, within its 1к10 m of the target (ruling 108). */
+export function placeLoose(b: Battle, at: { x: number; y: number }) {
+  const state = getEngine(b);
+  const loose = state.pendingLoose;
+  if (!loose) throw new Error('Выбитого оружия, ждущего места, нет');
+  const d = Math.hypot(at.x - loose.from.x, at.y - loose.from.y);
+  if (d > loose.maxDistance + 0.75)
+    throw new Error(`Оружие отлетает не дальше ${loose.maxDistance} м`);
+  const next = structuredClone(state);
+  delete next.pendingLoose;
+  b.loose = { ...b.loose, [loose.weapon]: { x: at.x, y: at.y } };
+  sync(b, next);
+  append(b, 'weapon-landed', {
+    weapon: loose.weapon,
+    weaponName: weaponOf(b, loose.weapon)?.name ?? loose.weapon,
+    at,
+    commandId: loose.commandId,
+  });
+}
+export const pendingLoose = (b: Battle) => getEngine(b).pendingLoose ?? null;
+/** «Разоружение» is available: the talent and weapons in the target's hands (ruling 107). */
+export function disarmOptions(b: Battle, actor: ActorId, target: ActorId) {
+  if (!target || !canonicalTalents(combatant(b, actor).character.talents).includes('Разоружение'))
+    return [];
+  const state = getEngine(b);
+  return battleWeapons(b, target)
+    .filter((w) => weaponInHandState(state, w.id))
+    .map((w) => ({ id: w.id, name: w.name }));
+}
+/** Loose weapons for the map. */
+export const looseWeapons = (b: Battle) =>
+  Object.entries(b.loose ?? {}).map(([id, at]) => ({
+    id,
+    name: weaponOf(b, id)?.name ?? id,
+    ...at,
+  }));
+/** A loose weapon can be picked up from the token's own or a neighbouring cell. */
+export const LOOSE_REACH = 1.5;
 /** Whether the weapon is in the owner's hands now (ruling 81). */
 export function weaponInHand(b: Battle, weaponId: WeaponId): boolean {
   const combat = getEngine(b).wounds.combat;
@@ -2869,6 +3001,13 @@ export function pickUpWeapon(b: Battle, command: { id: string; actor: ActorId; w
     if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
     movementGate(state, command.actor);
     const hanging = weaponHanging(b, command.weapon);
+    // Ruling 108: a knocked-out weapon is picked up only next to where it lies.
+    const lying = b.loose?.[command.weapon];
+    if (lying) {
+      const p = posOf(b, command.actor);
+      if (Math.hypot(p.x - lying.x, p.y - lying.y) > LOOSE_REACH)
+        throw new Error('Оружие лежит дальше — сначала подойдите к нему (решение 108)');
+    }
     const r = corePickUpWeapon(state.wounds.combat, {
       id: command.id,
       type: 'pick-up-weapon',
@@ -2879,6 +3018,11 @@ export function pickUpWeapon(b: Battle, command: { id: string; actor: ActorId; w
     const next = structuredClone(state);
     next.wounds = { ...next.wounds, combat: r.state };
     next.committed.push(command.id);
+    if (lying) {
+      const rest = { ...b.loose };
+      delete rest[command.weapon];
+      b.loose = rest;
+    }
     sync(b, next);
     append(b, 'pick-up-weapon', {
       command,

@@ -36,6 +36,7 @@ export { composeMeleeProfile, meleeBases, meleeTechniques } from './melee-profil
 export {
   changeMeleeStanceGrip,
   resolveMeleeOpposedAction,
+  DISARM_TALENT,
   resolveBreakthrough,
 } from './melee-actions.js';
 export type {

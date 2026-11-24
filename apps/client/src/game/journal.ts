@@ -384,6 +384,31 @@ export function describeEntry(
         summary: `Потрачен 2-й ОД за ход — −${String(d.wounds)} ран («Калечащее», решение 89).${d.agony ? ' Раны на нуле — агония.' : ''}`,
         tone: 'warning',
       };
+    case 'disarm': {
+      const c = d.command as { actor: string; target: string };
+      return {
+        ...base,
+        title: `${name(c.actor)} пытается разоружить ${name(c.target)}`,
+        summary: d.won
+          ? `Встречный тест НР выигран (${String(d.degrees)} ст.): ${String(d.weaponName)} выбито и отлетает на ${String(d.distance)} м${Number(d.degrees) >= 3 ? ', направление выбирает атакующий' : ' в случайную сторону'}.${Number(d.degrees) >= 5 ? ' 5+ ст.: можно вооружиться им при свободной руке — пока вручную.' : ''} Потрачен 1 ОД.`
+          : `Встречный тест НР не выигран — оружие осталось в руках. Потрачен 1 ОД.`,
+        tone: d.won ? 'success' : 'info',
+      };
+    }
+    case 'disarm-rejected':
+      return {
+        ...base,
+        title: 'Разоружить не удалось',
+        summary: String(d.reason),
+        tone: 'warning',
+      };
+    case 'weapon-landed':
+      return {
+        ...base,
+        title: `${String(d.weaponName)} упало на карту`,
+        summary: 'Поднять можно, только подойдя к нему (решение 108).',
+        tone: 'info',
+      };
     case 'take-weapon':
       return {
         ...base,

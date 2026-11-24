@@ -14,6 +14,7 @@ import {
   entanglement,
   otherWeaponInHand,
   oneHandedWeapon,
+  disarmOptions,
   type TurnActionType,
   type MoveMode,
   type MoveOption,
@@ -366,6 +367,8 @@ export function AttackPanel(props: {
   /** Talent «Бугрящиеся бицепсы»: heavy weapons from the hands without penalties. */
   fromHands: boolean;
   onBrace: (weaponId: string) => void;
+  /** «Разоружение» of the target's weapon in hand (1 ОД). */
+  onDisarm?: (weaponId: string) => void;
 }) {
   const { form, attacker } = props;
   const own = battleWeapons(props.battle, attacker);
@@ -470,6 +473,17 @@ export function AttackPanel(props: {
           )}
         </div>
       )}
+      {props.onDisarm &&
+        disarmOptions(props.battle, attacker, form.target).map((w) => (
+          <button
+            key={w.id}
+            type="button"
+            disabled={!props.canAct}
+            onClick={() => props.onDisarm!(w.id)}
+          >
+            Разоружить: выбить {w.name} (1 ОД, встречный НР)
+          </button>
+        ))}
       {weapon && other && props.inHand(weapon.id) && (
         <label className="row">
           <input

@@ -77,6 +77,11 @@ interface Props {
   /** A runner fell: the GM clicks where they lie (author ruling 42). */
   fallActor: ActorId | null;
   onPlaceFall: (id: ActorId, p: Point) => void;
+  /** Weapons knocked out of the hand lying on the map (ruling 108). */
+  loose?: { id: string; name: string; x: number; y: number }[];
+  /** A knocked-out weapon waits for its place: within `max` m of `from`. */
+  placingLoose?: { from: Point; max: number } | null;
+  onPlaceLoose?: (p: Point) => void;
   onPlace: (id: ActorId, x: number, y: number) => void;
   onDraftPlace: (id: ActorId, x: number, y: number) => void;
   onPaint: (cells: Cell[], colour: FloorColorId | null) => void;
@@ -311,7 +316,10 @@ export function TacticalMap(props: Props) {
   const onBackgroundDown = (e: ReactPointerEvent) => {
     const p = toMap(e.clientX, e.clientY);
     // The GM toggles a door by a click in setup and at any moment in combat (ruling 10).
-    if (mode === 'placement' || (mode === 'combat' && !moveIntent && !props.fallActor)) {
+    if (
+      mode === 'placement' ||
+      (mode === 'combat' && !moveIntent && !props.fallActor && !props.placingLoose)
+    ) {
       const door = (e.target as Element).closest('[data-door]');
       if (door) {
         props.onToggleDoor(door.getAttribute('data-door')!);
@@ -391,7 +399,7 @@ export function TacticalMap(props: Props) {
         });
       return;
     }
-    if (moveIntent || props.fallActor) return; // A click chooses a point (on pointer up).
+    if (moveIntent || props.fallActor || props.placingLoose) return; // A click chooses a point.
     if (zoom === MIN_ZOOM) return;
     svg.current!.setPointerCapture(e.pointerId);
     setDrag({ kind: 'pan', pointer: e.pointerId, start: { x: e.clientX, y: e.clientY }, center });
@@ -475,6 +483,12 @@ export function TacticalMap(props: Props) {
     if (props.fallActor) {
       const p = toMap(e.clientX, e.clientY);
       if (inMap(p)) props.onPlaceFall(props.fallActor, snapFor(props.fallActor, p));
+      return;
+    }
+    if (props.placingLoose) {
+      const p = toMap(e.clientX, e.clientY);
+      // The weapon lies in the centre of the clicked cell.
+      if (inMap(p)) props.onPlaceLoose?.({ x: Math.floor(p.x) + 0.5, y: Math.floor(p.y) + 0.5 });
       return;
     }
     if (moveIntent && (e.target as Element).closest('[data-actor]') === null) {
@@ -603,11 +617,13 @@ export function TacticalMap(props: Props) {
         ? 'Расстановка: перетаскивайте токены по клеткам; щелчок по двери открывает или закрывает её'
         : props.fallActor
           ? 'Персонаж упал: щёлкните клетку, где он лежит'
-          : moveIntent?.route
-            ? `«${moveIntent.modeLabel}», маршрут: щёлкайте точки по порядку, затем «Идти»`
-            : moveIntent
-              ? `«${moveIntent.modeLabel}»: щёлкните подсвеченную клетку или перетащите токен`
-              : 'Щёлкните токен, чтобы выбрать персонажа';
+          : props.placingLoose
+            ? `Оружие выбито: щёлкните клетку, куда оно упало (до ${props.placingLoose.max} м)`
+            : moveIntent?.route
+              ? `«${moveIntent.modeLabel}», маршрут: щёлкайте точки по порядку, затем «Идти»`
+              : moveIntent
+                ? `«${moveIntent.modeLabel}»: щёлкните подсвеченную клетку или перетащите токен`
+                : 'Щёлкните токен, чтобы выбрать персонажа';
 
   return (
     <div className="map-shell">
@@ -975,6 +991,28 @@ export function TacticalMap(props: Props) {
             ))}
           </g>
         )}
+        {props.placingLoose && (
+          <circle
+            className="loose-range"
+            cx={props.placingLoose.from.x}
+            cy={props.placingLoose.from.y}
+            r={props.placingLoose.max}
+            fill="none"
+            stroke="currentColor"
+            strokeDasharray="0.3 0.2"
+            strokeWidth={0.06}
+            pointerEvents="none"
+          />
+        )}
+        {(props.loose ?? []).map((w) => (
+          <g key={w.id} className="loose-weapon" data-testid="loose-weapon" pointerEvents="none">
+            <title>{w.name}</title>
+            <rect x={w.x - 0.3} y={w.y - 0.12} width={0.6} height={0.24} rx={0.06} />
+            <text x={w.x} y={w.y - 0.25} textAnchor="middle" fontSize={0.3}>
+              {w.name}
+            </text>
+          </g>
+        ))}
         {props.fallActor && positions[props.fallActor] && (
           <text
             className="fall-hint"

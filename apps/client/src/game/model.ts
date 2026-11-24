@@ -109,6 +109,8 @@ export interface Battle {
   snapshots: SnapshotStore;
   hp: Record<ActorId, number>;
   ammo: Record<WeaponId, number | null>;
+  /** Weapons knocked out of the hand lying on the map (ruling 108), centre in metres. */
+  loose?: Record<WeaponId, { x: number; y: number }>;
   log: LogEntry[];
 }
 export function append(b: Battle, type: string, detail: unknown) {

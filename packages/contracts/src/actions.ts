@@ -28,6 +28,7 @@ export type CombatActionType =
   | 'change-stance-grip'
   | 'feint'
   | 'pressure'
+  | 'disarm'
   | 'breakthrough'
   | 'free-action'
   | 'reload'
