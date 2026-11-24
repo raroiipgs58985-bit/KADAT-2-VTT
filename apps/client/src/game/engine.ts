@@ -22,6 +22,9 @@ import {
   concussion,
   instantDeath,
   destroyerDice,
+  meltingLoss,
+  toxicProperty,
+  gravitonDice,
   fireProperty,
   cripplingWounds,
   remainingRounds,
@@ -102,7 +105,7 @@ import {
   weaponProblem,
   type WeaponKind,
 } from './combatants';
-import { weaponById, weaponTraits } from './arsenal';
+import { sealedArmour, weaponById, weaponTraits } from './arsenal';
 import { canonicalTalents } from './talents';
 import {
   hasExoticProficiency,
@@ -163,6 +166,8 @@ export interface EngineState {
   turnOd?: { turn: number; start: number; applied: boolean };
   /** «Горение» (ruling 87): turns left and the ½ ОБ of the joints given by the GM. */
   burning?: Record<ActorId, { rounds: number; halfOb: number }>;
+  /** «Токсичное» (rulings 95, 98): ВН drain (Хк10) or, with СверхВН, 1к10 wounds a turn. */
+  toxic?: Record<ActorId, { dice: number; superWounds: boolean; rounds: number | null }>;
 }
 export interface AttackCommand {
   id: string;
@@ -366,6 +371,7 @@ function begin(state: EngineState, rng: DiceSource, logs: unknown[]) {
     processedEventIds: [...sup.state.processedEventIds],
   };
   burnAtTurnStart(state, id, rng, logs);
+  toxinAtTurnStart(state, id, rng, logs);
   state.turnOd = {
     turn: state.wounds.combat.session.turnsStarted,
     start: state.wounds.combat.session.turn?.od ?? 0,
@@ -564,6 +570,45 @@ function burnAtTurnStart(state: EngineState, id: ActorId, rng: DiceSource, logs:
   });
 }
 
+/** «Токсичное» at the start of the poisoned actor's turn (rulings 95, 98). */
+function toxinAtTurnStart(state: EngineState, id: ActorId, rng: DiceSource, logs: unknown[]) {
+  const toxin = state.toxic?.[id];
+  if (!toxin || state.wounds.actors[id]?.life.status !== 'ALIVE') return;
+  let entry: Record<string, unknown>;
+  if (toxin.superWounds) {
+    const die = rollDie(10, rng).value;
+    plainWounds(state, id, die, logs);
+    entry = { wounds: die };
+  } else {
+    const dice = Array.from({ length: toxin.dice }, () => rollDie(10, rng).value);
+    const loss = dice.reduce((a, v) => a + v, 0);
+    const combat = state.wounds.combat;
+    const actor = combat.actors[id]!;
+    const vn = actor.characteristics.ВН!;
+    const value = Math.max(0, vn.baseValue - loss);
+    state.wounds = {
+      ...state.wounds,
+      combat: {
+        ...combat,
+        actors: {
+          ...combat.actors,
+          [id]: {
+            ...actor,
+            characteristics: { ...actor.characteristics, ВН: { ...vn, baseValue: value } },
+          },
+        },
+      },
+    };
+    entry = { dice, vnLoss: vn.baseValue - value, vn: value };
+  }
+  const rest = { ...state.toxic };
+  const rounds = toxin.rounds === null ? null : toxin.rounds - 1;
+  if (rounds === null || rounds > 0) rest[id] = { ...toxin, rounds };
+  else delete rest[id];
+  state.toxic = rest;
+  logs.push({ type: 'toxin', actor: id, ...entry, roundsLeft: rounds });
+}
+
 /**
  * «Калечащее (Х)» (ruling 89): the actor loses Х wounds as soon as it spends the 2nd ОД of its
  * turn; once per turn. Returns the journal record or null.
@@ -591,15 +636,12 @@ const sum = (rolls: readonly DiceRoll[]) => rolls.reduce((s, r) => s + r.value, 
 
 /** Properties the polygon does not apply automatically yet: shown to the GM after the hit. */
 const MANUAL_PROPERTIES = new Set([
-  'Токсичное',
   'Галлюциногенное',
   'Проникающее',
   'Рад',
-  'Плавящее',
   'Взрыв',
   'Спрей',
   'Коррозийное',
-  'Гравитонное',
   'Частичное опутывание',
 ]);
 
@@ -880,6 +922,55 @@ function applyAfterHit(
   return out;
 }
 
+/**
+ * A separate wound of Nк10 (rulings 88, 97): without armour, minus бВН, with its own consequence
+ * for the location.
+ */
+function separateWound(
+  state: EngineState,
+  command: AttackCommand,
+  hit: DamageInput,
+  location: DamageInput['location'],
+  kind: string,
+  count: number,
+  rng: DiceSource,
+  logs: unknown[],
+) {
+  setPhase('damage');
+  const vn = state.wounds.combat.actors[command.target]!.characteristics.ВН!;
+  const expression = { count, sides: 10, modifier: 0 };
+  const input: DamageInput = {
+    ...hit,
+    hitId: `${hit.hitId}:${kind}`,
+    location,
+    profile: { ...hit.profile, expression },
+    penetration: { ...hit.penetration, value: 0 },
+    transformations: [],
+  };
+  const roll = resolveDamageRoll(expression, rng, hit.context).result;
+  const damage = resolveProtectionDamage(
+    {
+      input,
+      state: protectionFor(state, input, 0),
+      endurance: { baseValue: vn.baseValue, baseSuper: vn.baseSuper },
+      preRolled: roll,
+    },
+    {
+      roll: () => {
+        throw new Error('Unexpected damage reroll');
+      },
+    },
+  );
+  logs.push({ type: kind, dice: roll.rolls }, ...damage.logs);
+  if (damage.result.status !== 'RESOLVED')
+    throw new ContextRequired(JSON.stringify(damage.result.status));
+  state.protection = damage.state;
+  setPhase('consequence');
+  postDamage(state, damage.result, command, rng, logs);
+  setPhase('property');
+  return { dice: roll.rolls.map((r) => r.value), finalDamage: damage.result.finalDamage ?? 0 };
+}
+
 /** Damage of one hit: dice, weapon properties, zone armour, endurance and wounds. */
 function resolveHit(
   b: Battle,
@@ -943,13 +1034,28 @@ function resolveHit(
     armour.ob = Math.max(0, armour.base - state.armorLoss[armour.key]!);
     notes.push(`Цепное: броня (${zoneName[armour.zone]}) −${penetration} ОБ`);
   }
+  // «Плавящее» (ruling 94): as «Цепное»; what the armour lacks is added to the damage.
+  const melt = meltingLoss(traits, penetration, total);
+  if (melt !== null) {
+    const before = armour.ob;
+    if (armour.zone)
+      state.armorLoss[armour.key] = (state.armorLoss[armour.key] ?? 0) + Math.min(melt, before);
+    armour.ob = Math.max(0, before - melt);
+    const rest = Math.max(0, melt - before);
+    total += rest;
+    notes.push(
+      `Плавящее: броня −${Math.min(melt, before)} ОБ${rest ? `, остаток +${rest} к урону` : ''}`,
+    );
+  }
   // Лэнс / Примитивное change the armour before ББ; the core subtracts ББ.
   const ob = armourAfterProperties(traits, {
     armour: armour.ob,
     penetration: 0,
     weaponClass: info.weaponClass,
   });
-  const vn = target.characteristics.ВН;
+  // Runtime ВН: «Токсичное» lowers it during the fight (ruling 95).
+  const runtimeVN = state.wounds.combat.actors[command.target]!.characteristics.ВН!;
+  const vn = { value: runtimeVN.baseValue, super: runtimeVN.baseSuper };
   const rending = enduranceBonusAfterProperties(
     traits,
     Math.floor(vn.value / 10) + vn.super,
@@ -1019,40 +1125,16 @@ function resolveHit(
   const destroyerX = destroyerDice(traits, total, Math.max(0, ob - penetration));
   let destroyer: { dice: number[]; finalDamage: number } | null = null;
   if (destroyerX > 0 && state.wounds.actors[command.target]?.life.status !== 'DEAD') {
-    setPhase('damage');
-    const expression = { count: destroyerX, sides: 10, modifier: 0 };
-    const dInput: DamageInput = {
-      ...hit,
-      hitId: `${hit.hitId}:destroyer`,
-      profile: { ...hit.profile, expression },
-      penetration: { ...hit.penetration, value: 0 },
-      transformations: [],
-    };
-    const dRoll = resolveDamageRoll(expression, rng, hit.context).result;
-    const dd = resolveProtectionDamage(
-      {
-        input: dInput,
-        state: protectionFor(state, dInput, 0),
-        endurance: { baseValue: vn.value, baseSuper: vn.super },
-        preRolled: dRoll,
-      },
-      {
-        roll: () => {
-          throw new Error('Unexpected damage reroll');
-        },
-      },
+    destroyer = separateWound(
+      state,
+      command,
+      hit,
+      hit.location,
+      'destroyer',
+      destroyerX,
+      rng,
+      logs,
     );
-    logs.push({ type: 'destroyer', dice: dRoll.rolls }, ...dd.logs);
-    if (dd.result.status !== 'RESOLVED')
-      throw new ContextRequired(JSON.stringify(dd.result.status));
-    state.protection = dd.state;
-    setPhase('consequence');
-    postDamage(state, dd.result, command, rng, logs);
-    setPhase('property');
-    destroyer = {
-      dice: dRoll.rolls.map((r) => r.value),
-      finalDamage: dd.result.finalDamage ?? 0,
-    };
   }
   const effects = applyAfterHit(
     b,
@@ -1163,6 +1245,129 @@ function resolveHit(
           : `огонь: −${burnt} ран, горит`,
       rounds: fire.rounds,
     });
+  }
+  // «Токсичное» (rulings 95, 98): sealed or void armour lets the toxin in only with damage.
+  const toxic = toxicProperty(traits);
+  if (
+    toxic &&
+    state.wounds.actors[command.target]?.life.status === 'ALIVE' &&
+    ((damage.result.finalDamage ?? 0) > 0 || !sealedArmour(target.armourItems))
+  ) {
+    let superWounds = false;
+    let passed = false;
+    if (vn.super > 0) {
+      const gm = { kind: 'weapon-property', id: 'Свойства оружия: Токсичное' };
+      const check = resolveCheck(
+        {
+          baseValue: vn.value,
+          finalSuper: vn.super,
+          context: {
+            ...context(state.wounds.combat, command.target, command.actor),
+            modifiers: toxic.superModifier
+              ? [
+                  {
+                    id: `${command.id}:toxic:${hit.hitId}`,
+                    value: toxic.superModifier,
+                    source: gm,
+                    provenance: { source: gm, reason: 'СверхВН: тест ВН −5 × Х' },
+                  },
+                ]
+              : [],
+          },
+        },
+        rng,
+      ).result;
+      logs.push({ type: 'toxic-test', check });
+      passed = check.outcome === 'success';
+      superWounds = !passed;
+    }
+    if (!passed) {
+      const old = state.toxic?.[command.target];
+      state.toxic = {
+        ...state.toxic,
+        [command.target]: {
+          dice: Math.max(old?.dice ?? 0, toxic.dice),
+          superWounds: superWounds || (old?.superWounds ?? false),
+          rounds:
+            old?.rounds === null || toxic.rounds === null
+              ? null
+              : Math.max(old?.rounds ?? 0, toxic.rounds),
+        },
+      };
+    }
+    effects.push({
+      property: 'Токсичное',
+      passed,
+      state: passed
+        ? 'СверхВН: токсин не подействовал'
+        : superWounds
+          ? 'отравлен: 1к10 ран каждый ход'
+          : `отравлен: ВН −${toxic.dice}к10 каждый ход`,
+      ...(toxic.rounds ? { rounds: toxic.rounds } : {}),
+    });
+  }
+  // «Гравитонное» (rulings 96, 97): СЛ −30, a failure — falls, к10 per odd degree into a leg.
+  if (
+    hasTrait(traits, 'Гравитонное') &&
+    state.wounds.actors[command.target]?.life.status === 'ALIVE'
+  ) {
+    const sl = target.characteristics.СЛ;
+    const gm = { kind: 'weapon-property', id: 'Свойства оружия: Гравитонное' };
+    const check = resolveCheck(
+      {
+        baseValue: sl.value,
+        finalSuper: sl.super,
+        context: {
+          ...context(state.wounds.combat, command.target, command.actor),
+          modifiers: [
+            {
+              id: `${command.id}:graviton:${hit.hitId}`,
+              value: -30,
+              source: gm,
+              provenance: { source: gm, reason: 'Гравитонное: СЛ −30' },
+            },
+          ],
+        },
+      },
+      rng,
+    ).result;
+    logs.push({ type: 'graviton-test', check });
+    if (check.outcome === 'success') effects.push({ property: 'Гравитонное', passed: true });
+    else {
+      const combat = state.wounds.combat;
+      const runtime = combat.actors[command.target]!;
+      state.wounds = {
+        ...state.wounds,
+        combat: {
+          ...combat,
+          actors: { ...combat.actors, [command.target]: { ...runtime, posture: 'prone' } },
+        },
+      };
+      const count = gravitonDice(traits, check.failureDegrees ?? 1);
+      const leg = ask(command, {
+        key: `graviton-leg:${hit.hitId}`,
+        text: `«Гравитонное»: ${target.name} падает, урон ${count}к10 в ногу. В какую?`,
+        options: [
+          { label: 'Левая', value: 0 },
+          { label: 'Правая', value: 1 },
+        ],
+      });
+      const w = separateWound(
+        state,
+        command,
+        hit,
+        leg === 0 ? 'Left Leg' : 'Right Leg',
+        'graviton',
+        count,
+        rng,
+        logs,
+      );
+      effects.push({
+        property: 'Гравитонное',
+        passed: false,
+        state: `упал, ${count}к10 (${w.dice.join('+')}) в ногу → ${w.finalDamage} ран`,
+      });
+    }
   }
   // «Мгновенная смерть»: damage after absorption ≥ 2 × бВН kills on the spot.
   if (
@@ -2242,6 +2447,7 @@ export function actorStatus(b: Battle, id: ActorId) {
         .map((c) => c.type),
       ...(state.burning?.[id] ? ['Burning'] : []),
       ...(state.crippling?.[id] ? ['Crippled'] : []),
+      ...(state.toxic?.[id] ? ['Poisoned'] : []),
     ],
     fatigue: runtime.fatigue,
     posture: runtime.posture,

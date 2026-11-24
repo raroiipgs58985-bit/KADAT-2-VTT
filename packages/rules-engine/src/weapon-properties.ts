@@ -490,6 +490,40 @@ export function fireProperty(traits: readonly WeaponTrait[]) {
   };
 }
 
+/**
+ * «Плавящее (ББ / У)» (ruling 94): the armour of the hit location loses ББ (or damage + ББ)
+ * before the hit, as «Цепное»; what the armour lacks is added to the damage. null — none.
+ */
+export function meltingLoss(
+  traits: readonly WeaponTrait[],
+  penetration: number,
+  damage: number,
+): number | null {
+  const t = findTrait(traits, 'Плавящее');
+  if (!t) return null;
+  return t.text === 'У' ? penetration + damage : penetration;
+}
+
+/**
+ * «Токсичное (Х/Y)» (rulings 95, 98): every turn the target's ВН drops by Хк10 for Y turns
+ * (no Y — till the end of the fight); with СверхВН a ВН test −5×Х, a failure — 1к10 wounds a
+ * turn ignoring ОБ and бВН.
+ */
+export function toxicProperty(traits: readonly WeaponTrait[]) {
+  const t = findTrait(traits, 'Токсичное');
+  if (!t) return null;
+  return { dice: t.value ?? 0, rounds: t.duration ?? null, superModifier: -5 * (t.value ?? 0) };
+}
+
+/**
+ * «Гравитонное» (rulings 96, 97): СЛ −30; a failure — the target falls and takes к10 per odd
+ * degree of failure (1, 3, 5…) into a leg as a separate wound (like «Деструктор»).
+ */
+export function gravitonDice(traits: readonly WeaponTrait[], failureDegrees: number): number {
+  if (!hasTrait(traits, 'Гравитонное')) return 0;
+  return Math.ceil(Math.max(0, failureDegrees) / 2);
+}
+
 export function destroyerDice(
   traits: readonly WeaponTrait[],
   damage: number,

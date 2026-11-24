@@ -778,7 +778,7 @@ describe('More weapon properties in the fight', () => {
       { character: gunner, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'gunner' },
       // Heavy armour stops the melta itself; the fire ignores armour.
       {
-        character: { ...soft(), armour: { head: 60, torso: 60, arms: 60, legs: 60 } },
+        character: { ...soft(), armour: { head: 200, torso: 200, arms: 200, legs: 200 } },
         side: 'b',
         at: { x: 8.5, y: 10.5 },
         id: 'pak',
@@ -809,6 +809,30 @@ describe('More weapon properties in the fight', () => {
     expect(turnInfo(b).od).toBe(0);
     expect(actorStatus(b, 'pak').fatigue).toBe(5);
     expect(actorStatus(b, 'pak').conditions).not.toContain('Burning');
+  });
+  it('«Плавящее (ББ)»: the armour loses ББ before the hit, the rest goes to the damage (ruling 94)', async () => {
+    const { b, r } = await melee('Силовой молот', (n) => (n === 0 ? 35 : 1), {
+      ...soft(),
+      armour: { head: 2, torso: 2, arms: 2, legs: 2 },
+    });
+    expect(r.status).toBe('RESOLVED');
+    const hit = (r as { result: { hits: { notes: string[] }[] } }).result.hits[0]!;
+    expect(hit.notes.some((n) => /^Плавящее: броня −2 ОБ, остаток \+\d+ к урону$/.test(n))).toBe(
+      true,
+    );
+    expect(actorStatus(b, 'pak').armorLoss).toEqual({ 'pak:torso': 2 });
+  });
+  it('«Токсичное (2/2)»: ВН −2к10 at each of the next 2 turns (rulings 95, 98)', async () => {
+    const { b, r } = await melee('Клинок Гекатарии', (n) => (n === 0 ? 35 : 1), soft());
+    expect(r.status).toBe('RESOLVED');
+    expect((r as Hits).result.hits[0]!.effects.find((e) => e.property === 'Токсичное')?.state).toBe(
+      'отравлен: ВН −2к10 каждый ход',
+    );
+    const vn = () => getEngine(b).wounds.combat.actors.pak!.characteristics.ВН!.baseValue;
+    const start = vn();
+    nextTurn(b, { roll: (sides: number) => (sides === 100 ? 1 : 5) });
+    expect(vn()).toBe(Math.max(0, start - 10));
+    expect(actorStatus(b, 'pak').conditions).toContain('Poisoned');
   });
   it('«Вырваться»: 2 ОД, СЛ test with −10 × Х frees the entangled (ruling 86)', async () => {
     const { b } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft());

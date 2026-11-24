@@ -60,6 +60,8 @@ export interface WeaponTraitReference {
   readonly dice?: { readonly count: number; readonly sides: number };
   /** The second rating «Х/Y»: duration in rounds («Огненное (2к10/3)»). */
   readonly duration?: number;
+  /** A word rating, e.g. «Плавящее (ББ)» / «Плавящее (У)». */
+  readonly text?: string;
 }
 
 export interface WeaponTemplate {

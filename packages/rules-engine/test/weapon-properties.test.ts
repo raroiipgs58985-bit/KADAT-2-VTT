@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import {
+  meltingLoss,
+  toxicProperty,
+  gravitonDice,
+  fireProperty,
+  cripplingWounds,
   adjustDamageDice,
   afterHitTests,
   ammoForAttack,
@@ -291,5 +296,39 @@ describe('Implied properties', () => {
       impliedTraits([t('Цепное'), t('Разрывное')]).filter((x) => x.name === 'Разрывное'),
     ).toHaveLength(1);
     expect(impliedTraits([t('Моно')])).toEqual([t('Моно')]);
+  });
+});
+
+describe('Properties of rulings 87–98', () => {
+  test('«Плавящее»: ББ or damage + ББ', () => {
+    expect(meltingLoss([{ name: 'Плавящее', text: 'ББ' }], 8, 20)).toBe(8);
+    expect(meltingLoss([{ name: 'Плавящее', text: 'У' }], 8, 20)).toBe(28);
+    expect(meltingLoss([], 8, 20)).toBeNull();
+  });
+  test('«Токсичное»: Х/Y, no Y — till the end of the fight', () => {
+    expect(toxicProperty([{ name: 'Токсичное', value: 2, duration: 2 }])).toEqual({
+      dice: 2,
+      rounds: 2,
+      superModifier: -10,
+    });
+    expect(toxicProperty([{ name: 'Токсичное', value: 3 }])?.rounds).toBeNull();
+  });
+  test('«Гравитонное»: к10 per odd degree of failure', () => {
+    const g = [{ name: 'Гравитонное' }];
+    expect([1, 2, 3, 4, 5].map((d) => gravitonDice(g, d))).toEqual([1, 1, 2, 2, 3]);
+    expect(gravitonDice([], 3)).toBe(0);
+  });
+  test('«Огненное»: 2к10 and 1 round by default', () => {
+    expect(fireProperty([{ name: 'Огненное' }])).toEqual({
+      damage: { count: 2, sides: 10, modifier: 0 },
+      rounds: 1,
+    });
+    expect(
+      fireProperty([{ name: 'Огненное', dice: { count: 3, sides: 10 }, duration: 3 }])?.rounds,
+    ).toBe(3);
+  });
+  test('«Калечащее»: Х', () => {
+    expect(cripplingWounds([{ name: 'Калечащее', value: 2 }])).toBe(2);
+    expect(cripplingWounds([])).toBeNull();
   });
 });

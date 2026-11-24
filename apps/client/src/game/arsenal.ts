@@ -161,6 +161,17 @@ export interface WeaponTrait {
   readonly value?: number;
   readonly dice?: { readonly count: number; readonly sides: number };
   readonly duration?: number;
+  readonly text?: string;
+}
+/** Properties rated by a word: «Плавящее (ББ)», «Плавящее (У)». */
+const WORD_RATED: Record<string, readonly string[]> = { Плавящее: ['ББ', 'У'] };
+/** Toxins do not get through sealed or void armour without damage (ruling 98). */
+export function sealedArmour(items: readonly { ref: string | null }[]): boolean {
+  return items.some((i) =>
+    (i.ref ? armourById(i.ref) : undefined)?.properties.some((p) =>
+      /^(закрыт|пустотн)/i.test(p.name ?? p.raw),
+    ),
+  );
 }
 /** Properties whose rating may be dice with a duration: «Огненное (2к10/3)». */
 const DICE_RATED = new Set(['Огненное']);
@@ -186,15 +197,20 @@ export function weaponTraits(w: ArsenalWeapon): {
     if (p.param !== null) {
       const v = p.param.trim();
       const dice = DICE_RATED.has(p.property) ? /^(\d+)к(\d+)(?:\/(\d+))?$/.exec(v) : null;
-      trait = /^\d+$/.test(v)
-        ? { name: p.property, value: Number(v) }
-        : dice
-          ? {
-              name: p.property,
-              dice: { count: Number(dice[1]), sides: Number(dice[2]) },
-              ...(dice[3] ? { duration: Number(dice[3]) } : {}),
-            }
-          : null;
+      const split = p.property === 'Токсичное' ? /^(\d+)\/(\d+)$/.exec(v) : null;
+      trait = WORD_RATED[p.property]?.includes(v)
+        ? { name: p.property, text: v }
+        : split
+          ? { name: p.property, value: Number(split[1]), duration: Number(split[2]) }
+          : /^\d+$/.test(v)
+            ? { name: p.property, value: Number(v) }
+            : dice
+              ? {
+                  name: p.property,
+                  dice: { count: Number(dice[1]), sides: Number(dice[2]) },
+                  ...(dice[3] ? { duration: Number(dice[3]) } : {}),
+                }
+              : null;
     }
     if (!trait) unread.push(p.raw);
     else (p.optional ? optional : traits).push(trait);
