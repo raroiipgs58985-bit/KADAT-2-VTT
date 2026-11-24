@@ -474,6 +474,22 @@ export function afterHitTests(
 export const cripplingWounds = (traits: readonly WeaponTrait[]) =>
   rating(traits, 'Калечащее') ?? null;
 
+/**
+ * «Огненное (Х/Y)» (rulings 87, 90): on the hit an ЛВ+0 test, a failure — Х damage without
+ * armour minus бВН (no Х — 2к10); the target burns («Горение») for Y rounds (no Y — 1).
+ */
+export function fireProperty(traits: readonly WeaponTrait[]) {
+  const t = findTrait(traits, 'Огненное');
+  if (!t) return null;
+  return {
+    damage:
+      t.value !== undefined
+        ? { count: 0, sides: 10, modifier: t.value }
+        : { count: t.dice?.count ?? 2, sides: t.dice?.sides ?? 10, modifier: 0 },
+    rounds: t.duration ?? 1,
+  };
+}
+
 export function destroyerDice(
   traits: readonly WeaponTrait[],
   damage: number,

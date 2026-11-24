@@ -159,7 +159,11 @@ export function armourFromItems(items: readonly { ref: string | null }[]): {
 export interface WeaponTrait {
   readonly name: string;
   readonly value?: number;
+  readonly dice?: { readonly count: number; readonly sides: number };
+  readonly duration?: number;
 }
+/** Properties whose rating may be dice with a duration: «Огненное (2к10/3)». */
+const DICE_RATED = new Set(['Огненное']);
 /**
  * Properties of an Arsenal weapon for the rules engine. A rating that is a whole number
  * becomes `value`; anything else («3+», «2к10/3», «см прим») is not read and is listed for the
@@ -181,7 +185,16 @@ export function weaponTraits(w: ArsenalWeapon): {
     let trait: WeaponTrait | null = { name: p.property };
     if (p.param !== null) {
       const v = p.param.trim();
-      trait = /^\d+$/.test(v) ? { name: p.property, value: Number(v) } : null;
+      const dice = DICE_RATED.has(p.property) ? /^(\d+)к(\d+)(?:\/(\d+))?$/.exec(v) : null;
+      trait = /^\d+$/.test(v)
+        ? { name: p.property, value: Number(v) }
+        : dice
+          ? {
+              name: p.property,
+              dice: { count: Number(dice[1]), sides: Number(dice[2]) },
+              ...(dice[3] ? { duration: Number(dice[3]) } : {}),
+            }
+          : null;
     }
     if (!trait) unread.push(p.raw);
     else (p.optional ? optional : traits).push(trait);

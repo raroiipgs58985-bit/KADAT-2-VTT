@@ -56,6 +56,10 @@ export interface WeaponProfileContribution {
 export interface WeaponTraitReference {
   readonly name: string;
   readonly value?: number;
+  /** A rating given as dice, e.g. «Огненное (2к10)». */
+  readonly dice?: { readonly count: number; readonly sides: number };
+  /** The second rating «Х/Y»: duration in rounds («Огненное (2к10/3)»). */
+  readonly duration?: number;
 }
 
 export interface WeaponTemplate {

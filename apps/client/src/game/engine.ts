@@ -22,6 +22,7 @@ import {
   concussion,
   instantDeath,
   destroyerDice,
+  fireProperty,
   cripplingWounds,
   remainingRounds,
   afterHitTests,
@@ -160,6 +161,8 @@ export interface EngineState {
   crippling?: Record<ActorId, number>;
   /** ОД at the start of the current turn and whether «Калечащее» was applied in it. */
   turnOd?: { turn: number; start: number; applied: boolean };
+  /** «Горение» (ruling 87): turns left and the ½ ОБ of the joints given by the GM. */
+  burning?: Record<ActorId, { rounds: number; halfOb: number }>;
 }
 export interface AttackCommand {
   id: string;
@@ -362,6 +365,7 @@ function begin(state: EngineState, rng: DiceSource, logs: unknown[]) {
     suppressed: [...sup.state.suppressed],
     processedEventIds: [...sup.state.processedEventIds],
   };
+  burnAtTurnStart(state, id, rng, logs);
   state.turnOd = {
     turn: state.wounds.combat.session.turnsStarted,
     start: state.wounds.combat.session.turn?.od ?? 0,
@@ -494,6 +498,72 @@ function zeroWoundsAgony(state: EngineState, id: ActorId, logs: unknown[]) {
   state.wounds = planned.state;
   logs.push({ type: 'zero-wounds-agony', actor: id, bVN });
 }
+/** Wounds without a consequence roll (fire, ruling 92): damage taken grows, Agony at 0. */
+function plainWounds(state: EngineState, id: ActorId, wounds: number, logs: unknown[]) {
+  const w = state.wounds.actors[id];
+  if (!w || w.life.status !== 'ALIVE' || wounds <= 0) return;
+  state.wounds = {
+    ...state.wounds,
+    actors: { ...state.wounds.actors, [id]: { ...w, damageTaken: w.damageTaken + wounds } },
+  };
+  zeroWoundsAgony(state, id, logs);
+}
+const bonusVN = (state: EngineState, id: ActorId) => {
+  const vn = state.wounds.combat.actors[id]!.characteristics.ВН!;
+  return Math.floor(vn.baseValue / 10) + vn.baseSuper;
+};
+/**
+ * «Горение» at the start of the burning actor's turn (rulings 87, 90–92): 2к10 Э into the joints
+ * minus ½ ОБ and бВН, without consequences; +1к5 Fatigue; СВ < 40 — a СВ test, a failure loses
+ * the turn.
+ */
+function burnAtTurnStart(state: EngineState, id: ActorId, rng: DiceSource, logs: unknown[]) {
+  const burn = state.burning?.[id];
+  if (!burn || state.wounds.actors[id]?.life.status !== 'ALIVE') return;
+  const dice = [rollDie(10, rng), rollDie(10, rng)];
+  const wounds = Math.max(0, sum(dice) - burn.halfOb - bonusVN(state, id));
+  plainWounds(state, id, wounds, logs);
+  const fatigue = rollDie(5, rng);
+  const combat = state.wounds.combat;
+  const actor = combat.actors[id]!;
+  let session = combat.session;
+  const wp = actor.characteristics.СВ!;
+  let panic: unknown = null;
+  if (wp.baseValue < 40) {
+    const check = resolveCheck(
+      { baseValue: wp.baseValue, finalSuper: wp.baseSuper, context: context(combat, id) },
+      rng,
+    ).result;
+    panic = check;
+    if (check.outcome !== 'success' && session.turn)
+      session = { ...session, turn: { ...session.turn, od: 0 } };
+  }
+  state.wounds = {
+    ...state.wounds,
+    combat: {
+      ...combat,
+      session,
+      actors: { ...combat.actors, [id]: { ...actor, fatigue: actor.fatigue + fatigue.value } },
+    },
+  };
+  const rounds = burn.rounds - 1;
+  const rest = { ...state.burning };
+  if (rounds > 0) rest[id] = { ...burn, rounds };
+  else delete rest[id];
+  state.burning = rest;
+  logs.push({
+    type: 'burning',
+    actor: id,
+    dice: dice.map((d) => d.value),
+    halfOb: burn.halfOb,
+    wounds,
+    fatigue: fatigue.value,
+    panic,
+    turnLost: session.turn?.od === 0,
+    roundsLeft: Math.max(0, rounds),
+  });
+}
+
 /**
  * «Калечащее (Х)» (ruling 89): the actor loses Х wounds as soon as it spends the 2nd ОД of its
  * turn; once per turn. Returns the journal record or null.
@@ -522,7 +592,6 @@ const sum = (rolls: readonly DiceRoll[]) => rolls.reduce((s, r) => s + r.value, 
 /** Properties the polygon does not apply automatically yet: shown to the GM after the hit. */
 const MANUAL_PROPERTIES = new Set([
   'Токсичное',
-  'Огненное',
   'Галлюциногенное',
   'Проникающее',
   'Рад',
@@ -1046,6 +1115,53 @@ function resolveHit(
       property: 'Калечащее',
       passed: false,
       state: `лёгкое кровотечение, −${crippleX} ран при 2-м ОД за ход`,
+    });
+  }
+  // «Огненное (Х/Y)» (rulings 87, 90, 92): ЛВ+0, a failure — Х without armour minus бВН and
+  // without consequences; the target burns for Y rounds.
+  const fire = fireProperty(traits);
+  if (fire && state.wounds.actors[command.target]?.life.status === 'ALIVE') {
+    const dex = target.characteristics.ЛВ;
+    const check = resolveCheck(
+      {
+        baseValue: dex.value,
+        finalSuper: dex.super,
+        context: context(state.wounds.combat, command.target, command.actor),
+      },
+      rng,
+    ).result;
+    let burnt = 0;
+    if (check.outcome !== 'success') {
+      setPhase('damage');
+      const rolls = Array.from({ length: fire.damage.count }, () =>
+        rollDie(fire.damage.sides, rng),
+      );
+      burnt = Math.max(0, sum(rolls) + fire.damage.modifier - bonusVN(state, command.target));
+      plainWounds(state, command.target, burnt, logs);
+      setPhase('property');
+    }
+    logs.push({ type: 'fire-test', check, wounds: burnt });
+    const halfOb = ask(command, {
+      key: `burning-ob:${command.target}`,
+      text: `${target.name} горит («Огненное»). Сколько это ½ ОБ сочленений? «Горение» каждый ход бьёт 2к10 Э в сочленения с ½ ОБ (решения 75, 87).`,
+      min: 0,
+      max: 99,
+    });
+    state.burning = {
+      ...state.burning,
+      [command.target]: {
+        rounds: Math.max(state.burning?.[command.target]?.rounds ?? 0, fire.rounds),
+        halfOb,
+      },
+    };
+    effects.push({
+      property: 'Огненное',
+      passed: check.outcome === 'success',
+      state:
+        check.outcome === 'success'
+          ? `увернулся от огня (ЛВ), но горит`
+          : `огонь: −${burnt} ран, горит`,
+      rounds: fire.rounds,
     });
   }
   // «Мгновенная смерть»: damage after absorption ≥ 2 × бВН kills on the spot.
@@ -2124,6 +2240,8 @@ export function actorStatus(b: Battle, id: ActorId) {
       ...state.wounds.combat.session.conditions
         .filter((c) => c.actor.actorId === id)
         .map((c) => c.type),
+      ...(state.burning?.[id] ? ['Burning'] : []),
+      ...(state.crippling?.[id] ? ['Crippled'] : []),
     ],
     fatigue: runtime.fatigue,
     posture: runtime.posture,

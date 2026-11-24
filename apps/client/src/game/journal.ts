@@ -156,13 +156,30 @@ export function describeEntry(
         summary: `Первым ходит ${name(d.actor)} (задано вручную, инициатива не бросалась).`,
         tone: 'info',
       };
-    case 'next-turn':
+    case 'next-turn': {
+      const burn = ((d.coreLogs as { type?: string }[] | undefined) ?? []).find(
+        (l) => l.type === 'burning',
+      ) as
+        | {
+            actor: string;
+            dice: number[];
+            halfOb: number;
+            wounds: number;
+            fatigue: number;
+            turnLost: boolean;
+            roundsLeft: number;
+          }
+        | undefined;
+      const fire = burn
+        ? ` ${name(burn.actor)} горит: 2к10 (${burn.dice.join('+')}) − ½ ОБ ${burn.halfOb} − бВН → −${burn.wounds} ран, +${burn.fatigue} усталости.${burn.turnLost ? ' Паника: ход потерян.' : ''}${burn.roundsLeft ? ` Гореть ещё ${burn.roundsLeft} р.` : ' Огонь погас.'}`
+        : '';
       return {
         ...base,
         title: 'Ход передан',
-        summary: `Теперь ходит ${name(d.active)}.`,
-        tone: 'info',
+        summary: `Теперь ходит ${name(d.active)}.${fire}`,
+        tone: burn ? 'warning' : 'info',
       };
+    }
     case 'move': {
       const c = d.command as MoveCommand;
       const label = moveModes.find((m) => m.mode === c.mode)?.label ?? c.mode;

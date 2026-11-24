@@ -765,6 +765,51 @@ describe('More weapon properties in the fight', () => {
     expect(b.hp.pak).toBe(before - 2);
     expect(b.log.some((e) => e.type === 'crippling')).toBe(true);
   });
+  it('«Огненное»: failed ЛВ — fire damage minus бВН, then «Горение» at the turn start (rulings 87, 90–93)', async () => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const w = matchWeaponByName('Мельтган')!;
+    const gunner = {
+      ...emptyCharacter('gunner', 'Стрелок'),
+      characteristics: { ...emptyCharacter('x').characteristics, НС: { value: 60, super: 0 } },
+      talents: ['Владение оружием (Мельта)'],
+      weapons: [{ name: w.name, ref: w.id }],
+    };
+    const b = createBattle([
+      { character: gunner, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'gunner' },
+      // Heavy armour stops the melta itself; the fire ignores armour.
+      {
+        character: { ...soft(), armour: { head: 60, torso: 60, arms: 60, legs: 60 } },
+        side: 'b',
+        at: { x: 8.5, y: 10.5 },
+        id: 'pak',
+      },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    let n = 0;
+    const r = attack(
+      b,
+      shot({
+        id: 'burn',
+        actor: 'gunner',
+        weapon: 'gunner:0',
+        answers: { 'burning-ob:pak': 2, 'proficiency:gunner:0': 1, 'cover:pak': 0 },
+      }),
+      // The hit (35), then the ЛВ test against the fire fails (99).
+      { roll: (sides: number) => (sides === 100 ? (n++ === 0 ? 35 : 99) : 5) },
+    );
+    expect(r.status).toBe('RESOLVED');
+    const fire = (r as Hits).result.hits[0]!.effects.find((e) => e.property === 'Огненное');
+    // 3к10 of fire = 15 minus бВН 3 → −12 wounds.
+    expect(fire?.state).toBe('огонь: −12 ран, горит');
+    expect(actorStatus(b, 'pak').conditions).toContain('Burning');
+    const before = b.hp.pak!;
+    // Burning: 2к10 = 10, − ½ ОБ 2 − бВН 3 → −5; +1к5 = 5 Fatigue; СВ 0 < 40 → the test fails (99).
+    nextTurn(b, { roll: (sides: number) => (sides === 100 ? 99 : 5) });
+    expect(b.hp.pak).toBe(before - 5);
+    expect(turnInfo(b).od).toBe(0);
+    expect(actorStatus(b, 'pak').fatigue).toBe(5);
+    expect(actorStatus(b, 'pak').conditions).not.toContain('Burning');
+  });
   it('«Вырваться»: 2 ОД, СЛ test with −10 × Х frees the entangled (ruling 86)', async () => {
     const { b } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft());
     // Entangle the target directly as «Опутывающее (1)» would.
