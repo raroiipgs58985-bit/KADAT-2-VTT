@@ -842,6 +842,63 @@ describe('More weapon properties in the fight', () => {
     expect(r.status).toBe('RESOLVED');
     expect((r as Hits).result.hits[0]!.effects.map((e) => e.property)).not.toContain('Токсичное');
   });
+  const shoot = async (weaponName: string, target: ReturnType<typeof soft>) => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const w = matchWeaponByName(weaponName)!;
+    const gunner = {
+      ...emptyCharacter('gunner', 'Стрелок'),
+      characteristics: { ...emptyCharacter('x').characteristics, НС: { value: 60, super: 0 } },
+      weapons: [{ name: w.name, ref: w.id }],
+    };
+    const b = createBattle([
+      { character: gunner, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'gunner' },
+      { character: target, side: 'b', at: { x: 8.5, y: 10.5 }, id: 'pak' },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    let n = 0;
+    const r = attack(
+      b,
+      shot({
+        id: 'rad',
+        actor: 'gunner',
+        weapon: 'gunner:0',
+        answers: { 'proficiency:gunner:0': 1, 'cover:pak': 0 },
+      }),
+      { roll: (sides: number) => (sides === 100 ? (n++ === 0 ? 35 : 1) : 5) },
+    );
+    return { b, r };
+  };
+  it('«Рад»: pierced armour — 2к10 rad damage minus бВН (rulings 101, 103)', async () => {
+    const { b, r } = await shoot('Рад-пистолет', soft());
+    expect(r.status).toBe('RESOLVED');
+    expect((r as Hits).result.hits[0]!.effects.find((e) => e.property === 'Рад')?.state).toBe(
+      'рад-урон 2к10 (5+5) → −7 ран; накоплено 10',
+    );
+    expect(actorStatus(b, 'pak').conditions).toContain('Irradiated');
+  });
+  it('«Рад»: unpierced armour — ВН halved; rad-protected or void armour stops it (ruling 102)', async () => {
+    const heavy = { ...soft(), armour: { head: 200, torso: 200, arms: 200, legs: 200 } };
+    const { b, r } = await shoot('Рад-пистолет', heavy);
+    expect((r as Hits).result.hits[0]!.effects.find((e) => e.property === 'Рад')?.state).toMatch(
+      /ВН \/2 до конца боя/,
+    );
+    const vn = getEngine(b).wounds.combat.actors.pak!.characteristics.ВН!.baseValue;
+    expect(vn).toBe(Math.floor(soft().characteristics.ВН.value / 2));
+    const { r: r2 } = await shoot('Рад-пистолет', {
+      ...heavy,
+      armourItems: [{ name: 'Флак шлем (закрытый)', ref: 'Броня:Флак шлем (закрытый)' }],
+    });
+    expect((r2 as Hits).result.hits[0]!.effects.find((e) => e.property === 'Рад')?.state).toMatch(
+      /ВН \/2/,
+    );
+    const { r: r3 } = await shoot('Рад-пистолет', {
+      ...heavy,
+      armourItems: [{ name: 'Пустотная броня', ref: 'Броня:Пустотная броня' }],
+    });
+    expect((r3 as Hits).result.hits[0]!.effects.find((e) => e.property === 'Рад')?.state).toBe(
+      'броня защищает от радиации',
+    );
+  });
   it('«Вырваться»: 2 ОД, СЛ test with −10 × Х frees the entangled (ruling 86)', async () => {
     const { b } = await melee('Пневмо-копье', (n) => (n === 0 ? 35 : 99), soft());
     // Entangle the target directly as «Опутывающее (1)» would.

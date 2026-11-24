@@ -173,6 +173,14 @@ export function sealedArmour(items: readonly { ref: string | null }[]): boolean 
     ),
   );
 }
+/** Armour that stops rad damage through unpierced armour (ruling 102). */
+export function radProtectedArmour(items: readonly { ref: string | null }[]): boolean {
+  return items.some((i) =>
+    (i.ref ? armourById(i.ref) : undefined)?.properties.some((p) =>
+      /^(рад-защит|пустотн|серво-брон)/i.test(p.name ?? p.raw),
+    ),
+  );
+}
 /** Properties whose rating may be dice with a duration: «Огненное (2к10/3)». */
 const DICE_RATED = new Set(['Огненное']);
 /**

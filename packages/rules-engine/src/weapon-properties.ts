@@ -524,6 +524,17 @@ export function gravitonDice(traits: readonly WeaponTrait[], failureDegrees: num
   return Math.ceil(Math.max(0, failureDegrees) / 2);
 }
 
+/**
+ * «Рад» (rulings 101–103): rad damage — П/ОС 2к10, ТО and grenades 3к10; null — no property
+ * or a weapon class without a rad damage in the text.
+ */
+export function radDice(traits: readonly WeaponTrait[], weaponClass: string): number | null {
+  if (!hasTrait(traits, 'Рад')) return null;
+  if (weaponClass === 'П' || weaponClass === 'ОС') return 2;
+  if (weaponClass === 'ТО' || weaponClass === 'Метательное') return 3;
+  return null;
+}
+
 export function destroyerDice(
   traits: readonly WeaponTrait[],
   damage: number,

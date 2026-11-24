@@ -22,6 +22,7 @@ import {
   concussion,
   instantDeath,
   destroyerDice,
+  radDice,
   meltingLoss,
   toxicProperty,
   gravitonDice,
@@ -105,7 +106,7 @@ import {
   weaponProblem,
   type WeaponKind,
 } from './combatants';
-import { sealedArmour, weaponById, weaponTraits } from './arsenal';
+import { radProtectedArmour, sealedArmour, weaponById, weaponTraits } from './arsenal';
 import { canonicalTalents } from './talents';
 import {
   hasExoticProficiency,
@@ -168,6 +169,8 @@ export interface EngineState {
   burning?: Record<ActorId, { rounds: number; halfOb: number }>;
   /** «Токсичное» (rulings 95, 98): ВН drain (Хк10) or, with СверхВН, 1к10 wounds a turn. */
   toxic?: Record<ActorId, { dice: number; superWounds: boolean; rounds: number | null }>;
+  /** «Рад»: accumulated rad damage and whether ВН is halved till the end of the fight. */
+  rad?: Record<ActorId, { total: number; halved: boolean }>;
 }
 export interface AttackCommand {
   id: string;
@@ -638,7 +641,6 @@ const sum = (rolls: readonly DiceRoll[]) => rolls.reduce((s, r) => s + r.value, 
 const MANUAL_PROPERTIES = new Set([
   'Галлюциногенное',
   'Проникающее',
-  'Рад',
   'Взрыв',
   'Спрей',
   'Коррозийное',
@@ -1305,6 +1307,55 @@ function resolveHit(
           : `отравлен: ВН −${toxic.dice}к10 каждый ход`,
       ...(toxic.rounds ? { rounds: toxic.rounds } : {}),
     });
+  }
+  // «Рад» (rulings 101–103): pierced armour — rad damage; unpierced — it ignores armour unless
+  // the armour is rad-protected, void or servo, and halves ВН till the end of the fight.
+  const radCount = radDice(traits, info.weaponClass);
+  if (radCount && state.wounds.actors[command.target]?.life.status === 'ALIVE') {
+    const pierced = total > Math.max(0, ob - penetration);
+    if (pierced || !radProtectedArmour(target.armourItems)) {
+      setPhase('damage');
+      const dice = Array.from({ length: radCount }, () => rollDie(10, rng).value);
+      setPhase('property');
+      const old = state.rad?.[command.target] ?? { total: 0, halved: false };
+      let halved = old.halved;
+      if (!pierced && !halved) {
+        halved = true;
+        const combat = state.wounds.combat;
+        const actor = combat.actors[command.target]!;
+        const v = actor.characteristics.ВН!;
+        state.wounds = {
+          ...state.wounds,
+          combat: {
+            ...combat,
+            actors: {
+              ...combat.actors,
+              [command.target]: {
+                ...actor,
+                characteristics: {
+                  ...actor.characteristics,
+                  ВН: {
+                    ...v,
+                    baseValue: Math.floor(v.baseValue / 2),
+                    baseSuper: Math.floor(v.baseSuper / 2),
+                  },
+                },
+              },
+            },
+          },
+        };
+      }
+      const raw = dice.reduce((a, v) => a + v, 0);
+      const wounds = Math.max(0, raw - bonusVN(state, command.target));
+      plainWounds(state, command.target, wounds, logs);
+      state.rad = { ...state.rad, [command.target]: { total: old.total + raw, halved } };
+      logs.push({ type: 'rad', pierced, dice, wounds, halved });
+      effects.push({
+        property: 'Рад',
+        passed: false,
+        state: `рад-урон ${radCount}к10 (${dice.join('+')}) → −${wounds} ран${!pierced ? ', ВН /2 до конца боя' : ''}; накоплено ${old.total + raw}`,
+      });
+    } else effects.push({ property: 'Рад', passed: true, state: 'броня защищает от радиации' });
   }
   // «Гравитонное» (rulings 96, 97): СЛ −30, a failure — falls, к10 per odd degree into a leg.
   if (
@@ -2448,6 +2499,7 @@ export function actorStatus(b: Battle, id: ActorId) {
       ...(state.burning?.[id] ? ['Burning'] : []),
       ...(state.crippling?.[id] ? ['Crippled'] : []),
       ...(state.toxic?.[id] ? ['Poisoned'] : []),
+      ...(state.rad?.[id] ? ['Irradiated'] : []),
     ],
     fatigue: runtime.fatigue,
     posture: runtime.posture,

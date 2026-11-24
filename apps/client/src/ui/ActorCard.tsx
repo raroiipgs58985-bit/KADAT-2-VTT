@@ -22,6 +22,7 @@ const conditionLabel: Record<string, string> = {
   Burning: 'Горит',
   Crippled: 'Калечащее ранение',
   Poisoned: 'Отравлен',
+  Irradiated: 'Облучён',
   Agony: 'Агония',
 };
 const bleedingLabel = { LIGHT: 'лёгкое', MEDIUM: 'среднее', HEAVY: 'тяжёлое' } as const;
