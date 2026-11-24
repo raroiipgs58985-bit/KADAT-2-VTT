@@ -29,6 +29,7 @@ import {
   weaponDropped,
   weaponHanging,
   entanglement,
+  counterattacks,
   type AttackCommand,
 } from './engine';
 import { fixedDice } from './dice';
@@ -393,6 +394,73 @@ describe('Reactions of the target', () => {
     const parry = (done as { result: { reaction: { check: { target: number } } } }).result.reaction;
     // НР 30 − 20 + 10 = 20.
     expect(parry.check.target).toBe(20);
+  });
+});
+
+describe('Counterattack after a parry', () => {
+  const duel = async (kelusTalents: string[] = []) => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const sword = matchWeaponByName('Цепной меч')!;
+    const duelist = {
+      ...emptyCharacter('duelist', 'Дуэлянт'),
+      talents: ['Владение оружием (Цепное)'],
+      weapons: [{ name: sword.name, ref: sword.id }],
+    };
+    const kelus = characterFromProfile('kelus-drakar');
+    const b = createBattle([
+      { character: duelist, side: 'a', at: { x: 5.5, y: 10.5 }, id: 'duelist' },
+      {
+        character: { ...kelus, talents: [...kelus.talents, ...kelusTalents] },
+        side: 'b',
+        at: { x: 6.5, y: 10.5 },
+        id: 'kelus-drakar',
+      },
+    ]);
+    takeWeapon(b, { id: 'sword', actor: 'kelus-drakar', weapon: 'kelus-drakar:1' });
+    startCombat(b, fixedDice('10:9,10:2'));
+    // Parry 55 against 60: success with fewer than 3 degrees.
+    attack(
+      b,
+      shot({
+        id: 'cut',
+        actor: 'duelist',
+        target: 'kelus-drakar',
+        weapon: 'duelist:0',
+        defense: 'PARRY',
+      }),
+      fixedDice('100:20,100:55'),
+    );
+    return b;
+  };
+  it('the counterattack is offered only right after the parry', async () => {
+    const b = await duel(['Контратака']);
+    expect(counterattacks(b)).toHaveLength(1);
+    turnAction(b, { id: 'aim', actor: 'duelist', type: 'quick-aim' });
+    expect(counterattacks(b)).toEqual([]);
+  });
+  it('a parry with 1–2 degrees gives no counterattack without the talent', async () => {
+    expect(counterattacks(await duel())).toEqual([]);
+  });
+  it('«Контратака»: 1 degree is enough; the free blow goes out of turn at the attacker', async () => {
+    const b = await duel(['Контратака']);
+    const [c] = counterattacks(b);
+    expect(c).toMatchObject({ actor: 'kelus-drakar', target: 'duelist', weapon: 'kelus-drakar:1' });
+    expect(turnInfo(b).active).toBe('duelist');
+    const r = attack(
+      b,
+      shot({
+        id: 'counter',
+        actor: 'kelus-drakar',
+        target: 'duelist',
+        weapon: c!.weapon!,
+        counter: c!.id,
+      }),
+      // 35 — a torso hit; then damage and the duelist's checks.
+      { roll: (sides: number) => (sides === 100 ? 35 : 5) },
+    );
+    expect(r.status).toBe('RESOLVED');
+    expect(counterattacks(b)).toEqual([]);
+    expect(turnInfo(b).active).toBe('duelist');
   });
 });
 

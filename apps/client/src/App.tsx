@@ -32,6 +32,7 @@ import {
   standUp,
   startCombat,
   turnInfo,
+  counterattacks,
   type MoveMode,
 } from './game/engine';
 import type { JournalTone } from './game/journal';
@@ -594,6 +595,40 @@ export function App() {
               onAnswer={(key, value) => run((b) => resumeAttack(b, source(), { [key]: value }))}
               onCancel={() => run((b) => cancelUnstarted(b))}
             />
+            {!info.pending &&
+              counterattacks(battle)
+                .filter((c) => c.weapon)
+                .map((c) => (
+                  <div key={c.id} className="panel pending-banner">
+                    <p>
+                      {actorName(battle, c.actor)} парировал и может контратаковать{' '}
+                      {actorName(battle, c.target)}: свободный удар вне очереди, без уклонения и
+                      парирования.
+                    </p>
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() =>
+                        run((b) =>
+                          attack(
+                            b,
+                            {
+                              id: commandId('counter'),
+                              actor: c.actor,
+                              target: c.target,
+                              weapon: c.weapon!,
+                              targetActivity: form.activity,
+                              counter: c.id,
+                            },
+                            source(),
+                          ),
+                        )
+                      }
+                    >
+                      Контратаковать
+                    </button>
+                  </div>
+                ))}
             {!info.started && (
               <RosterPanel
                 battle={battle}

@@ -44,7 +44,7 @@ export type {
   BreakthroughRequest,
 } from './melee-actions.js';
 export { resolveMeleeAttack, resolveKnockdown, resolvePalisadeInterrupts } from './melee-attack.js';
-export { resolveParry, resolveMeleeDodge } from './melee-reactions.js';
+export { resolveParry, resolveMeleeDodge, COUNTERATTACK_TALENT } from './melee-reactions.js';
 export { resolveGrappleAction } from './grapple.js';
 export { prepareDamageExpression, rollAndTransformDamage } from './damage-transformations.js';
 export { resolveFieldProtection, coversLocation } from './field-protection.js';

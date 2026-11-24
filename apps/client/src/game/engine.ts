@@ -194,6 +194,11 @@ export interface AttackCommand {
   calledLocation?: CalledLocation;
   /** GM answers to questions asked during this attack, by question key. */
   answers?: Record<string, number>;
+  /**
+   * Counterattack after a parry: the core opportunity ID. A free melee blow out of turn at the
+   * attacker; it cannot be dodged or parried.
+   */
+  counter?: string;
 }
 export class ContextRequired extends Error {
   override readonly name = 'ContextRequired';
@@ -1535,7 +1540,20 @@ function resolve(
   setPhase('turn');
   begin(state, rng, logs);
   setPhase('attack');
-  if (state.wounds.combat.session.activeActor?.actorId !== command.actor)
+  if (command.counter) {
+    const opportunity = state.wounds.combat.melee?.counterattacks.find(
+      (x) => x.id === command.counter,
+    );
+    if (
+      !opportunity ||
+      opportunity.spent ||
+      opportunity.actor.actorId !== command.actor ||
+      !counterIsFresh(state, opportunity.triggeringResolutionId)
+    )
+      throw new Error('Права на контратаку нет (контратака — сразу после парирования)');
+    if (opportunity.target.actorId !== command.target)
+      throw new Error('Контратака — только по тому, кто атаковал');
+  } else if (state.wounds.combat.session.activeActor?.actorId !== command.actor)
     throw new Error('Сейчас ход другого персонажа');
   if (state.wounds.actors[command.actor]!.life.status !== 'ALIVE')
     throw new ContextRequired('Действия в агонии и после смерти не разрешаются.');
@@ -1562,6 +1580,8 @@ function resolve(
   }
   const kind = weaponKind(arsenalWeapon);
   const traits = impliedTraits(weaponTraits(arsenalWeapon).traits);
+  if (command.counter && kind !== 'melee')
+    throw new Error('Контратака — только оружием ближнего боя');
   // «Раны и лечение»: a blinded character fails НС automatically, НР without «Бой вслепую».
   const conditionsOf = (id: string) =>
     state.wounds.combat.session.conditions.filter(
@@ -1660,6 +1680,7 @@ function resolve(
     },
   };
   const askDefense = (hit: boolean, canParry: boolean): 'DECLINE' | 'DODGE' | 'PARRY' => {
+    if (command.counter) return 'DECLINE';
     if (command.defense) return command.defense;
     const entry = state.wounds.combat.session.initiativeOrder.find(
       (e) => e.actor.actorId === command.target,
@@ -1750,8 +1771,10 @@ function resolve(
             id: command.id,
             type: 'melee-attack',
             actor: ref(command.actor),
-            origin: 'NORMAL',
-            base: command.calledLocation ? 'called' : 'simple',
+            ...(command.counter
+              ? { origin: 'COUNTERATTACK' as const, opportunityId: command.counter }
+              : { origin: 'NORMAL' as const }),
+            base: command.calledLocation ? 'called' : command.counter ? 'free' : 'simple',
             ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
             technique: 'normal',
             weaponId: command.weapon,
@@ -1768,9 +1791,10 @@ function resolve(
         ),
       );
     };
-    const trial = command.defense
-      ? null
-      : !!runMelee('DECLINE', peekSource).resolution.result.targets[0]?.hit;
+    const trial =
+      command.defense || command.counter
+        ? null
+        : !!runMelee('DECLINE', peekSource).resolution.result.targets[0]?.hit;
     const defense = askDefense(trial ?? false, targetParries());
     const resolved = runMelee(defense, command.defense ? rng : realSource);
     state.wounds = resolved.state;
@@ -1823,6 +1847,7 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
           'targetActivity',
           'modifier',
           'defense',
+          'counter',
         ] as const
       ).every((key) => current.pending!.command[key] === command[key]))
   )
@@ -1915,6 +1940,30 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
     });
     return { status: 'CONTEXT_REQUIRED' as const, reason };
   }
+}
+/** A counterattack follows the parried attack at once: only before any other command. */
+const counterIsFresh = (state: EngineState, trigger: string) => {
+  const last = state.committed.at(-1);
+  return last !== undefined && (trigger === last || trigger.startsWith(`${last}:`));
+};
+/**
+ * Unspent counterattacks after a parry (core «Бой»: 3 degrees, talent «Контратака»: 1) with the
+ * defender's melee weapon.
+ */
+export function counterattacks(b: Battle) {
+  const state = getEngine(b);
+  const melee = state.wounds.combat.melee;
+  if (!melee) return [];
+  return melee.counterattacks
+    .filter((x) => !x.spent && counterIsFresh(state, x.triggeringResolutionId))
+    .map((x) => ({
+      id: x.id,
+      actor: x.actor.actorId,
+      target: x.target.actorId,
+      weapon: ((w) => (w && !w.endsWith(':hands') ? w : null))(
+        melee.actors[x.actor.actorId]?.weaponId,
+      ),
+    }));
 }
 /** Continues the saved attack; `answers` carry the GM's answers to the question asked. */
 export function resumeAttack(b: Battle, source: DiceSource, answers: Record<string, number> = {}) {
