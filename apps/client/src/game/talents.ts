@@ -4,6 +4,12 @@
  */
 export const TALENT_ALIASES: Readonly<Record<string, string>> = {
   'Бугрящиеся мышцы': 'Бугрящиеся бицепсы',
+  // Typos of the generator catalogs (author decision, 2026-11-24).
+  'Сокуршительный удар': 'Сокрушительный удар',
+  Верныйудар: 'Верный удар',
+  'Охотники на танки': 'Охотник на танки',
+  'На предле возможного': 'На пределе возможного',
+  'Просто царапина': 'Это просто царапина',
 };
 const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase().replace(/ё/g, 'е');
 const aliasByNorm = new Map(Object.entries(TALENT_ALIASES).map(([k, v]) => [norm(k), v]));

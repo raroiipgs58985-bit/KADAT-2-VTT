@@ -1,3 +1,4 @@
+import { canonicalTalents } from './talents';
 import {
   CHARACTERISTICS,
   emptyCharacter,
@@ -99,7 +100,8 @@ export function characterFromGenerator(g: GeneratorCharacter, id: string): Chara
     size: Math.max(-4, Math.min(6, size)),
     movement: { options: [{ label: 'бЛВ + Размер', skr: skr > 0 ? skr : 0.5 }], current: 0 },
     skills,
-    talents: [...new Set(g.talents.map((t) => t.trim()).filter(Boolean))],
+    // Typos and old names of the generator catalogs → names of the sheet «Таланты».
+    talents: canonicalTalents(g.talents.map((t) => t.trim()).filter(Boolean)),
     weapons,
     armourItems,
     traits: allTraits.join('\n'),
