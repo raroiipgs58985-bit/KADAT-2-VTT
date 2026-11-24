@@ -308,6 +308,69 @@ export function terrainAlong(
  * First vision barrier (wall, closed door, vision-blocking obstacle edge) that the straight
  * segment between two points crosses or touches, or null. Exact: coordinates are doubled.
  */
+/**
+ * The straight line between two points (ruling 142): `blocker` — a wall, closed door or
+ * vision-blocking obstacle it crosses; `corners` — those it only touches at an end of a wall
+ * run (the target is partly visible and that wall is its cover).
+ */
+export function sightLine(
+  from: Point,
+  to: Point,
+  g: GeometryIndex,
+): { blocker: Blocker | null; corners: Blocker[] } {
+  const a: V = { x: from.x * 2, y: from.y * 2 };
+  const b: V = { x: to.x * 2, y: to.y * 2 };
+  const orient = (p: V, q: V, r: V) =>
+    Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+  const within = (p: V, q: V, r: V) =>
+    Math.min(p.x, q.x) <= r.x &&
+    r.x <= Math.max(p.x, q.x) &&
+    Math.min(p.y, q.y) <= r.y &&
+    r.y <= Math.max(p.y, q.y);
+  const edges: { p: V; q: V; who: Blocker }[] = [];
+  const x0 = Math.floor(Math.min(from.x, to.x)) - 1,
+    x1 = Math.ceil(Math.max(from.x, to.x)) + 1;
+  const y0 = Math.floor(Math.min(from.y, to.y)) - 1,
+    y1 = Math.ceil(Math.max(from.y, to.y)) + 1;
+  for (let x = x0; x <= x1; x++)
+    for (let y = y0; y <= y1; y++) {
+      const h = g.visionEdges.get(`h:${x}:${y}`);
+      if (h) edges.push({ p: { x: 2 * x, y: 2 * y }, q: { x: 2 * x + 2, y: 2 * y }, who: h });
+      const v = g.visionEdges.get(`v:${x}:${y}`);
+      if (v) edges.push({ p: { x: 2 * x, y: 2 * y }, q: { x: 2 * x, y: 2 * y + 2 }, who: v });
+    }
+  const touched = new Map<string, { at: V; who: Blocker }>();
+  for (const e of edges) {
+    const o1 = orient(a, b, e.p),
+      o2 = orient(a, b, e.q),
+      o3 = orient(e.p, e.q, a),
+      o4 = orient(e.p, e.q, b);
+    // A proper crossing through the middle of an edge blocks.
+    if (o1 !== 0 && o2 !== 0 && o1 !== o2 && o3 !== o4) return { blocker: e.who, corners: [] };
+    for (const [o, pt] of [
+      [o1, e.p],
+      [o2, e.q],
+    ] as const)
+      if (o === 0 && within(a, b, pt)) touched.set(`${pt.x}:${pt.y}`, { at: pt, who: e.who });
+  }
+  // The line passes through a vertex: it crosses the wall if wall edges leave that vertex on
+  // both sides of the line, otherwise it only grazes a corner.
+  const corners: Blocker[] = [];
+  for (const { at, who } of touched.values()) {
+    const sides = new Set<number>();
+    for (const e of edges) {
+      const other =
+        e.p.x === at.x && e.p.y === at.y ? e.q : e.q.x === at.x && e.q.y === at.y ? e.p : null;
+      if (!other) continue;
+      const o = orient(a, b, other);
+      if (o !== 0) sides.add(o);
+    }
+    if (sides.size === 2) return { blocker: who, corners: [] };
+    if (!corners.some((c) => c.id === who.id)) corners.push(who);
+  }
+  return { blocker: null, corners };
+}
+
 export function sightLineBlocker(from: Point, to: Point, g: GeometryIndex): Blocker | null {
   const a: V = { x: from.x * 2, y: from.y * 2 };
   const b: V = { x: to.x * 2, y: to.y * 2 };

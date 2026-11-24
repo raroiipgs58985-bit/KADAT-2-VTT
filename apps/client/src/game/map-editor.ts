@@ -384,10 +384,20 @@ export const addObstacle = (m: MapDocument, o: Obstacle): MapDocument => ({
 export const updateObstacle = (
   m: MapDocument,
   id: string,
-  patch: Partial<Pick<Obstacle, 'label' | 'blocksMovement' | 'blocksVision' | 'notes'>>,
+  patch: Partial<
+    Pick<
+      Obstacle,
+      'label' | 'blocksMovement' | 'blocksVision' | 'notes' | 'coverOb' | 'coverHeight'
+    >
+  >,
 ): MapDocument => ({
   ...m,
   obstacles: m.obstacles.map((x) => (x.id === id ? { ...x, ...patch } : x)),
+});
+/** ОБ of a wall as cover at its corners (ruling 142). */
+export const updateWallOb = (m: MapDocument, id: string, ob: number): MapDocument => ({
+  ...m,
+  walls: m.walls.map((w) => (w.id === id ? { ...w, ob } : w)),
 });
 export const removeObstacle = (m: MapDocument, id: string): MapDocument => ({
   ...m,

@@ -84,6 +84,7 @@ import {
   tryChange,
   updateDoor,
   updateObstacle,
+  updateWallOb,
   updateZone,
   applyDraft,
   calibrateBackground,
@@ -899,6 +900,7 @@ export function App() {
                 onNewObstacle={setNewObstacle}
                 onUpdateDoor={(id, patch) => editMap((m) => updateDoor(m, id, patch))}
                 onUpdateObstacle={(id, patch) => editMap((m) => updateObstacle(m, id, patch))}
+                onUpdateWallOb={(id, ob) => editMap((m) => updateWallOb(m, id, ob))}
                 onUpdateZone={(id, patch) => editMap((m) => updateZone(m, id, patch))}
                 onDeleteObject={(o) => {
                   if (o.kind === 'wall') editMap((m) => removeWall(m, o.id));

@@ -141,11 +141,12 @@ import {
   validateFootprint,
   type Footprint,
 } from './grid';
-import { mapProblems, segmentLine, type MapDocument } from './map';
+import { mapProblems, segmentLine, type CoverHeight, type MapDocument } from './map';
 import {
   buildGeometry,
   footprintGeometryProblem,
   initialDoorStates,
+  sightLine,
   sightLineBlocker,
 } from './geometry';
 import { storeSnapshot } from './snapshots';
@@ -206,6 +207,8 @@ export interface EngineState {
     string,
     { actor: ActorId; zone: Zone; dice: number; hit: DamageInput; command: AttackCommand }
   >;
+  /** ОБ lost by cover (ruling 142): obstacle or wall id → loss. */
+  coverLoss?: Record<string, number>;
   /** Zone ОБ before losses, recorded when corrosion starts (turn-start steps have no battle). */
   zoneArmour?: Record<string, number>;
   /** «Первоклассный стрелок» used this fight: `${actor}:${weapon kind}`. */
@@ -1260,6 +1263,18 @@ function resolveHit(
     armour.ob += nr;
     notes.push(`Ловец стрел: ОБ +${nr}`);
   }
+  // Cover (ruling 142): its ОБ adds to the armour of the covered zones.
+  const cover = coverFor(b, command.actor, command.target, state);
+  const covered = cover && armour.zone && cover.zones.includes(armour.zone) && cover.ob > 0;
+  if (covered) {
+    armour.ob += cover.ob;
+    notes.push(`Укрытие (${cover.label}): ОБ +${cover.ob}`);
+    // Damage above the cover's ОБ breaks through it: the cover loses 1 ОБ (ruling 142).
+    if (total > cover.ob) {
+      state.coverLoss = { ...state.coverLoss, [cover.id]: (state.coverLoss?.[cover.id] ?? 0) + 1 };
+      notes.push(`Укрытие пробито: −1 ОБ (осталось ${cover.ob - 1})`);
+    }
+  }
   // Лэнс / Примитивное change the armour before ББ; the core subtracts ББ.
   const ob = armourAfterProperties(traits, {
     armour: armour.ob,
@@ -2190,6 +2205,77 @@ function directDamage(
   setPhase('attack');
   return { dice: roll.rolls.map((r) => r.value), finalDamage: damage.result.finalDamage ?? 0 };
 }
+const COVER_ZONES: Record<CoverHeight, Zone[]> = {
+  low: ['legs'],
+  medium: ['legs', 'torso'],
+  high: ['head', 'torso', 'arms', 'legs'],
+};
+/**
+ * The target's cover against this attacker (ruling 142): an obstacle with cover ОБ right next to
+ * the target that the line passes through (its height gives the covered zones), or a wall /
+ * obstacle corner the line grazes (all zones, ОБ of the wall). The best cover counts; ОБ lost
+ * to earlier hits is taken off.
+ */
+export function coverFor(b: Battle, attacker: ActorId, target: ActorId, state = getEngine(b)) {
+  const from = posOf(b, attacker),
+    to = posOf(b, target);
+  const found: { id: string; label: string; ob: number; zones: Zone[] }[] = [];
+  const left = (id: string, ob: number) => Math.max(0, ob - (state.coverLoss?.[id] ?? 0));
+  for (const o of b.map.obstacles) {
+    if (!o.coverOb) continue;
+    // Right next to the target: the target's cell touches the obstacle (also diagonally).
+    const tx = Math.floor(to.x),
+      ty = Math.floor(to.y);
+    const near =
+      tx >= o.col - 1 && tx <= o.col + o.width && ty >= o.row - 1 && ty <= o.row + o.height;
+    if (!near || !segmentHitsRect(from, to, o)) continue;
+    found.push({
+      id: o.id,
+      label: o.label || 'препятствие',
+      ob: left(o.id, o.coverOb),
+      zones: COVER_ZONES[o.coverHeight ?? 'low'],
+    });
+  }
+  for (const c of sightLine(from, to, sceneGeometry(b)).corners) {
+    const ob =
+      c.kind === 'wall'
+        ? (b.map.walls.find((w) => w.id === c.id)?.ob ?? 0)
+        : c.kind === 'door'
+          ? (b.map.walls.find((w) => w.id === b.map.doors.find((d) => d.id === c.id)?.wallId)?.ob ??
+            0)
+          : (b.map.obstacles.find((o) => o.id === c.id)?.coverOb ?? 0);
+    found.push({ id: c.id, label: c.label, ob: left(c.id, ob), zones: COVER_ZONES.high });
+  }
+  return found.sort((x, y) => y.ob - x.ob)[0] ?? null;
+}
+function segmentHitsRect(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  r: { col: number; row: number; width: number; height: number },
+) {
+  // Liang–Barsky clipping of the segment against the rectangle (strict interior).
+  let t0 = 0,
+    t1 = 1;
+  const dx = to.x - from.x,
+    dy = to.y - from.y;
+  const checks: [number, number][] = [
+    [-dx, from.x - r.col],
+    [dx, r.col + r.width - from.x],
+    [-dy, from.y - r.row],
+    [dy, r.row + r.height - from.y],
+  ];
+  for (const [p, q] of checks) {
+    if (p === 0) {
+      if (q <= 0) return false;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 >= t1) return false;
+  }
+  return true;
+}
 /** Called-attack penalties («Бой» A52), to cap the talents that reduce them. */
 const CALLED_PENALTY: Record<CalledLocation, number> = {
   Eyes: -50,
@@ -2989,7 +3075,8 @@ function resolve(
  * a closed door or a vision-blocking obstacle stops before any dice; nothing is guessed.
  */
 export function attackLineProblem(b: Battle, attacker: ActorId, target: ActorId): string | null {
-  const blocker = sightLineBlocker(posOf(b, attacker), posOf(b, target), sceneGeometry(b));
+  // Ruling 142: a line that only grazes a wall corner is allowed — the wall is cover.
+  const blocker = sightLine(posOf(b, attacker), posOf(b, target), sceneGeometry(b)).blocker;
   return blocker
     ? `Ждёт решения автора: линия атаки проходит через ${blocker.label}. Правила линии видимости и атаки сквозь преграды ещё не утверждены (этапы 5–6).`
     : null;

@@ -72,7 +72,11 @@ export interface Vertex {
 export interface Wall {
   readonly id: string;
   readonly points: readonly Vertex[];
+  /** ОБ of the wall as cover when a shot grazes its corner (ruling 142); absent — 0. */
+  readonly ob?: number;
 }
+/** Height of an obstacle as cover: covered body zones (ruling 142). */
+export type CoverHeight = 'low' | 'medium' | 'high';
 /**
  * A continuous interval of whole edges on one straight segment of a wall. An open door
  * removes all blocking on its opening; a closed door blocks movement and vision as flagged.
@@ -103,6 +107,10 @@ export interface Obstacle {
   readonly blocksMovement: boolean;
   readonly blocksVision: boolean;
   readonly notes: string;
+  /** ОБ as cover for a target right behind it (ruling 142); absent or 0 — no cover. */
+  readonly coverOb?: number;
+  /** Low — legs, medium — legs and torso, high — everything (ruling 142). */
+  readonly coverHeight?: CoverHeight;
 }
 /**
  * Difficult terrain («Общая механика» A41): 1 m costs 2 m of movement (ruling 11); Run, Charge
@@ -287,6 +295,8 @@ function environmentProblems(m: MapDocument): string[] {
   const lines: { wall: string; line: Line }[] = [];
   let wallsOutside = 0;
   for (const w of m.walls) {
+    if (w.ob !== undefined && (!Number.isInteger(w.ob) || w.ob < 0 || w.ob > 99))
+      problems.push(`Стена ${w.id}: ОБ укрытия 0–99`);
     if (!Array.isArray(w.points) || w.points.length < 2) {
       problems.push(`Стена ${w.id}: нужно не меньше двух точек`);
       continue;
@@ -377,7 +387,10 @@ function environmentProblems(m: MapDocument): string[] {
       typeof o.blocksMovement !== 'boolean' ||
       typeof o.blocksVision !== 'boolean' ||
       typeof o.notes !== 'string' ||
-      o.notes.length > MAP_LIMITS.maxNotesLength
+      o.notes.length > MAP_LIMITS.maxNotesLength ||
+      (o.coverOb !== undefined &&
+        (!Number.isInteger(o.coverOb) || o.coverOb < 0 || o.coverOb > 99)) ||
+      (o.coverHeight !== undefined && !['low', 'medium', 'high'].includes(o.coverHeight))
     ) {
       problems.push(`Препятствие ${o.id} повреждено`);
       continue;

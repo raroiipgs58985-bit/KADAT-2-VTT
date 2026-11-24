@@ -37,7 +37,9 @@ type DoorPatch = Partial<
   Pick<Door, 'open' | 'blocksMovement' | 'blocksVision' | 'locked' | 'lockModifier' | 'lockOd'>
 >;
 type ZonePatch = Partial<Pick<TerrainZone, 'label' | 'modifier'>>;
-type ObstaclePatch = Partial<Pick<Obstacle, 'label' | 'blocksMovement' | 'blocksVision' | 'notes'>>;
+type ObstaclePatch = Partial<
+  Pick<Obstacle, 'label' | 'blocksMovement' | 'blocksVision' | 'notes' | 'coverOb' | 'coverHeight'>
+>;
 
 /** Text input committing one undo step on blur or Enter. */
 function TextField(props: {
@@ -84,6 +86,7 @@ function ObjectProperties(props: {
   onUpdateDoor: (id: string, patch: DoorPatch) => void;
   onUpdateObstacle: (id: string, patch: ObstaclePatch) => void;
   onUpdateZone: (id: string, patch: ZonePatch) => void;
+  onUpdateWallOb?: (id: string, ob: number) => void;
   onDelete: (object: SelectedObject) => void;
 }) {
   const { object, map } = props;
@@ -104,6 +107,13 @@ function ObjectProperties(props: {
           стены можно перетащить за круглые маркеры; двери на ней должны остаться на прямом участке.
           {doors.length ? ` Двери на ней: ${doors.length}.` : ''}
         </p>
+        <NumberField
+          label="ОБ стены как укрытия (угол)"
+          value={wall.ob ?? 0}
+          min={0}
+          max={99}
+          onCommit={(v) => props.onUpdateWallOb?.(wall.id, Math.max(0, Math.round(v)))}
+        />
         <button type="button" onClick={() => props.onDelete(object)}>
           {doors.length ? `Удалить стену и её двери (${doors.length})` : 'Удалить стену'}
         </button>
@@ -203,6 +213,30 @@ function ObjectProperties(props: {
           />
           Блокирует видимость
         </label>
+        <div className="row">
+          <NumberField
+            label="ОБ укрытия"
+            value={o.coverOb ?? 0}
+            min={0}
+            max={99}
+            onCommit={(v) => props.onUpdateObstacle(o.id, { coverOb: Math.max(0, Math.round(v)) })}
+          />
+          <label>
+            Высота укрытия
+            <select
+              value={o.coverHeight ?? 'low'}
+              onChange={(e) =>
+                props.onUpdateObstacle(o.id, {
+                  coverHeight: e.target.value as 'low' | 'medium' | 'high',
+                })
+              }
+            >
+              <option value="low">Низкое — ноги</option>
+              <option value="medium">Среднее — ноги и торс</option>
+              <option value="high">Высокое — всё</option>
+            </select>
+          </label>
+        </div>
         <TextField
           label="Заметки (высота, толщина, прочность — без расчёта)"
           value={o.notes}
@@ -353,6 +387,7 @@ export function EditorPanel(props: {
   onUpdateDoor: (id: string, patch: DoorPatch) => void;
   onUpdateObstacle: (id: string, patch: ObstaclePatch) => void;
   onUpdateZone: (id: string, patch: ZonePatch) => void;
+  onUpdateWallOb?: (id: string, ob: number) => void;
   onDeleteObject: (object: SelectedObject) => void;
 }) {
   const [calibrationMeters, setCalibrationMeters] = useState('');
@@ -495,6 +530,7 @@ export function EditorPanel(props: {
           onUpdateDoor={props.onUpdateDoor}
           onUpdateObstacle={props.onUpdateObstacle}
           onUpdateZone={props.onUpdateZone}
+          {...(props.onUpdateWallOb ? { onUpdateWallOb: props.onUpdateWallOb } : {})}
           onDelete={props.onDeleteObject}
         />
       ) : (

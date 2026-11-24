@@ -34,7 +34,7 @@ const MAP_KEYS_V1 = [
   'decorations',
 ] as const;
 const MAP_KEYS = [...MAP_KEYS_V1, 'walls', 'doors', 'obstacles', 'zones'] as const;
-const WALL_KEYS = ['id', 'points'] as const;
+const WALL_KEYS = ['id', 'points', 'ob'] as const;
 const VERTEX_KEYS = ['x', 'y'] as const;
 const DOOR_KEYS = [
   'id',
@@ -58,6 +58,8 @@ const OBSTACLE_KEYS = [
   'blocksMovement',
   'blocksVision',
   'notes',
+  'coverOb',
+  'coverHeight',
 ] as const;
 const ZONE_KEYS = ['id', 'col', 'row', 'width', 'height', 'label', 'modifier'] as const;
 const BACKGROUND_KEYS = [
@@ -161,6 +163,15 @@ export function parseMapFile(text: string): MapDocument {
   if (Array.isArray(map.doors))
     map.doors = (map.doors as unknown[]).map((d) =>
       isObject(d) && !('locked' in d) ? { ...d, locked: false, lockModifier: 0, lockOd: 0 } : d,
+    );
+  // Files saved before cover (ruling 142): walls and obstacles give no cover.
+  if (Array.isArray(map.walls))
+    map.walls = (map.walls as unknown[]).map((w) =>
+      isObject(w) && !('ob' in w) ? { ...w, ob: 0 } : w,
+    );
+  if (Array.isArray(map.obstacles))
+    map.obstacles = (map.obstacles as unknown[]).map((o) =>
+      isObject(o) && !('coverOb' in o) ? { ...o, coverOb: 0, coverHeight: 'low' } : o,
     );
   if (Array.isArray(map.zones))
     map.zones = (map.zones as unknown[]).map((z) =>

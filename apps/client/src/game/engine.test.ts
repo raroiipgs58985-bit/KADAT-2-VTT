@@ -32,6 +32,9 @@ import {
   counterattacks,
   disarm,
   chargeDestination,
+  coverFor,
+  attackLineProblem,
+  applyMap,
   grappleOf,
   grappleAction,
   corrodedZones,
@@ -834,6 +837,103 @@ describe('Melee techniques: grapple, stun, knockdown (rulings 140–141)', () =>
     );
     expect(r.status).toBe('RESOLVED');
     expect(actorStatus(b, 't').posture).toBe('prone');
+  });
+});
+
+describe('Cover (ruling 142)', () => {
+  const scene = async (coverHeight: 'low' | 'medium' | 'high', wall = false, wallFrom = 11) => {
+    const { matchWeaponByName } = await import('./arsenal');
+    const gun = matchWeaponByName('Стаб-пистолет')!;
+    const b = createBattle([
+      {
+        character: {
+          ...emptyCharacter('s', 'Стрелок'),
+          characteristics: { ...emptyCharacter('x').characteristics, НС: { value: 60, super: 0 } },
+          talents: ['Владение оружием (Стаб)'],
+          weapons: [{ name: gun.name, ref: gun.id }],
+        },
+        side: 'a',
+        at: { x: 3.5, y: 10.5 },
+        id: 's',
+      },
+      {
+        character: { ...emptyCharacter('t', 'Цель'), wounds: 80 },
+        side: 'b',
+        at: { x: 9.5, y: 10.5 },
+        id: 't',
+      },
+    ]);
+    const map = {
+      ...b.map,
+      obstacles: wall
+        ? []
+        : [
+            {
+              id: 'crate',
+              col: 8,
+              row: 10,
+              width: 1,
+              height: 1,
+              label: 'Ящик',
+              blocksMovement: true,
+              blocksVision: false,
+              notes: '',
+              coverOb: 6,
+              coverHeight,
+            },
+          ],
+      walls: wall
+        ? [
+            {
+              id: 'w1',
+              points: [
+                // The line (3.5; 9.5)–(9.5; 11.5) passes exactly through this wall end.
+                { x: 8, y: wallFrom },
+                { x: 8, y: 13 },
+              ],
+              ob: 8,
+            },
+          ]
+        : [],
+    };
+    applyMap(b, {
+      map,
+      positions: wall
+        ? { s: { x: 3.5, y: 9.5 }, t: { x: 9.5, y: 11.5 } }
+        : { s: { x: 3.5, y: 10.5 }, t: { x: 9.5, y: 10.5 } },
+    });
+    return b;
+  };
+  it('an obstacle right next to the target covers the zones of its height', async () => {
+    const b = await scene('medium');
+    expect(coverFor(b, 's', 't')).toMatchObject({ id: 'crate', ob: 6, zones: ['legs', 'torso'] });
+    startCombat(b, fixedDice('10:9,10:2'));
+    // 35 → torso hit; damage dice 10 — above the cover ОБ: the cover loses 1.
+    let n = 0;
+    const r = attack(
+      b,
+      shot({ id: 'c', actor: 's', target: 't', weapon: 's:0', answers: { 'cover:t': 0 } }),
+      {
+        roll: (sides: number) => (sides === 100 ? (n++ === 0 ? 35 : 99) : 10),
+      },
+    );
+    const notes = (r as { result: { hits: { notes: string[] }[] } }).result.hits[0]!.notes;
+    expect(notes).toContain('Укрытие (Ящик): ОБ +6');
+    expect(notes.some((x) => x.startsWith('Укрытие пробито'))).toBe(true);
+    expect(coverFor(b, 's', 't')?.ob).toBe(5);
+  });
+  it('a low obstacle covers only the legs', async () => {
+    const b = await scene('low');
+    expect(coverFor(b, 's', 't')?.zones).toEqual(['legs']);
+  });
+  it('a line grazing a wall corner is allowed; the wall is cover for all zones', async () => {
+    const b = await scene('low', true);
+    expect(attackLineProblem(b, 's', 't')).toBeNull();
+    expect(coverFor(b, 's', 't')).toMatchObject({ id: 'w1', ob: 8 });
+  });
+  it('a wall the line crosses at a joint between its edges still blocks', async () => {
+    const b = await scene('low', true, 9);
+    expect(attackLineProblem(b, 's', 't')).toMatch(/линия атаки проходит через/);
   });
 });
 
