@@ -10,6 +10,9 @@ import {
   placeLoose,
   takeDisarmed,
   extractWeapon,
+  grappleAction,
+  placePush,
+  type GrappleActionType,
   nextTurn,
   placeActor,
   setDoorOpen,
@@ -65,6 +68,12 @@ type Step =
     }
   | { type: 'loose'; x: number; y: number }
   | { type: 'take-disarmed' }
+  | {
+      type: 'grapple';
+      command: { id: string; actor: ActorId; type: GrappleActionType };
+      rolls: DiceRoll[];
+    }
+  | { type: 'push'; x: number; y: number }
   | { type: 'extract'; command: { id: string; actor: ActorId; weapon: string }; rolls: DiceRoll[] }
   // v0.4: geometry-sensitive commands.
   // v0.5: the map geometry is a reference into the replay's shared snapshot store.
@@ -100,6 +109,7 @@ const JOURNAL_ONLY = [
   'brace-rejected',
   'disarm-rejected',
   'extract-rejected',
+  'grapple-rejected',
 ] as const;
 type JournalOnly = (typeof JOURNAL_ONLY)[number];
 const isJournalOnly = (type: string): type is JournalOnly =>
@@ -225,6 +235,17 @@ export function exportReplay(b: Battle): Replay {
       steps.push({ type: 'disarm', command: r.command, rolls: r.rolls ?? [] });
     }
     if (entry.type === 'weapon-taken') steps.push({ type: 'take-disarmed' });
+    if (entry.type === 'grapple') {
+      const r = entry.detail as {
+        command: { id: string; actor: ActorId; type: GrappleActionType };
+        rolls?: DiceRoll[];
+      };
+      steps.push({ type: 'grapple', command: r.command, rolls: r.rolls ?? [] });
+    }
+    if (entry.type === 'push-placed') {
+      const r = entry.detail as { at: Point };
+      steps.push({ type: 'push', x: r.at.x, y: r.at.y });
+    }
     if (entry.type === 'extract') {
       const r = entry.detail as {
         command: { id: string; actor: ActorId; weapon: string };
@@ -332,6 +353,8 @@ export function importReplay(value: unknown): Battle {
     else if (step.type === 'disarm') disarm(b, step.command, dice(step.rolls));
     else if (step.type === 'loose') placeLoose(b, { x: step.x, y: step.y });
     else if (step.type === 'take-disarmed') takeDisarmed(b);
+    else if (step.type === 'grapple') grappleAction(b, step.command, dice(step.rolls));
+    else if (step.type === 'push') placePush(b, { x: step.x, y: step.y });
     else if (step.type === 'extract') extractWeapon(b, step.command, dice(step.rolls));
     else if (step.type === 'map') {
       if (r.format === REPLAY_FORMAT && typeof step.snapshot !== 'string')

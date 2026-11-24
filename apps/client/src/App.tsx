@@ -40,6 +40,9 @@ import {
   takeDisarmed,
   extractWeapon,
   looseWeapons,
+  grappleAction,
+  placePush,
+  pendingPush,
   type MoveMode,
 } from './game/engine';
 import type { JournalTone } from './game/journal';
@@ -740,11 +743,22 @@ export function App() {
               onPlaceFall={(id, p) => run((b) => placeFallen(b, id, p))}
               loose={looseWeapons(battle)}
               placingLoose={
-                mode === 'combat' && pendingLoose(battle)
-                  ? { from: pendingLoose(battle)!.from, max: pendingLoose(battle)!.maxDistance }
-                  : null
+                mode !== 'combat'
+                  ? null
+                  : pendingLoose(battle)
+                    ? { from: pendingLoose(battle)!.from, max: pendingLoose(battle)!.maxDistance }
+                    : pendingPush(battle)
+                      ? {
+                          from: posOf(battle, pendingPush(battle)!.controller),
+                          max: pendingPush(battle)!.maxDistance,
+                        }
+                      : null
               }
-              onPlaceLoose={(p) => run((b) => placeLoose(b, p))}
+              onPlaceLoose={(p) =>
+                run((b) =>
+                  pendingPush(b) && !pendingLoose(b) ? placePush(b, p) : placeLoose(b, p),
+                )
+              }
               onPlace={(id, x, y) => run((b) => placeActor(b, id, x, y))}
               onDraftPlace={(id, x, y) =>
                 edit((d) => placeToken(d, id, { x, y }, posOf(battle, id)))
@@ -1051,6 +1065,15 @@ export function App() {
                         dropWeapon(b, { id: commandId('drop'), actor: info.active, weapon: id }),
                       )
                     }
+                    onGrapple={(type) =>
+                      run((b) =>
+                        grappleAction(
+                          b,
+                          { id: commandId(type), actor: info.active, type },
+                          source(),
+                        ),
+                      )
+                    }
                     onFreeAim={(type) =>
                       run((b) =>
                         turnAction(
@@ -1163,6 +1186,9 @@ export function App() {
                             ...(form.called ? { calledLocation: form.called } : {}),
                             targetActivity: form.activity,
                             modifier: form.modifier,
+                            ...(form.technique && !form.called
+                              ? { technique: form.technique }
+                              : {}),
                             ...(form.meleeBase && !form.called
                               ? { meleeBase: form.meleeBase }
                               : {}),

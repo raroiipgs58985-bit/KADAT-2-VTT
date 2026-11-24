@@ -32,6 +32,8 @@ import {
   counterattacks,
   disarm,
   chargeDestination,
+  grappleOf,
+  grappleAction,
   corrodedZones,
   extractWeapon,
   placeLoose,
@@ -756,6 +758,82 @@ describe('Bare hands (rulings 138–139)', () => {
     expect(r.result.attack.modifiers.find((m) => m.id === 'punch:unarmed')).toBeUndefined();
     // 1к10 = 3 + бСЛ 4 = 7.
     expect(r.result.hits[0]!.total).toBe(7);
+  });
+});
+
+describe('Melee techniques: grapple, stun, knockdown (rulings 140–141)', () => {
+  const setup = () => {
+    const b = createBattle([
+      {
+        character: {
+          ...emptyCharacter('f', 'Борец'),
+          characteristics: {
+            ...emptyCharacter('x').characteristics,
+            НР: { value: 60, super: 0 },
+            СЛ: { value: 50, super: 0 },
+          },
+        },
+        side: 'a',
+        at: { x: 5.5, y: 10.5 },
+        id: 'f',
+      },
+      {
+        character: { ...emptyCharacter('t', 'Цель'), wounds: 50 },
+        side: 'b',
+        at: { x: 6.5, y: 10.5 },
+        id: 't',
+      },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    return b;
+  };
+  const roll = (seq: number[]) => {
+    let n = 0;
+    return { roll: (sides: number) => (sides === 100 ? (seq[n++] ?? 99) : 3) };
+  };
+  it('a grapple hit holds the target; the controller deals damage inside the grapple', () => {
+    const b = setup();
+    const r = attack(
+      b,
+      shot({ id: 'g', actor: 'f', target: 't', weapon: 'f:hands', technique: 'grapple' }),
+      roll([35]),
+    );
+    expect(r.status).toBe('RESOLVED');
+    expect(grappleOf(b, 'f')).toMatchObject({ role: 'controller', opponent: 't' });
+    expect(grappleOf(b, 't')?.role).toBe('victim');
+    nextTurn(b, roll([]));
+    nextTurn(b, roll([]));
+    const before = b.hp.t!;
+    // Opposed СЛ: controller 05, victim 99.
+    const d = grappleAction(b, { id: 'gd', actor: 'f', type: 'grapple-damage' }, roll([5, 99]));
+    expect(d.status).toBe('RESOLVED');
+    expect(b.hp.t).toBeLessThanOrEqual(before);
+    const replayed = importReplay(JSON.parse(JSON.stringify(exportReplay(b))));
+    expect(grappleOf(replayed, 'f')?.role).toBe('controller');
+  });
+  it('«Оглушение»: no damage, stunned for ½ of the damage roll (up)', () => {
+    const b = setup();
+    const before = b.hp.t!;
+    const r = attack(
+      b,
+      shot({ id: 's', actor: 'f', target: 't', weapon: 'f:hands', technique: 'stun' }),
+      roll([35]),
+    );
+    expect(r.status).toBe('RESOLVED');
+    expect(b.hp.t).toBe(before);
+    // Fists 1к5−3: 3 − 3 = 0 → at least 1 round.
+    expect((r as { result: { stunned: { rounds: number } } }).result.stunned.rounds).toBe(1);
+    expect(actorStatus(b, 't').conditions).toContain('Stunned');
+  });
+  it('«Сбить с ног»: a won opposed Athletics knocks the target prone', () => {
+    const b = setup();
+    const r = attack(
+      b,
+      shot({ id: 'k', actor: 'f', target: 't', weapon: 'f:hands', technique: 'knockdown' }),
+      roll([5, 99]),
+    );
+    expect(r.status).toBe('RESOLVED');
+    expect(actorStatus(b, 't').posture).toBe('prone');
   });
 });
 

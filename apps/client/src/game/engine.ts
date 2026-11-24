@@ -22,6 +22,8 @@ import {
   concussion,
   instantDeath,
   destroyerDice,
+  resolveKnockdown,
+  resolveGrappleAction,
   opposedMeleeCheck,
   resolveHitLocations,
   talentDamage,
@@ -208,6 +210,10 @@ export interface EngineState {
   zoneArmour?: Record<string, number>;
   /** «Первоклассный стрелок» used this fight: `${actor}:${weapon kind}`. */
   firstClassUsed?: string[];
+  /** Захват «Толкнуть»: the controller's cell is chosen on the map (ruling 141). */
+  pendingPush?: { controller: ActorId; victim: ActorId; maxDistance: number; commandId: string };
+  /** After «Перехватить» the new controller has one immediate action (core grant). */
+  grappleFollowup?: { actor: ActorId; id: string };
   /** «Перегрев»: weapon → round it overheated (ruling 137). */
   overheated?: Record<WeaponId, number>;
   /** Once-a-round talent rerolls: `${actor}:${talent}` → round used. */
@@ -256,6 +262,8 @@ export interface AttackCommand {
    * this cell next to the target (at most 3 × СКР) and strikes (ruling 132).
    */
   charge?: { x: number; y: number };
+  /** Melee technique (core «Бой»): grapple, stun (ruling 140) or knockdown. */
+  technique?: 'grapple' | 'stun' | 'knockdown';
   /** «Стремительная» / «Молниеносная атака» in melee (talents, ruling 130). */
   meleeBase?: 'swift' | 'lightning' | 'cautious' | 'reckless';
   /** Internal: «Двойной выстрел» — the first shot hit, the second gets +20 (ruling 127). */
@@ -2122,6 +2130,66 @@ function restoreFists(state: EngineState, actor: ActorId, before: ReturnType<typ
     },
   };
 }
+/**
+ * Damage outside an ordinary hit (knockdown 5+, grapple «Нанести урон»): the expression into
+ * `location`, through the zone armour («Примитивное» if primitive) and бВН, with a consequence.
+ */
+function directDamage(
+  b: Battle,
+  state: EngineState,
+  command: AttackCommand,
+  expression: { count: number; sides: number; modifier: number },
+  location: CalledLocation,
+  primitive: boolean,
+  rng: DiceSource,
+  logs: unknown[],
+) {
+  const combat = state.wounds.combat;
+  const src = { kind: 'canonical', id: 'Бой: урон без оружия' };
+  const input: DamageInput = {
+    hitId: `${command.id}:direct`,
+    attackId: command.id,
+    attacker: ref(command.actor),
+    target: ref(command.target),
+    location,
+    profile: { source: src, expression },
+    penetration: { source: src, value: 0 },
+    transformations: [],
+    tags: primitive ? ['primitive'] : [],
+    context: context(combat, command.actor, command.target),
+    provenance: [{ source: src, reason: 'Урон приёма' }],
+  };
+  setPhase('damage');
+  const roll = resolveDamageRoll(expression, rng, input.context).result;
+  const armour = zoneArmour(b, state, command, location);
+  const ob = armourAfterProperties(primitive ? [{ name: 'Примитивное' }] : [], {
+    armour: armour.ob,
+    penetration: 0,
+    weaponClass: 'ББ',
+  });
+  const vn = state.wounds.combat.actors[command.target]!.characteristics.ВН!;
+  const damage = resolveProtectionDamage(
+    {
+      input,
+      state: protectionFor(state, input, ob),
+      endurance: { baseValue: vn.baseValue, baseSuper: vn.baseSuper },
+      preRolled: roll,
+    },
+    {
+      roll: () => {
+        throw new Error('Unexpected damage reroll');
+      },
+    },
+  );
+  logs.push({ type: 'direct-damage', dice: roll.rolls }, ...damage.logs);
+  if (damage.result.status !== 'RESOLVED')
+    throw new ContextRequired(JSON.stringify(damage.result.status));
+  state.protection = damage.state;
+  setPhase('consequence');
+  postDamage(state, damage.result, command, rng, logs);
+  setPhase('attack');
+  return { dice: roll.rolls.map((r) => r.value), finalDamage: damage.result.finalDamage ?? 0 };
+}
 /** Called-attack penalties («Бой» A52), to cap the talents that reduce them. */
 const CALLED_PENALTY: Record<CalledLocation, number> = {
   Eyes: -50,
@@ -2539,6 +2607,8 @@ function resolve(
   let reaction: unknown = null;
   let suppression: unknown = null;
   let overheat: unknown = null;
+  let knockdownDamage: unknown = null;
+  let stunned: unknown = null;
   // «Перегрев»: the weapon cools down — no shots this round and the next (ruling 137).
   const cooling = state.overheated?.[command.weapon];
   if (cooling !== undefined && state.wounds.combat.session.roundNumber <= cooling + 1)
@@ -2676,6 +2746,40 @@ function resolve(
         rng,
         logs,
       );
+  } else if (command.technique === 'knockdown') {
+    // «Сбить с ног»: opposed Athletics instead of an НР attack (core «Бой»).
+    const r = resolveKnockdown(
+      state.wounds.combat,
+      {
+        id: command.id,
+        type: 'melee-attack',
+        actor: ref(command.actor),
+        origin: 'NORMAL',
+        base: 'simple',
+        technique: 'knockdown',
+        weaponId: command.weapon,
+        targets: [{ actor: ref(command.target), distance }],
+        context: ctx,
+      },
+      context(state.wounds.combat, command.target, command.actor),
+      rng,
+    );
+    state.wounds = { ...state.wounds, combat: r.state };
+    logs.push(...r.logs);
+    attack = r.result.opposed;
+    degrees = r.result.opposed.attackerCheck.totalDegrees;
+    for (const intent of r.result.intents)
+      if (intent.type === 'PrimitiveDamageIntent' && intent.damage)
+        knockdownDamage = directDamage(
+          b,
+          state,
+          { ...command, id: `${command.id}:knockdown` },
+          intent.damage.expression,
+          intent.location ?? 'Torso',
+          true,
+          rng,
+          logs,
+        );
   } else {
     const runMelee = (defense: 'DECLINE' | 'DODGE' | 'PARRY', src: DiceSource) => {
       const meleeAvoidance =
@@ -2736,7 +2840,7 @@ function resolve(
                   : (command.meleeBase ?? 'simple'),
             ...(command.charge ? { movementDistance: chargeDistance } : {}),
             ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
-            technique: 'normal',
+            technique: command.technique ?? 'normal',
             weaponId: command.weapon,
             ...(dualRequest.dualWield ? { dualWield: dualRequest.dualWield } : {}),
             targets: [
@@ -2819,6 +2923,30 @@ function resolve(
         hits.push({ ...first, hitId: `${first.hitId}:${k + 1}`, location: locations[k]!.location });
     }
     if (target.avoidance) reaction = target.avoidance;
+    // «Оглушение»: no damage; stunned for ½ of the weapon's damage roll, up (ruling 140).
+    for (const intent of target.intents)
+      if (intent.type === 'StunDurationIntent' && intent.damage) {
+        setPhase('damage');
+        const e = intent.damage.expression;
+        const rolled = Array.from({ length: e.count }, () => rollDie(e.sides, rng).value);
+        const rounds = Math.max(1, Math.ceil((rolled.reduce((a, v) => a + v, 0) + e.modifier) / 2));
+        setPhase('attack');
+        const src = { kind: 'canonical', id: 'Бой: техника «Оглушение»' };
+        state.wounds = {
+          ...state.wounds,
+          combat: {
+            ...state.wounds.combat,
+            session: applyStunned(state.wounds.combat.session, {
+              id: `${command.id}:stun`,
+              actor: ref(command.target),
+              source: src,
+              provenance: { source: src, reason: 'Техника «Оглушение»' },
+              durationRounds: rounds,
+            }).result,
+          },
+        };
+        stunned = { dice: rolled, rounds };
+      }
   }
   if (officer) {
     const runtime = state.wounds.combat.actors[command.actor]!;
@@ -2844,6 +2972,14 @@ function resolve(
     reaction: reaction ?? 'declined',
     ...(suppression ? { suppression } : {}),
     ...(overheat ? { overheat } : {}),
+    ...(knockdownDamage ? { knockdownDamage } : {}),
+    ...(stunned ? { stunned } : {}),
+    ...(command.technique === 'grapple' &&
+    state.wounds.combat.melee?.grapples.some(
+      (g) => g.controller.actorId === command.actor && g.victim.actorId === command.target,
+    )
+      ? { grappled: true }
+      : {}),
   };
 }
 
@@ -2880,6 +3016,7 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
           'counter',
           'second',
           'meleeBase',
+          'technique',
         ] as const
       ).every((key) => current.pending!.command[key] === command[key]))
   )
@@ -3303,6 +3440,7 @@ function movementGate(state: EngineState, actorId: ActorId) {
     throw new Error('Сначала завершите сохранённую pending-операцию');
   if (state.pendingFall) throw new Error('Сначала укажите на карте, где упал персонаж');
   if (state.pendingLoose) throw new Error('Сначала укажите на карте, куда упало выбитое оружие');
+  if (state.pendingPush) throw new Error('Сначала укажите на карте, куда толкнуть');
   const session = state.wounds.combat.session;
   if (session.phase === 'ready') throw new Error('Бой ещё не начат: нажмите «Начать бой»');
   if (session.phase !== 'turn-active' || session.activeActor?.actorId !== actorId)
@@ -4169,6 +4307,158 @@ export function extractWeapon(
     throw error;
   }
 }
+/** The grapple the actor takes part in, with the actor's role. */
+export function grappleOf(b: Battle, actor: ActorId) {
+  const g = getEngine(b).wounds.combat.melee?.grapples.find(
+    (x) => x.controller.actorId === actor || x.victim.actorId === actor,
+  );
+  if (!g) return null;
+  return {
+    id: g.id,
+    role: g.controller.actorId === actor ? ('controller' as const) : ('victim' as const),
+    opponent: g.controller.actorId === actor ? g.victim.actorId : g.controller.actorId,
+  };
+}
+export type GrappleActionType =
+  | 'grapple-continue'
+  | 'grapple-damage'
+  | 'grapple-throw'
+  | 'grapple-push'
+  | 'grapple-stand'
+  | 'grapple-release'
+  | 'grapple-escape'
+  | 'grapple-slip'
+  | 'grapple-reverse';
+export const grappleActionName: Record<GrappleActionType, string> = {
+  'grapple-continue': 'Удерживать (1 ОД)',
+  'grapple-damage': 'Нанести урон (2 ОД)',
+  'grapple-throw': 'Бросить на землю (2 ОД)',
+  'grapple-push': 'Толкнуть (2 ОД)',
+  'grapple-stand': 'Поднять обоих (2 ОД)',
+  'grapple-release': 'Отпустить (СД)',
+  'grapple-escape': 'Вырваться (1 ОД)',
+  'grapple-slip': 'Выскользнуть (1 ОД)',
+  'grapple-reverse': 'Перехватить (2 ОД)',
+};
+/** An action inside a grapple (core «Бой»): costs and opposed tests come from the core. */
+export function grappleAction(
+  b: Battle,
+  command: { id: string; actor: ActorId; type: GrappleActionType },
+  source: DiceSource = noDice,
+) {
+  const state = getEngine(b);
+  const used: DiceRoll[] = [];
+  const tape: DiceSource = {
+    roll(sides) {
+      const value = source.roll(sides);
+      used.push({ sides, value });
+      return value;
+    },
+  };
+  try {
+    combatant(b, command.actor);
+    if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
+    movementGate(state, command.actor);
+    const g = grappleOf(b, command.actor);
+    if (!g) throw new Error('Персонаж не в захвате');
+    const combat = state.wounds.combat;
+    const followup =
+      state.grappleFollowup?.actor === command.actor ? state.grappleFollowup.id : undefined;
+    const r = resolveGrappleAction(
+      combat,
+      {
+        id: command.id,
+        type: command.type,
+        actor: ref(command.actor),
+        relationId: g.id,
+        context: context(combat, command.actor, g.opponent),
+        opponentContext: context(combat, g.opponent, command.actor),
+        ...(followup ? { followupId: followup } : {}),
+      } as Parameters<typeof resolveGrappleAction>[1],
+      tape,
+    );
+    const next = structuredClone(state);
+    next.wounds = { ...next.wounds, combat: r.state };
+    delete next.grappleFollowup;
+    if (r.result.followupId)
+      next.grappleFollowup = { actor: command.actor, id: r.result.followupId };
+    const logs: unknown[] = [...r.logs];
+    let damage: unknown = null;
+    for (const intent of r.result.intents)
+      if (intent.type === 'PrimitiveDamageIntent' && intent.damage)
+        damage = directDamage(
+          b,
+          next,
+          {
+            id: `${command.id}:damage`,
+            actor: command.actor,
+            target: g.opponent,
+            weapon: `${command.actor}:hands`,
+            targetActivity: 'REST',
+          },
+          intent.damage.expression,
+          intent.location ?? 'Torso',
+          true,
+          tape,
+          logs,
+        );
+    if (command.type === 'grapple-push' && r.result.distance > 0)
+      next.pendingPush = {
+        controller: command.actor,
+        victim: g.opponent,
+        maxDistance: r.result.distance,
+        commandId: command.id,
+      };
+    next.committed.push(command.id);
+    sync(b, next);
+    append(b, 'grapple', {
+      command,
+      rolls: used,
+      name: grappleActionName[command.type],
+      opposed: r.result.opposed,
+      released: r.result.relation === null,
+      damage,
+      distance: r.result.distance,
+      committed: true,
+    });
+    return { status: 'RESOLVED' as const, result: r.result, damage };
+  } catch (error) {
+    append(b, 'grapple-rejected', {
+      command,
+      name: grappleActionName[command.type],
+      reason: explainEngineError(error),
+      committed: false,
+    });
+    throw error;
+  }
+}
+/** «Толкнуть» (ruling 141): the controller goes to `at`, the victim moves by the same offset. */
+export function placePush(b: Battle, at: { x: number; y: number }) {
+  const state = getEngine(b);
+  const push = state.pendingPush;
+  if (!push) throw new Error('Толчка, ждущего места, нет');
+  const from = posOf(b, push.controller);
+  const dx = at.x - from.x,
+    dy = at.y - from.y;
+  if (Math.hypot(dx, dy) > push.maxDistance + 0.75)
+    throw new Error(`Толчок — не дальше ${push.maxDistance} м`);
+  const victimFrom = posOf(b, push.victim);
+  const victimAt = { x: victimFrom.x + dx, y: victimFrom.y + dy };
+  const saved = { ...b.positions };
+  b.positions[push.controller] = { x: -1000, y: -1000 };
+  b.positions[push.victim] = { x: -2000, y: -2000 };
+  const problem =
+    placementProblemFor(b, push.controller, at) ?? placementProblemFor(b, push.victim, victimAt);
+  b.positions = saved;
+  if (problem) throw new Error(problem);
+  const next = structuredClone(state);
+  delete next.pendingPush;
+  b.positions[push.controller] = { ...at };
+  b.positions[push.victim] = victimAt;
+  sync(b, next);
+  append(b, 'push-placed', { at, victimAt, commandId: push.commandId });
+}
+export const pendingPush = (b: Battle) => getEngine(b).pendingPush ?? null;
 /** Whether the weapon is in the owner's hands now (ruling 81). */
 export function weaponInHand(b: Battle, weaponId: WeaponId): boolean {
   const combat = getEngine(b).wounds.combat;

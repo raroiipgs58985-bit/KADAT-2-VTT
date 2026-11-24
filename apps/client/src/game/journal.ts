@@ -313,6 +313,28 @@ export function describeEntry(
           }.`
         : '';
       const counterText = (a.command as { counter?: string }).counter ? 'Контратака. ' : '';
+      const extra = a.result as {
+        grappled?: boolean;
+        stunned?: { rounds: number };
+        knockdownDamage?: { finalDamage: number };
+      };
+      const tech = (a.command as { technique?: string }).technique;
+      if (tech === 'grapple' || tech === 'stun' || tech === 'knockdown')
+        return {
+          ...base,
+          title: `${name(a.command.actor)} → ${name(a.command.target)}: ${tech === 'grapple' ? 'захват' : tech === 'stun' ? 'оглушение' : 'сбить с ног'}`,
+          summary:
+            tech === 'grapple'
+              ? extra.grappled
+                ? 'Цель в захвате.'
+                : 'Захват не удался.'
+              : tech === 'stun'
+                ? extra.stunned
+                  ? `Цель оглушена на ${extra.stunned.rounds} р. (решение 140).`
+                  : 'Оглушить не удалось.'
+                : `${extra.knockdownDamage ? `Цель сбита с ног и получает ${extra.knockdownDamage.finalDamage} ран.` : 'Встречный тест Атлетики.'}`,
+          tone: 'info',
+        };
       const heat = (
         a.result as { overheat?: { dropped: boolean; finalDamage?: number; location?: string } }
       ).overheat;
@@ -415,6 +437,44 @@ export function describeEntry(
         title: 'Разоружить не удалось',
         summary: String(d.reason),
         tone: 'warning',
+      };
+    case 'grapple': {
+      const c = d.command as { actor: string };
+      const op = d.opposed as { winner: { actorId: string } | null } | null;
+      const dmg = d.damage as { finalDamage: number } | null;
+      return {
+        ...base,
+        title: `${name(c.actor)}: захват — ${String(d.name)}`,
+        summary: [
+          op
+            ? op.winner?.actorId === c.actor
+              ? 'Встречный тест выигран.'
+              : 'Встречный тест не выигран.'
+            : '',
+          dmg ? `Урон: ${dmg.finalDamage} ран.` : '',
+          Number(d.distance) > 0
+            ? `Толчок до ${String(d.distance)} м — укажите клетку на карте.`
+            : '',
+          d.released ? 'Захват окончен.' : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+        tone: 'info',
+      };
+    }
+    case 'grapple-rejected':
+      return {
+        ...base,
+        title: `${String(d.name)} не выполнено`,
+        summary: String(d.reason),
+        tone: 'warning',
+      };
+    case 'push-placed':
+      return {
+        ...base,
+        title: 'Толчок в захвате',
+        summary: 'Оба участника сдвинуты.',
+        tone: 'info',
       };
     case 'extract': {
       const c = d.command as { actor: string };

@@ -15,6 +15,9 @@ import {
   corrodedZones,
   impalements,
   firstClassKind,
+  grappleOf,
+  grappleActionName,
+  type GrappleActionType,
   otherWeaponInHand,
   oneHandedWeapon,
   disarmOptions,
@@ -358,6 +361,8 @@ export interface AttackForm {
   dual?: boolean;
   /** «Стремительная» / «Молниеносная атака» (ruling 130). */
   meleeBase?: 'swift' | 'lightning' | 'cautious' | 'reckless' | '';
+  /** Melee technique: grapple, stun, knockdown (core «Бой»). */
+  technique?: 'grapple' | 'stun' | 'knockdown' | '';
 }
 
 export function AttackPanel(props: {
@@ -510,6 +515,22 @@ export function AttackPanel(props: {
           </select>
         </label>
       )}
+      {weapon?.arsenal && weaponKind(weapon.arsenal) === 'melee' && (
+        <label>
+          Приём
+          <select
+            value={form.technique ?? ''}
+            onChange={(e) =>
+              set({ technique: e.target.value as NonNullable<AttackForm['technique']> })
+            }
+          >
+            <option value="">Удар</option>
+            <option value="grapple">Захват (парирование −30)</option>
+            <option value="stun">Оглушение (−20, без урона)</option>
+            <option value="knockdown">Сбить с ног (встречная Атлетика)</option>
+          </select>
+        </label>
+      )}
       {props.onCharge &&
         weapon?.arsenal &&
         weaponKind(weapon.arsenal) === 'melee' &&
@@ -659,6 +680,7 @@ export function ActionsPanel(props: {
   onExtract?: (weapon: WeaponId) => void;
   /** «Первоклассный стрелок»: an aim as the Free Action, once a fight. */
   onFreeAim?: (type: 'quick-aim' | 'careful-aim') => void;
+  onGrapple?: (type: GrappleActionType) => void;
 }) {
   const all = battleWeapons(props.battle, props.actor).filter(
     (w) => w.arsenal && !weaponProblem(w.arsenal),
@@ -672,9 +694,40 @@ export function ActionsPanel(props: {
   const corroded = corrodedZones(props.battle, props.actor);
   const stuck = impalements(props.battle, props.actor);
   const firstClass = firstClassKind(props.battle, props.actor);
+  const grapple = grappleOf(props.battle, props.actor);
   const zoneLabel = { head: 'голова', torso: 'торс', arms: 'руки', legs: 'ноги' } as const;
   return (
     <div className="stack">
+      {grapple && props.onGrapple && (
+        <div className="weapon-note badge-partial">
+          <p>
+            {grapple.role === 'controller' ? 'Вы держите' : 'Вас держит'}{' '}
+            {actorName(props.battle, grapple.opponent)} (захват). Другие действия недоступны.
+          </p>
+          <div className="action-grid">
+            {(grapple.role === 'controller'
+              ? ([
+                  'grapple-continue',
+                  'grapple-damage',
+                  'grapple-throw',
+                  'grapple-push',
+                  'grapple-stand',
+                  'grapple-release',
+                ] as const)
+              : (['grapple-escape', 'grapple-slip', 'grapple-reverse'] as const)
+            ).map((t) => (
+              <button
+                key={t}
+                type="button"
+                disabled={!props.canAct}
+                onClick={() => props.onGrapple!(t)}
+              >
+                {grappleActionName[t]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {firstClass && props.onFreeAim && (
         <div className="row">
           {(['quick-aim', 'careful-aim'] as const).map((t) => (
