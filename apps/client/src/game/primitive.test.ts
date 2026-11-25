@@ -131,3 +131,50 @@ describe('Heavy laser drill (ruling 168)', () => {
     expect(weaponProblem(drill)).toBeNull();
   });
 });
+
+describe('«Каменная стена» (ruling 169)', () => {
+  it('the consequence die of the target loses бВН', () => {
+    const gun = matchWeaponByName('Лазган')!;
+    const base = emptyCharacter('x').characteristics;
+    const b = createBattle([
+      {
+        character: {
+          ...emptyCharacter('s', 'Стрелок'),
+          characteristics: { ...base, НС: { value: 60, super: 0 } },
+          weapons: [{ name: gun.name, ref: gun.id }],
+        },
+        side: 'a',
+        at: { x: 3.5, y: 10.5 },
+        id: 's',
+      },
+      {
+        character: {
+          ...emptyCharacter('t', 'Цель'),
+          wounds: 200,
+          talents: ['Каменная стена'],
+          characteristics: { ...base, ВН: { value: 40, super: 0 } },
+        },
+        side: 'b',
+        at: { x: 8.5, y: 10.5 },
+        id: 't',
+      },
+    ]);
+    startCombat(b, fixedDice('10:9,10:2'));
+    run(b, cmd({ mode: 'single' }), { roll: (s: number) => (s === 100 ? 5 : s) });
+    const entry = b.log.filter((l) => l.type === 'attack').at(-1)!;
+    const logs = (entry.detail as { coreLogs: { type?: string; reduced?: number; die?: number }[] })
+      .coreLogs;
+    expect(logs.find((l) => l.type === 'stone-wall')).toMatchObject({ die: 10, reduced: 6 });
+  });
+});
+
+describe('«Опционально» (ruling 173)', () => {
+  it('an optional property is activated for the Free Action', () => {
+    const b = scene('Кнут', 40, 5.5);
+    expect(() => run(b, cmd({ optional: 'Нет такого' }), fixedDice('100:5'))).toThrow();
+    const r = run(b, cmd({ id: 'w2', optional: 'Опутывающее' }), {
+      roll: (s: number) => (s === 100 ? 5 : Math.min(3, s)),
+    });
+    expect(r.status).toBe('RESOLVED');
+  });
+});

@@ -25,7 +25,7 @@ function run(b: Battle, cmd: AttackCommand, rng: DiceSource) {
   return r;
 }
 const byName = (n: string) => arsenal.weapons.find((w) => w.name.trim() === n)!;
-const scene = (weapon: string, ammo?: string) => {
+const scene = (weapon: string, ammo?: string, start = true) => {
   const w = byName(weapon);
   const base = emptyCharacter('x').characteristics;
   const b = createBattle([
@@ -47,7 +47,7 @@ const scene = (weapon: string, ammo?: string) => {
       id: 't',
     },
   ]);
-  startCombat(b, fixedDice('10:9,10:2'));
+  if (start) startCombat(b, fixedDice('10:9,10:2'));
   return b;
 };
 const cmd = (patch: Partial<AttackCommand> = {}): AttackCommand => ({
@@ -100,5 +100,59 @@ describe('Net guns (rulings 155, 167)', () => {
     const b = scene('Пистолет-сетемёт');
     run(b, cmd(), dice());
     expect(entanglement(b, 't')).not.toBeNull();
+  });
+});
+
+describe('Indirect fire and mortars (ruling 171)', () => {
+  it('«Навесное» shoots over walls; infantry mortars fire the mines of their calibre', async () => {
+    const { attackLineProblem, applyMap } = await import('./engine');
+    const frag = ammoOptions(byName('Ручной гранатомёт (40 мм)')).find((x) => x.name === 'Фраг')!;
+    const b = scene('Ручной гранатомёт (40 мм)', frag.id, false);
+    applyMap(b, {
+      map: {
+        ...b.map,
+        walls: [
+          {
+            id: 'w',
+            points: [
+              { x: 8, y: 5 },
+              { x: 8, y: 16 },
+            ],
+          },
+        ],
+      },
+      positions: { s: { x: 3.5, y: 10.5 }, t: { x: 12.5, y: 10.5 } },
+    });
+    expect(attackLineProblem(b, 's', 't')).not.toBeNull();
+    expect(attackLineProblem(b, 's', 't', 's:0')).toBeNull();
+    const mortar = byName('82 мм пехотный миномёт');
+    const mines = ammoOptions(mortar).map((x) => x.name.trim());
+    expect(mines).toEqual(expect.arrayContaining(['Фраг (82 мм)', 'Дымовая (82 мм)']));
+  });
+});
+
+describe('Hallucinogen (ruling 170)', () => {
+  it('a ВН test −10 × Х; a failure — effect к10 for the GM and 1 + failures rounds', () => {
+    const gas = ammoOptions(byName('Ручной гранатомёт (40 мм)')).find(
+      (x) => x.name === 'Галюциноген',
+    )!;
+    const b = scene('Ручной гранатомёт (40 мм)', gas.id);
+    const r = run(b, cmd(), dice());
+    const blasts = (
+      r as unknown as {
+        result: {
+          blasts: {
+            targets: {
+              actor: string;
+              effects?: { property: string; passed: boolean; state?: string }[];
+            }[];
+          }[];
+        };
+      }
+    ).result.blasts;
+    const t = blasts[0]!.targets.find((x) => x.actor === 't')!;
+    const fx = t.effects!.find((e) => e.property === 'Галлюциногенное')!;
+    expect(fx.passed).toBe(false);
+    expect(fx.state).toMatch(/эффект \d+ по таблице ведущего/);
   });
 });

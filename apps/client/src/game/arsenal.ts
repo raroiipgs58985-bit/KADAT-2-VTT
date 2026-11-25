@@ -48,6 +48,15 @@ export function ammoOptions(w: ArsenalWeapon | null | undefined): ArsenalWeapon[
     return arsenal.weapons.filter(
       (x) => x.sheet === 'Взрывчатка' && x.weaponClass === 'Метательное',
     );
+  // Infantry mortars (ruling 171): the mines of «Взрывчатка» of the same calibre.
+  const mortar = /миномёт/i.test(w.name) ? /(82|120)\s*мм/.exec(w.name) : null;
+  if (mortar)
+    return arsenal.weapons.filter(
+      (x) =>
+        x.sheet === 'Взрывчатка' &&
+        x.weaponClass === 'СТ' &&
+        new RegExp(`\\(${mortar[1]}\\s*мм\\)`).test(x.name),
+    );
   if (/90\s*мм/.test(w.name) && w.sheet === 'Стаб и РПУ' && /гранатомёт/i.test(w.name))
     return arsenal.weapons.filter(
       (x) =>
@@ -69,7 +78,7 @@ export function withAmmo(
   if (!launcher || !ammoId) return launcher;
   const ammo = ammoOptions(launcher).find((x) => x.id === ammoId);
   if (!ammo) return launcher;
-  return {
+  const loaded: ArsenalWeapon = {
     ...launcher,
     damage: ammo.damage,
     damageText: ammo.damageText,
@@ -77,7 +86,12 @@ export function withAmmo(
     properties: [...launcher.properties.filter((p) => p.property !== null), ...ammo.properties],
     ammoDependent: false,
   };
+  LOADED.add(loaded);
+  return loaded;
 }
+const LOADED = new WeakSet<ArsenalWeapon>();
+/** A launcher loaded with its ammunition by `withAmmo` (ruling 167). */
+export const isLoadedLauncher = (w: ArsenalWeapon) => LOADED.has(w);
 export const armourById = (id: string): ArsenalArmour | undefined =>
   arsenal.armour.find((a) => a.id === id);
 

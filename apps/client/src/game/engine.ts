@@ -276,6 +276,8 @@ export interface AttackCommand {
    * of the same action. Without «Парное оружие» each attack has −30 («Амбидекстрия»: −20).
    */
   second?: WeaponId;
+  /** «Опционально»: one optional property activated for the Free Action (ruling 173). */
+  optional?: string;
   /** War hammer: a blow with the spike — the second ББ and «Калечащее (2)» (ruling 166). */
   spike?: boolean;
   /** Internal: «Огненный натиск» — the run is done, the long burst is fired from `charge`. */
@@ -572,6 +574,28 @@ function postDamage(
   logs: unknown[],
   critical = 0,
 ) {
+  // «Каменная стена» (ruling 169): the consequence die of the target loses бВН, not below 1.
+  // The die is peeked here and handed back to the core unchanged, so the dice tape is the same.
+  let source = rng;
+  const runtime = state.wounds.combat.actors[command.target];
+  if (damage.criticalConsequenceDiceCount === 1 && runtime?.talents?.includes('Каменная стена')) {
+    const vn = runtime.characteristics.ВН!;
+    const bVN = Math.floor(vn.baseValue / 10) + vn.baseSuper;
+    const die = rng.roll(10);
+    const reduced = Math.max(1, die + critical - bVN);
+    if (reduced !== die + critical) logs.push({ type: 'stone-wall', die, bVN, reduced });
+    critical = reduced - die;
+    let first = true;
+    source = {
+      roll(sides) {
+        if (first) {
+          first = false;
+          return die;
+        }
+        return rng.roll(sides);
+      },
+    };
+  }
   const result = resolvePostDamage(
     {
       state: state.wounds,
@@ -599,7 +623,7 @@ function postDamage(
             }),
       },
     },
-    rng,
+    source,
   );
   logs.push(...result.logs);
   if (result.result.status !== 'RESOLVED')
@@ -781,7 +805,7 @@ function damageRoll(
 }
 
 /** Properties the polygon does not apply automatically yet: shown to the GM after the hit. */
-const MANUAL_PROPERTIES = new Set(['Галлюциногенное']);
+const MANUAL_PROPERTIES = new Set<string>();
 /**
  * The damage dice of the weapon: an Arsenal record without damage («-», ruling 155) rolls none
  * (the core profile keeps 1к10 only because the core needs a die there).
@@ -1386,8 +1410,11 @@ function resolveHit(
     armour.ob += foam;
     notes.push(`Пена: ОБ +${foam}`);
   }
-  // Cover (ruling 142): its ОБ adds to the armour of the covered zones.
-  const cover = coverFor(b, command.actor, command.target, state);
+  // Cover (ruling 142): its ОБ adds to the armour of the covered zones; «Навесное» comes from
+  // above — no cover (ruling 171).
+  const cover = hasTrait(traits, 'Навесное')
+    ? null
+    : coverFor(b, command.actor, command.target, state);
   const covered = cover && armour.zone && cover.zones.includes(armour.zone) && cover.ob > 0;
   if (covered) {
     armour.ob += cover.ob;
@@ -1479,6 +1506,22 @@ function resolveHit(
   if (damage.result.status !== 'RESOLVED')
     throw new ContextRequired(JSON.stringify(damage.result.status));
   state.protection = damage.state;
+  // Ruling 172: a new wound to a stabilized character — agony again (2 × бВН rounds).
+  const stabilized = state.wounds.actors[command.target];
+  if (stabilized?.life.status === 'STABILIZED' && (damage.result.finalDamage ?? 0) > 0) {
+    state.wounds = {
+      ...state.wounds,
+      actors: {
+        ...state.wounds.actors,
+        [command.target]: {
+          ...stabilized,
+          life: { status: 'ALIVE' },
+          damageTaken: Math.max(stabilized.damageTaken, stabilized.maxWounds),
+        },
+      },
+    };
+    zeroWoundsAgony(state, command.target, logs);
+  }
   setPhase('consequence');
   // «Калечащий удар / выстрел»: +2 to the critical consequence die (ruling 123).
   const wound = noDamage
@@ -1520,6 +1563,45 @@ function resolveHit(
     rng,
     logs,
   );
+  // «Галлюциногенное (Х)» (ruling 170): ВН test −10 × Х; a failure — effect к10 by the GM's
+  // table, for 1 + degrees of failure rounds.
+  const hallucinogen = traits.find((t) => t.name === 'Галлюциногенное');
+  if (hallucinogen && state.wounds.actors[command.target]?.life.status === 'ALIVE') {
+    const gm = { kind: 'weapon-property', id: 'Свойства оружия: Галлюциногенное' };
+    const x = hallucinogen.value ?? 0;
+    const check = resolveCheck(
+      {
+        baseValue: vn.value,
+        finalSuper: vn.super,
+        context: {
+          ...context(state.wounds.combat, command.target, command.actor),
+          modifiers: x
+            ? [
+                {
+                  id: `${command.id}:hallucinogen:${hit.hitId}`,
+                  value: -10 * x,
+                  source: gm,
+                  provenance: { source: gm, reason: 'Галлюциногенное: −10 × Х' },
+                },
+              ]
+            : [],
+        },
+      },
+      rng,
+    ).result;
+    logs.push({ type: 'hallucinogen-test', check });
+    if (check.outcome === 'success') effects.push({ property: 'Галлюциногенное', passed: true });
+    else {
+      const effect = rollDie(10, rng).value;
+      const rounds = 1 + (check.failureDegrees ?? 0);
+      effects.push({
+        property: 'Галлюциногенное',
+        passed: false,
+        state: `галлюцинации: эффект ${effect} по таблице ведущего`,
+        rounds,
+      });
+    }
+  }
   // «Частичное опутывание» (ruling 161): opposed СЛ of the target against the thrower; a loss —
   // by the part hit: leg — knocked down, arm — one hand only, torso — СКР / 2 and no dodging,
   // head — choking (the GM decides by the armour).
@@ -3472,13 +3554,36 @@ function resolveAttack(
   const spikeAlt = command.spike ? arsenalWeapon.penetrationAlt : undefined;
   if (command.spike && (spikeAlt === undefined || kind !== 'melee'))
     throw new Error('Удар клювом — только боевым молотом с двумя ББ (решение 166)');
-  const traits =
-    spikeAlt !== undefined
+  // «Опционально» (ruling 173, sheet «Свойства оружия»): one optional property, for the Free Action.
+  const optionalTrait = command.optional
+    ? weaponTraits(arsenalWeapon).optional.find((t) => t.name === command.optional)
+    : undefined;
+  if (command.optional && !optionalTrait)
+    throw new Error(`У оружия нет опционального свойства «${command.optional}»`);
+  if (optionalTrait) {
+    const spent = resolveCombatAction(
+      state.wounds.combat,
+      {
+        id: `${command.id}:optional`,
+        type: 'free-action',
+        actor: ref(command.actor),
+        context: context(state.wounds.combat, command.actor),
+      },
+      noDice,
+    ).state;
+    state.wounds = { ...state.wounds, combat: spent };
+  }
+  const traits = [
+    ...(spikeAlt !== undefined
       ? [
           ...baseTraits.filter((t) => t.name !== 'Оглушающее'),
           ...weaponTraits(arsenalWeapon).optional.filter((t) => t.name === 'Калечащее'),
         ]
-      : baseTraits;
+      : baseTraits),
+    ...(optionalTrait && !(spikeAlt !== undefined && optionalTrait.name === 'Калечащее')
+      ? [optionalTrait]
+      : []),
+  ];
   // Bare hands against an armed target: −20 to НР; «Кулачный боец» counts as armed (ruling 138).
   if (
     isFists(command.weapon) &&
@@ -4329,7 +4434,15 @@ function resolveAttack(
  * An attack whose straight line from centre to centre crosses a wall, a closed door or a
  * vision-blocking obstacle is impossible (ruling 142); a line grazing a wall corner is cover.
  */
-export function attackLineProblem(b: Battle, attacker: ActorId, target: ActorId): string | null {
+export function attackLineProblem(
+  b: Battle,
+  attacker: ActorId,
+  target: ActorId,
+  weapon?: WeaponId,
+): string | null {
+  // «Навесное» (ruling 171): the shot goes over walls and cover.
+  const w = weapon ? weaponOf(b, weapon)?.arsenal : null;
+  if (w && w.properties.some((p) => p.property === 'Навесное')) return null;
   // Ruling 142: a line that only grazes a wall corner is allowed — the wall is cover.
   const blocker = sightLine(posOf(b, attacker), posOf(b, target), sceneGeometry(b)).blocker;
   return blocker
@@ -4338,10 +4451,14 @@ export function attackLineProblem(b: Battle, attacker: ActorId, target: ActorId)
 }
 /** Why the actor cannot act this turn (unconscious, stunned), or null. */
 export function incapacity(b: Battle, id: ActorId): string | null {
+  const state = getEngine(b);
+  const life = state.wounds.actors[id]?.life.status;
+  // Ruling 172: after stabilization the character is unconscious; agony — no actions (ruling 83).
+  if (life === 'STABILIZED')
+    return `${actorName(b, id)} стабилизирован и без сознания — действовать не может.`;
+  if (life === 'AGONY') return `${actorName(b, id)} в агонии — действовать не может.`;
   const types = new Set(
-    getEngine(b)
-      .wounds.combat.session.conditions.filter((c) => c.actor.actorId === id)
-      .map((c) => c.type),
+    state.wounds.combat.session.conditions.filter((c) => c.actor.actorId === id).map((c) => c.type),
   );
   const why = [
     ...(types.has('Unconscious') ? ['без сознания'] : []),
@@ -4381,7 +4498,9 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
   if (current.committed.includes(command.id)) throw new Error('Команда уже исполнена');
   if (current.pending && !resume) throw new Error('Сначала продолжите сохранённую pending-команду');
   if (!resume) {
-    const line = attackLineProblem(b, command.actor, command.target);
+    const line = command.at
+      ? null
+      : attackLineProblem(b, command.actor, command.target, command.weapon);
     if (line) {
       append(b, 'rejected', {
         command,

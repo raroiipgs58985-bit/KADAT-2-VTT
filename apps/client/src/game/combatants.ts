@@ -8,7 +8,7 @@ import type {
   FireMode,
 } from '@kadat/contracts';
 import { hasTrait, impliedTraits, meltaRangeBonus } from '@kadat/rules-engine';
-import { weaponTraits } from './arsenal';
+import { isLoadedLauncher, weaponTraits } from './arsenal';
 import type { ArsenalWeapon } from '../../../../packages/canonical-data/src/arsenal';
 import { battleWeapons, combatant, actorIds, type ActorId, type Battle } from './model';
 import { currentSkr, type CharacterDocument } from './character';
@@ -86,7 +86,9 @@ export function weaponProblem(w: ArsenalWeapon | null): string | null {
   if (w.ammoDependent) return 'Урон зависит от боеприпаса — выберите боеприпас в редакторе';
   // No damage in the Arsenal («-», nets): only the properties act; ББ «-» is 0 (ruling 155).
   const propertiesOnly =
-    !w.damage && RANGED_CLASSES.includes(w.weaponClass) && w.weaponClass !== 'СТ';
+    !w.damage &&
+    RANGED_CLASSES.includes(w.weaponClass) &&
+    (w.weaponClass !== 'СТ' || isLoadedLauncher(w));
   if (!w.damage && !propertiesOnly) return 'В Арсенале нет урона';
   if (w.damage && ![5, 10].includes(w.damage.sides)) return 'Урон не в к5/к10';
   if (w.penetration === null && !propertiesOnly && MELEE_CLASSES.includes(w.weaponClass))

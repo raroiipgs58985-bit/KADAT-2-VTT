@@ -64,6 +64,7 @@ import {
 } from './game/model';
 import { RosterPanel } from './ui/RosterPanel';
 import { modeFor, throwRange } from './game/combatants';
+import { weaponTraits } from './game/arsenal';
 import type { FloorColorId } from './game/map';
 import type { Point } from './game/grid';
 import {
@@ -1273,6 +1274,14 @@ export function App() {
                             ...(form.meleeBase && !form.called
                               ? { meleeBase: form.meleeBase }
                               : {}),
+                            ...(() => {
+                              const a = weaponOf(battle, form.weapon)?.arsenal;
+                              return form.optional &&
+                                a &&
+                                weaponTraits(a).optional.some((t) => t.name === form.optional)
+                                ? { optional: form.optional }
+                                : {};
+                            })(),
                             ...(form.spike &&
                             weaponOf(battle, form.weapon)?.arsenal?.penetrationAlt !== undefined
                               ? { spike: true }

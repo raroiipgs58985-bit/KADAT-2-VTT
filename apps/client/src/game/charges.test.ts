@@ -7,6 +7,7 @@ import {
   fireChargeDestination,
   furiousOpen,
   getEngine,
+  incapacity,
   nextTurn,
   resumeAttack,
   stabilizeTargets,
@@ -222,5 +223,12 @@ describe('Stabilizing a dying ally (ruling 160)', () => {
       fixedDice('100:5'),
     );
     expect(actorStatus(b, 'd').life).toBe('STABILIZED');
+    // Ruling 172: the stabilized character is unconscious and cannot act; a new wound — agony.
+    expect(incapacity(b, 'd')).toMatch(/без сознания/);
+    for (let i = 0; i < 5 && turnInfo(b).active !== 's'; i++) nextTurn(b, fixedDice(''));
+    run(b, cmd({ id: 'again', actor: 's', target: 'd', weapon: 's:0', mode: 'single' }), {
+      roll: (s: number) => (s === 100 ? 20 : 1),
+    });
+    expect(actorStatus(b, 'd').life).toBe('AGONY');
   });
 });

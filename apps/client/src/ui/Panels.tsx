@@ -48,6 +48,7 @@ import {
   type WeaponId,
 } from '../game/model';
 import { fireModes, isThrown, throwRange, weaponKind, weaponProblem } from '../game/combatants';
+import { weaponTraits } from '../game/arsenal';
 
 type TurnInfo = ReturnType<typeof TurnInfoFn>;
 
@@ -371,6 +372,8 @@ export interface AttackForm {
   technique?: 'grapple' | 'stun' | 'knockdown' | '';
   /** War hammer: strike with the spike (ruling 166). */
   spike?: boolean;
+  /** «Опционально»: the optional property activated for the Free Action (ruling 173). */
+  optional?: string;
 }
 
 export function AttackPanel(props: {
@@ -431,7 +434,9 @@ export function AttackPanel(props: {
     !!handHeld &&
     oneHandedWeapon(props.battle, weapon.id) &&
     oneHandedWeapon(props.battle, handHeld.id);
-  const lineProblem = form.target ? attackLineProblem(props.battle, attacker, form.target) : null;
+  const lineProblem = form.target
+    ? attackLineProblem(props.battle, attacker, form.target, weapon?.id)
+    : null;
   const modeName: Record<FireMode, string> = {
     single: 'Одиночный',
     'short-burst': 'Короткая очередь',
@@ -668,6 +673,34 @@ export function AttackPanel(props: {
         <p className="muted small">В этом ходу атака уже была: движок разрешает одну атаку.</p>
       )}
       {lineProblem && <p className="weapon-note badge-blocked">{lineProblem}</p>}
+      {weapon?.arsenal &&
+        (() => {
+          const opts = weaponTraits(weapon.arsenal).optional.filter(
+            (t) => !(weapon.arsenal!.penetrationAlt !== undefined && t.name === 'Калечащее'),
+          );
+          if (!opts.length) return null;
+          return (
+            <label>
+              Опциональное свойство (СД)
+              <select
+                value={form.optional ?? ''}
+                onChange={(e) => {
+                  const rest = { ...form };
+                  delete rest.optional;
+                  props.onChange(e.target.value ? { ...rest, optional: e.target.value } : rest);
+                }}
+              >
+                <option value="">— не включать —</option>
+                {opts.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.name}
+                    {t.value !== undefined ? ` (${t.value})` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          );
+        })()}
       {weapon?.arsenal?.penetrationAlt !== undefined && (
         <label>
           Сторона молота
