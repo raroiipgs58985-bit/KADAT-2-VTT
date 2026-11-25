@@ -260,10 +260,26 @@ export function describeEntry(
         'short-burst': 'Короткая очередь',
         'full-auto': 'Длинная очередь',
       };
+      const storm = (
+        a.result as {
+          hurricane?: { path: { actor: string; won: boolean }[]; target: string };
+        }
+      ).hurricane;
+      const stormText = storm
+        ? `Ураганный натиск: ${storm.path
+            .map((x) => `${name(x.actor)} — ${x.won ? 'сбит с ног' : 'устоял, натиск остановлен'}`)
+            .join(
+              '; ',
+            )}. ${storm.target !== a.command.target ? `Удар по ${name(storm.target)}. ` : ''}`
+        : '';
       const fire =
-        r?.mode && r.shotsFired
+        ((a.result as { fireCharge?: boolean }).fireCharge
+          ? 'Огненный натиск: бег, затем длинная очередь НС+0. '
+          : '') +
+        stormText +
+        (r?.mode && r.shotsFired
           ? `${modeName[r.mode] ?? r.mode}: выстрелов ${r.shotsFired}, зарядов ${r.ammoSpent}, попаданий ${r.hitsGenerated}. `
-          : '';
+          : '');
       const manual = [...new Set(hits.flatMap((h) => h.manual ?? []))];
       const effectText = hits
         .flatMap((h) => h.effects ?? [])
@@ -308,7 +324,9 @@ export function describeEntry(
       const summary0 = hits.length
         ? `${fire}${react}${hits
             .map((h) => `${locationName(h.location)} — урон ${h.finalDamage}`)
-            .join('; ')}. ${name(a.command.target)}: ${a.hp[a.command.target]}${
+            .join(
+              '; ',
+            )}. ${name(storm?.target ?? a.command.target)}: ${a.hp[storm?.target ?? a.command.target]}${
             a.maxHp ? `/${a.maxHp}` : ''
           } ран.${effectText ? ` ${effectText}.` : ''}${manual.length ? ` Ведущему применить: ${manual.join(', ')}.` : ''}`
         : reaction && reaction.cancelledHits > 0
@@ -525,7 +543,9 @@ export function describeEntry(
                   ? `Броня (${String(d.zone)}): ${c.type === 'clean-armour' ? 'очищена' : 'сброшена, эта зона без защиты'} — коррозия остановлена (${String(d.cost)} ОД).`
                   : c.type === 'break-free'
                     ? `Тест ${String(d.characteristic)}${d.modifier ? ` ${String(d.modifier)}` : ''}: ${d.freed ? 'вырвался, путы сброшены.' : 'не вырвался, всё ещё опутан.'} Потрачен весь ход (2 ОД).`
-                    : '';
+                    : c.type === 'stabilize'
+                      ? `${name(String(d.target))}: Медика −30 — ${d.stabilized ? `агония остановлена (стабилизирован на ${String(d.hours)} ч).` : 'не удалось, агония продолжается.'} Потрачен весь ход (2 ОД).`
+                      : '';
       return {
         ...base,
         title: `${name(c.actor)}: ${String(d.name)}`,

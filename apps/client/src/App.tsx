@@ -42,6 +42,7 @@ import {
   looseWeapons,
   activeTrails,
   activeSmokes,
+  furiousOpen,
   grappleAction,
   placePush,
   pendingPush,
@@ -1124,6 +1125,22 @@ export function App() {
                         ),
                       )
                     }
+                    onStabilize={(target, medKit, modifier) =>
+                      run((b) =>
+                        turnAction(
+                          b,
+                          {
+                            id: commandId('stabilize'),
+                            actor: info.active,
+                            type: 'stabilize',
+                            target,
+                            medKit,
+                            ...(modifier !== undefined ? { modifier } : {}),
+                          },
+                          source(),
+                        ),
+                      )
+                    }
                     onAction={(type, weapon, characteristic, zone) =>
                       run((b) =>
                         turnAction(
@@ -1201,6 +1218,30 @@ export function App() {
                         braceWeapon(b, { id: commandId('brace'), actor: info.active, weapon: id }),
                       )
                     }
+                    onFurious={(() => {
+                      const open = furiousOpen(battle, info.active);
+                      return open
+                        ? () =>
+                            run((b) =>
+                              attack(
+                                b,
+                                {
+                                  id: commandId('furious'),
+                                  actor: info.active,
+                                  target: form.target,
+                                  weapon: form.weapon,
+                                  targetActivity: form.activity,
+                                  meleeBase: 'reckless',
+                                  furious: open.id,
+                                  ...(open.modifier !== undefined
+                                    ? { modifier: open.modifier }
+                                    : {}),
+                                },
+                                source(),
+                              ),
+                            )
+                        : undefined;
+                    })()}
                     onAttack={() =>
                       run((b) =>
                         attack(

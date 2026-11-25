@@ -7,6 +7,7 @@ import { battleWeapons, combatant, fpOf, type ActorId, type Battle } from '../ga
 const lifeLabel: Record<string, string> = {
   ALIVE: 'В строю',
   AGONY: 'Агония',
+  STABILIZED: 'Стабилизирован',
   DEAD: 'Мёртв',
 };
 const postureLabel = { standing: 'стоит', kneeling: 'на колене', prone: 'лёжа' } as const;

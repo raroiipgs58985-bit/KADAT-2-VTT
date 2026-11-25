@@ -5,6 +5,10 @@ import {
   weaponSupport,
   attackLineProblem,
   weaponState,
+  weaponSpares,
+  stabilizeTargets,
+  medicaBonus,
+  fireChargeDestination,
   weaponInHand,
   weaponDropped,
   weaponHanging,
@@ -386,6 +390,8 @@ export function AttackPanel(props: {
   onDisarm?: (weaponId: string) => void;
   /** «Натиск» to the cell next to the target (2 ОД). */
   onCharge?: (at: { x: number; y: number }) => void;
+  /** «Неистовый натиск»: the extra reckless attack for the reaction (ruling 157). */
+  onFurious?: (() => void) | undefined;
   /** Thrown weapon: pick the cell on the map (ruling 154). */
   onThrowPick?: () => void;
   throwPicking?: boolean;
@@ -553,6 +559,18 @@ export function AttackPanel(props: {
             </button>
           );
         })()}
+      {props.onCharge &&
+        weapon?.arsenal &&
+        weaponKind(weapon.arsenal) === 'ranged' &&
+        form.target &&
+        (() => {
+          const at = fireChargeDestination(props.battle, attacker, form.target, weapon.id);
+          return at ? (
+            <button type="button" disabled={!props.canAct} onClick={() => props.onCharge!(at)}>
+              Огненный натиск: бег и длинная очередь НС+0 (2 ОД)
+            </button>
+          ) : null;
+        })()}
       {props.onDisarm &&
         disarmOptions(props.battle, attacker, form.target).map((w) => (
           <button
@@ -643,6 +661,11 @@ export function AttackPanel(props: {
         <p className="muted small">В этом ходу атака уже была: движок разрешает одну атаку.</p>
       )}
       {lineProblem && <p className="weapon-note badge-blocked">{lineProblem}</p>}
+      {props.onFurious && (
+        <button type="button" onClick={props.onFurious} disabled={!props.canAct}>
+          Доп. безоглядная атака — Неистовый натиск (реакция)
+        </button>
+      )}
       {weapon && isThrown(weapon.arsenal) && props.onThrowPick && (
         <div className="weapon-note">
           <p className="small">
@@ -682,6 +705,48 @@ export function AttackPanel(props: {
   );
 }
 
+/** «Стабилизировать» (ruling 160): the GM confirms the kit and, without «Медика», the penalty. */
+function Stabilize(props: {
+  name: string;
+  medica: number | null;
+  disabled: boolean;
+  onGo: (medKit: boolean, modifier?: number) => void;
+}) {
+  const [kit, setKit] = useState(false);
+  const [mod, setMod] = useState(0);
+  return (
+    <div className="weapon-note badge-partial">
+      <p>
+        {props.name} в агонии рядом. Стабилизировать — весь ход (2 ОД), тест Медики −30
+        {props.medica === null ? ' (навыка «Медика» нет — штраф задаёт ведущий)' : ''}.
+      </p>
+      <div className="row">
+        <label className="check small">
+          <input type="checkbox" checked={kit} onChange={(e) => setKit(e.target.checked)} />
+          есть медицинский набор
+        </label>
+        <label className="small">
+          {props.medica === null ? 'штраф ведущего' : 'модификатор ведущего'}{' '}
+          <input
+            type="number"
+            step={10}
+            value={mod}
+            style={{ width: '5em' }}
+            onChange={(e) => setMod(Math.round(Number(e.target.value) || 0))}
+          />
+        </label>
+        <button
+          type="button"
+          disabled={props.disabled || !kit}
+          onClick={() => props.onGo(kit, props.medica === null || mod ? mod : undefined)}
+        >
+          Стабилизировать
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Actions of the turn besides moving and attacking: aiming, waiting, reloading and clearing a
  * jam (Core costs: «Бой» A53–A59).
@@ -704,6 +769,8 @@ export function ActionsPanel(props: {
   /** «Первоклассный стрелок»: an aim as the Free Action, once a fight. */
   onFreeAim?: (type: 'quick-aim' | 'careful-aim') => void;
   onGrapple?: (type: GrappleActionType) => void;
+  /** «Стабилизировать» an ally in agony next to the actor (ruling 160). */
+  onStabilize?: (target: ActorId, medKit: boolean, modifier?: number) => void;
 }) {
   const all = battleWeapons(props.battle, props.actor).filter(
     (w) => w.arsenal && !weaponProblem(w.arsenal),
@@ -751,6 +818,16 @@ export function ActionsPanel(props: {
           </div>
         </div>
       )}
+      {props.onStabilize &&
+        stabilizeTargets(props.battle, props.actor).map((t) => (
+          <Stabilize
+            key={t}
+            name={actorName(props.battle, t)}
+            medica={medicaBonus(props.battle, props.actor)}
+            disabled={!props.canAct || od < 2}
+            onGo={(medKit, modifier) => props.onStabilize!(t, medKit, modifier)}
+          />
+        ))}
       {firstClass && props.onFreeAim && (
         <div className="row">
           {(['quick-aim', 'careful-aim'] as const).map((t) => (
@@ -897,6 +974,12 @@ export function ActionsPanel(props: {
               <span className="muted small">
                 {' '}
                 · магазин {st.rounds} / {w.capacity}
+                {(() => {
+                  const sp = weaponSpares(props.battle, w.id);
+                  return sp
+                    ? ` · запасных ${sp.filter((x) => x > 0).length}${sp.some((x) => x > 0 && x < (w.capacity ?? 0)) ? ` (${sp.join(', ')})` : ''}`
+                    : '';
+                })()}
                 {st.jammed ? ' · заклинило' : ''}
                 {st.reloading ? ` · перезарядка ${st.reloading}` : ''}
               </span>
@@ -904,7 +987,12 @@ export function ActionsPanel(props: {
             <div className="row">
               <button
                 type="button"
-                disabled={!props.canAct || od < 1 || st.rounds === w.capacity}
+                disabled={
+                  !props.canAct ||
+                  od < 1 ||
+                  st.rounds === w.capacity ||
+                  (!st.reloading && (weaponSpares(props.battle, w.id) ?? [1]).every((x) => x <= 0))
+                }
                 onClick={() => props.onAction('reload', w.id)}
               >
                 Перезарядить{' '}
@@ -924,8 +1012,8 @@ export function ActionsPanel(props: {
         );
       })}
       <p className="muted small">
-        Прицеливание даёт бонус следующему выстрелу этого хода. Запасные магазины пока не считаются:
-        перезарядка ставит полный.
+        Прицеливание даёт бонус следующему выстрелу этого хода. Запасные магазины считаются, если их
+        число задано в редакторе; иначе перезарядка ставит полный.
       </p>
     </div>
   );

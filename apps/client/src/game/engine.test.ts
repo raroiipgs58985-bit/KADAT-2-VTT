@@ -19,6 +19,7 @@ import {
   resumeAttack,
   turnAction,
   weaponState,
+  weaponSpares,
   takeWeapon,
   dropWeapon,
   weaponInHand,
@@ -1251,6 +1252,29 @@ describe('Turn actions', () => {
     });
     expect(b.ammo['kelus-drakar:0']).toBe(60);
     expect(turnInfo(b).od).toBe(0);
+  });
+  it('spare magazines are counted: the removed magazine keeps its rounds (ruling 156)', () => {
+    const withSpares = (n: number) =>
+      started((b) => {
+        const c = b.roster['kelus-drakar']!.character as unknown as { weapons: object[] };
+        c.weapons = c.weapons.map((w, i) => (i === 0 ? { ...w, spares: n } : w));
+      });
+    const b = withSpares(1);
+    expect(weaponSpares(b, 'kelus-drakar:0')).toEqual([60]);
+    attack(b, shot({ id: 's1' }), fixedDice('100:90'));
+    turnAction(b, { id: 'r1', actor: 'kelus-drakar', type: 'reload', weapon: 'kelus-drakar:0' });
+    expect(b.ammo['kelus-drakar:0']).toBe(60);
+    expect(weaponSpares(b, 'kelus-drakar:0')).toEqual([53]);
+    const none = withSpares(0);
+    attack(none, shot({ id: 's1' }), fixedDice('100:90'));
+    expect(() =>
+      turnAction(none, {
+        id: 'r1',
+        actor: 'kelus-drakar',
+        type: 'reload',
+        weapon: 'kelus-drakar:0',
+      }),
+    ).toThrow(/Нет запасных/);
   });
   it('without the talent a 2-ОД reload started with 1 ОД left continues next turn', async () => {
     const { matchWeaponByName } = await import('./arsenal');

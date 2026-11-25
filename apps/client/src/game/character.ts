@@ -54,6 +54,8 @@ export interface CharacterDocument {
     readonly sling?: boolean;
     /** How many are carried (grenades and other thrown items, ruling 154); absent — 1. */
     readonly count?: number;
+    /** Spare magazines carried (ruling 156); absent — not tracked, every reload is full. */
+    readonly spares?: number;
   }[];
   /** Armour items from the Arsenal (v2); `armour` above holds the ОБ used in combat. */
   readonly armourItems: readonly { readonly name: string; readonly ref: string | null }[];
@@ -169,7 +171,11 @@ export function characterProblems(c: CharacterDocument): string[] {
         !w.name.trim() ||
         !(w.ref === null || text(w.ref, L.maxItemText)) ||
         !(w.sling === undefined || typeof w.sling === 'boolean') ||
-        !(w.count === undefined || (Number.isInteger(w.count) && w.count >= 0 && w.count <= 99)),
+        !(w.count === undefined || (Number.isInteger(w.count) && w.count >= 0 && w.count <= 99)) ||
+        !(
+          w.spares === undefined ||
+          (Number.isInteger(w.spares) && w.spares >= 0 && w.spares <= 99)
+        ),
     )
   )
     p.push('Оружие: до 80 записей');

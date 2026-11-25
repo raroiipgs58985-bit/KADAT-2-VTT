@@ -81,6 +81,7 @@ import {
   resolveRangedAttack,
   resolveWoundAwareAction,
   resolveWoundRoundEnd,
+  resolveStabilization,
   resolveWoundTurnStart,
   resolveSuppression,
   resolveSuppressionTurnStart,
@@ -211,6 +212,10 @@ export interface EngineState {
   >;
   /** Smoke clouds (ruling 146): −20 to НС in, from or through them. */
   smokes?: { id: string; x: number; y: number; r: number; untilRound: number }[];
+  /** «Неистовый натиск»: the successful reckless attack of the actor this turn (ruling 157). */
+  furious?: Record<string, { id: string; turn: number; modifier?: number }>;
+  /** Rounds in each spare magazine by weapon (ruling 156); absent — the starting spares. */
+  spares?: Record<string, number[]>;
   /** «След» zones (ruling 149): half damage to those inside at their turn start or entering. */
   trails?: Trail[];
   /** ОБ lost by cover (ruling 142): obstacle or wall id → loss. */
@@ -258,10 +263,17 @@ export interface AttackCommand {
    */
   counter?: string;
   /**
+   * «Неистовый натиск» (ruling 157): one more reckless attack for the reaction after the
+   * successful reckless attack with this ID, with all its bonuses and penalties.
+   */
+  furious?: string;
+  /**
    * Two weapons (ruling 105): the weapon in the other hand strikes or shoots as a second attack
    * of the same action. Without «Парное оружие» each attack has −30 («Амбидекстрия»: −20).
    */
   second?: WeaponId;
+  /** Internal: «Огненный натиск» — the run is done, the long burst is fired from `charge`. */
+  fireCharge?: boolean;
   /** Internal: this attack is the follow-up of the two-weapon attack with this primary ID. */
   dualPrimary?: string;
   /** Internal: the other weapon of the two-weapon attack. */
@@ -2156,6 +2168,7 @@ export function attackWeapon(b: Battle, weaponId: WeaponId): BattleWeapon | null
     capacity: null,
     sling: false,
     count: 1,
+    spares: null,
   };
 }
 /**
@@ -2659,6 +2672,25 @@ function scatterPoint(
     distance,
   };
 }
+/**
+ * Rounds in each spare magazine of the weapon (ruling 156); null — spares are not tracked.
+ */
+export function sparesOf(b: Battle, state: EngineState, weaponId: string): number[] | null {
+  if (state.spares?.[weaponId]) return state.spares[weaponId]!;
+  const w = weaponOf(b, weaponId);
+  if (!w || w.spares === null || !w.arsenal?.magazine) return null;
+  return Array.from({ length: w.spares }, () => w.arsenal!.magazine!);
+}
+/** Spare magazines of a battle weapon for the UI. */
+export const weaponSpares = (b: Battle, weaponId: string) => sparesOf(b, getEngine(b), weaponId);
+/** «Неистовый натиск»: the reckless attack that opens the extra attack now, or null. */
+export function furiousOpen(b: Battle, id: ActorId) {
+  const state = getEngine(b);
+  const open = state.furious?.[id];
+  const session = state.wounds.combat.session;
+  const entry = session.initiativeOrder.find((e) => e.actor.actorId === id);
+  return open && open.turn === session.turnsStarted && entry?.reactions.remaining ? open : null;
+}
 /** Smoke clouds still hanging (ruling 146). */
 export function activeSmokes(b: Battle, state = getEngine(b)) {
   const round = state.wounds.combat.session.roundNumber;
@@ -2997,7 +3029,103 @@ function weaponFamily(w: ArsenalWeapon, traits: readonly WeaponTraitReference[])
         ? 'plasma'
         : 'other';
 }
+/**
+ * Why «Огненный натиск» to `at` is impossible (ruling 159): the talent, a ranged weapon with a
+ * long burst, the target out of melee reach after a run (no free cell next to it within
+ * 3 × СКР), the straight path free, at most 3 × СКР, the cell free.
+ */
+export function fireChargeProblem(
+  b: Battle,
+  actor: ActorId,
+  target: ActorId,
+  weapon: WeaponId,
+  at: { x: number; y: number },
+): string | null {
+  if (!canonicalTalents(combatant(b, actor).character.talents).includes('Огненный натиск'))
+    return 'Нужен талант «Огненный натиск»';
+  const w = weaponOf(b, weapon)?.arsenal ?? null;
+  if (!w || weaponProblem(w) || weaponKind(w) !== 'ranged' || !w.rof?.long)
+    return 'Огненный натиск — стрелковым оружием с длинной очередью';
+  if (chargeDestination(b, actor, target))
+    return 'До цели можно добежать — это обычный натиск с ударом';
+  const from = posOf(b, actor);
+  const skr = getEngine(b).wounds.combat.actors[actor]?.movement ?? 0;
+  if (Math.hypot(at.x - from.x, at.y - from.y) > skr * 3 + 1e-9)
+    return `Натиск — не дальше 3 × СКР (${skr * 3} м)`;
+  const place = placementProblemFor(b, actor, at);
+  if (place) return place;
+  const wall = sightLineBlocker(from, at, sceneGeometry(b));
+  if (wall) return `Путь натиска перекрыт: ${wall.label}`;
+  return null;
+}
+/** «Огненный натиск»: the farthest free cell toward the target within 3 × СКР, or null. */
+export function fireChargeDestination(
+  b: Battle,
+  actor: ActorId,
+  target: ActorId,
+  weapon: WeaponId,
+) {
+  const from = posOf(b, actor),
+    to = posOf(b, target);
+  const skr = getEngine(b).wounds.combat.actors[actor]?.movement ?? 0;
+  const len = Math.hypot(to.x - from.x, to.y - from.y) || 1;
+  for (let d = Math.floor(skr * 3); d >= 1; d--) {
+    const at = {
+      x: Math.floor(from.x + ((to.x - from.x) / len) * d) + 0.5,
+      y: Math.floor(from.y + ((to.y - from.y) / len) * d) + 0.5,
+    };
+    if (!fireChargeProblem(b, actor, target, weapon, at)) return at;
+  }
+  return null;
+}
+/**
+ * «Огненный натиск» (ruling 159): 2 ОД in all — the run, then a long burst from the new place
+ * with НС+0 (no long-burst penalty). Other attacks go straight to `resolveAttack`.
+ */
 function resolve(
+  state: EngineState,
+  b: Battle,
+  command: AttackCommand,
+  rng: DiceSource,
+  logs: unknown[],
+) {
+  const w = command.charge ? (attackWeapon(b, command.weapon)?.arsenal ?? null) : null;
+  if (!command.charge || !w || weaponProblem(w) || weaponKind(w) !== 'ranged')
+    return resolveAttack(state, b, command, rng, logs);
+  const problem = fireChargeProblem(
+    b,
+    command.actor,
+    command.target,
+    command.weapon,
+    command.charge,
+  );
+  if (problem) throw new Error(problem);
+  const od = state.wounds.combat.session.turn?.od ?? 0;
+  if (od < 2) throw new Error('Огненный натиск — 2 ОД');
+  const old = b.positions[command.actor]!;
+  b.positions[command.actor] = { ...command.charge };
+  try {
+    const result = resolveAttack(
+      state,
+      b,
+      { ...command, mode: 'full-auto', fireCharge: true },
+      rng,
+      logs,
+    );
+    const session = state.wounds.combat.session;
+    state.wounds = {
+      ...state.wounds,
+      combat: {
+        ...state.wounds.combat,
+        session: { ...session, turn: { ...session.turn!, od: Math.max(0, od - 2) } },
+      },
+    };
+    return { ...result, fireCharge: true };
+  } finally {
+    b.positions[command.actor] = old;
+  }
+}
+function resolveAttack(
   state: EngineState,
   b: Battle,
   command: AttackCommand,
@@ -3035,9 +3163,96 @@ function resolve(
       throw new Error('Контратака — только по тому, кто атаковал');
   } else if (state.wounds.combat.session.activeActor?.actorId !== command.actor)
     throw new Error('Сейчас ход другого персонажа');
+  // «Неистовый натиск» (ruling 157): the extra attack spends the reaction, not ОД, and is not
+  // the turn's attack; the core sees it as an ordinary reckless attack.
+  let furiousTurn: NonNullable<CombatSession['turn']> | null = null;
+  if (command.furious) {
+    const talents = canonicalTalents(combatant(b, command.actor).character.talents);
+    const entry = state.wounds.combat.session.initiativeOrder.find(
+      (e) => e.actor.actorId === command.actor,
+    );
+    if (!talents.includes('Неистовый натиск')) throw new Error('Нужен талант «Неистовый натиск»');
+    const open = state.furious?.[command.actor];
+    if (open?.id !== command.furious || open.turn !== state.wounds.combat.session.turnsStarted)
+      throw new Error('Доп. атака — только сразу после успешной безоглядной атаки (решение 157)');
+    if (!entry?.reactions.remaining) throw new Error('Реакция уже потрачена');
+    if (command.meleeBase !== 'reckless') throw new Error('Доп. атака — тоже безоглядная');
+    const turn = state.wounds.combat.session.turn!;
+    furiousTurn = turn;
+    state.wounds = {
+      ...state.wounds,
+      combat: {
+        ...state.wounds.combat,
+        session: {
+          ...state.wounds.combat.session,
+          turn: {
+            ...turn,
+            od: Math.max(turn.od, 1),
+            flags: turn.flags.filter((f) => !f.startsWith('attack:')),
+          },
+        },
+      },
+    };
+  }
   if (state.wounds.actors[command.actor]!.life.status !== 'ALIVE')
     throw new ContextRequired('Действия в агонии и после смерти не разрешаются.');
   const from = posOf(b, command.actor)!;
+  // «Ураганный натиск» (ruling 158): opposed СЛ against everyone on the way, in order. A loser is
+  // knocked down; when the charger loses, the charge ends at that character and strikes it.
+  const hurricane: { actor: ActorId; won: boolean; opposed: unknown }[] = [];
+  if (
+    command.charge &&
+    !chargeProblem(b, command.actor, command.target, command.charge) &&
+    canonicalTalents(combatant(b, command.actor).character.talents).includes('Ураганный натиск')
+  ) {
+    const end = command.charge;
+    const dx = end.x - from.x,
+      dy = end.y - from.y;
+    const len2 = dx * dx + dy * dy || 1;
+    const onWay = actorIds(b)
+      .filter(
+        (id) =>
+          id !== command.actor &&
+          id !== command.target &&
+          state.wounds.actors[id]?.life.status === 'ALIVE',
+      )
+      .map((id) => {
+        const p = posOf(b, id);
+        const t = ((p.x - from.x) * dx + (p.y - from.y) * dy) / len2;
+        const near = Math.hypot(from.x + t * dx - p.x, from.y + t * dy - p.y);
+        return { id, t, near };
+      })
+      .filter((x) => x.t > 0 && x.t <= 1 && x.near <= 0.75)
+      .sort((x, y) => x.t - y.t);
+    for (const { id } of onWay) {
+      const opposed = opposedMeleeCheck(
+        state.wounds.combat,
+        ref(command.actor),
+        ref(id),
+        'СЛ',
+        context(state.wounds.combat, command.actor, id),
+        context(state.wounds.combat, id, command.actor),
+        rng,
+      ).result;
+      const won = opposed.winner?.actorId === command.actor;
+      hurricane.push({ actor: id, won, opposed });
+      if (won) {
+        const runtime = state.wounds.combat.actors[id]!;
+        state.wounds = {
+          ...state.wounds,
+          combat: {
+            ...state.wounds.combat,
+            actors: { ...state.wounds.combat.actors, [id]: { ...runtime, posture: 'prone' } },
+          },
+        };
+        continue;
+      }
+      const stop = chargeDestination(b, command.actor, id);
+      if (!stop) throw new Error('Натиск остановлен, но рядом с целью нет места');
+      command = { ...command, target: id, charge: stop };
+      break;
+    }
+  }
   const p = command.charge ?? from,
     q = posOf(b, command.target)!,
     distance = Math.hypot(p.x - q.x, p.y - q.y);
@@ -3045,7 +3260,9 @@ function resolve(
     ? Math.hypot(command.charge.x - from.x, command.charge.y - from.y)
     : 0;
   if (command.charge) {
-    const problem = chargeProblem(b, command.actor, command.target, command.charge);
+    const problem = command.fireCharge
+      ? null
+      : chargeProblem(b, command.actor, command.target, command.charge);
     if (problem) throw new Error(problem);
   }
   let ctx = context(state.wounds.combat, command.actor, command.target);
@@ -3272,7 +3489,29 @@ function resolve(
         ...(kind === 'ranged' && arsenalWeapon.weaponClass === 'ОС' ? { oneHanded: true } : {}),
       }
     : {};
-  if (command.charge && kind !== 'melee') throw new Error('Натиск — только с оружием ближнего боя');
+  if (command.charge && kind !== 'melee' && !command.fireCharge)
+    throw new Error('Натиск — только с оружием ближнего боя');
+  // «Огненный натиск»: the long burst is tested with НС+0 — the mode penalty is cancelled.
+  if (command.fireCharge) {
+    const template = state.wounds.combat.weapons[command.weapon]!.template.profile;
+    const modePenalty =
+      template.modeModifiers?.['full-auto'] ?? (template.classification === 'kinetic' ? -10 : 0);
+    if (modePenalty) {
+      const src = { kind: 'talent', id: 'Огненный натиск' };
+      ctx = {
+        ...ctx,
+        modifiers: [
+          ...ctx.modifiers,
+          {
+            id: `${command.id}:fire-charge`,
+            value: -modePenalty,
+            source: src,
+            provenance: { source: src, reason: 'Огненный натиск: длинная очередь НС+0' },
+          },
+        ],
+      };
+    }
+  }
   // Smoke (ruling 146): −20 to a shot in, from or through a cloud.
   if (
     kind === 'ranged' &&
@@ -3737,6 +3976,51 @@ function resolve(
     state.wounds = resolved.state;
     logs.push(resolved.projectionLog, ...resolved.resolution.logs);
     const target = resolved.resolution.result.targets[0]!;
+    // «Неистовый натиск» (ruling 157): a successful reckless attack opens one extra attack;
+    // the extra attack returns the turn's ОД and spends the reaction.
+    if (furiousTurn) {
+      const session = state.wounds.combat.session;
+      state.wounds = {
+        ...state.wounds,
+        combat: {
+          ...state.wounds.combat,
+          session: {
+            ...session,
+            turn: {
+              ...session.turn!,
+              od: furiousTurn.od,
+              flags: [...new Set([...furiousTurn.flags, ...session.turn!.flags])],
+              reactions: {
+                ...session.turn!.reactions,
+                remaining: session.turn!.reactions.remaining - 1,
+              },
+            },
+            initiativeOrder: session.initiativeOrder.map((e) =>
+              e.actor.actorId === command.actor
+                ? { ...e, reactions: { ...e.reactions, remaining: e.reactions.remaining - 1 } }
+                : e,
+            ),
+          },
+        },
+      };
+    }
+    const rest = { ...state.furious };
+    delete rest[command.actor];
+    state.furious =
+      command.meleeBase === 'reckless' &&
+      !command.furious &&
+      !command.counter &&
+      target.hit &&
+      canonicalTalents(combatant(b, command.actor).character.talents).includes('Неистовый натиск')
+        ? {
+            ...rest,
+            [command.actor]: {
+              id: command.id,
+              turn: state.wounds.combat.session.turnsStarted,
+              ...(command.modifier !== undefined ? { modifier: command.modifier } : {}),
+            },
+          }
+        : rest;
     attack = target.check;
     degrees = target.check.totalDegrees;
     if (target.hit) {
@@ -3803,6 +4087,9 @@ function resolve(
     ...(thrown ? { thrown } : {}),
     ...(blasts ? { blasts } : {}),
     ...(stunned ? { stunned } : {}),
+    ...(hurricane.length
+      ? { hurricane: { path: hurricane, target: command.target, at: command.charge! } }
+      : {}),
     ...(command.technique === 'grapple' &&
     state.wounds.combat.melee?.grapples.some(
       (g) => g.controller.actorId === command.actor && g.victim.actorId === command.target,
@@ -3901,7 +4188,10 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
     const first = resolve(next, b, command, rng, logs);
     // «Натиск»: the token ends next to the target; the move counts for this turn.
     if (command.charge) {
-      b.positions[command.actor] = { x: command.charge.x, y: command.charge.y };
+      // «Ураганный натиск» stopped on the way: the token ends next to that character.
+      const end =
+        (first as { hurricane?: { at: { x: number; y: number } } }).hurricane?.at ?? command.charge;
+      b.positions[command.actor] = { x: end.x, y: end.y };
       next.moves.push({
         turn: next.wounds.combat.session.turnsStarted,
         actor: command.actor,
@@ -4667,7 +4957,8 @@ export type TurnActionType =
   | 'clear-malfunction'
   | 'break-free'
   | 'clean-armour'
-  | 'drop-armour';
+  | 'drop-armour'
+  | 'stabilize';
 export interface TurnActionCommand {
   id: string;
   actor: ActorId;
@@ -4680,6 +4971,12 @@ export interface TurnActionCommand {
   zone?: Zone;
   /** «Первоклассный стрелок»: the aim as the Free Action, once a fight (ruling 134). */
   free?: boolean;
+  /** «Стабилизировать»: the ally in agony next to the actor (ruling 160). */
+  target?: ActorId;
+  /** «Стабилизировать»: the GM confirms the actor has a medical kit. */
+  medKit?: boolean;
+  /** «Стабилизировать»: GM modifier (without «Медика» the GM sets the penalty). */
+  modifier?: number;
 }
 const turnActionName: Record<TurnActionType, string> = {
   'quick-aim': 'Быстрое прицеливание',
@@ -4690,7 +4987,23 @@ const turnActionName: Record<TurnActionType, string> = {
   'break-free': 'Вырваться из пут',
   'clean-armour': 'Очистить броню',
   'drop-armour': 'Сбросить броню',
+  stabilize: 'Стабилизировать',
 };
+/** Characters in agony next to the actor that it may stabilize (ruling 160). */
+export function stabilizeTargets(b: Battle, actor: ActorId): ActorId[] {
+  const state = getEngine(b);
+  const from = posOf(b, actor);
+  return actorIds(b).filter((id) => {
+    if (id === actor || state.wounds.actors[id]?.life.status !== 'AGONY') return false;
+    const p = posOf(b, id);
+    return Math.hypot(p.x - from.x, p.y - from.y) <= 1.5 + 1e-9;
+  });
+}
+/** «Медика» of the character: the skill bonus, or null without the skill. */
+export function medicaBonus(b: Battle, actor: ActorId): number | null {
+  const skill = combatant(b, actor).character.skills.find((x) => /^медика/i.test(x.name.trim()));
+  return skill ? skill.bonus : null;
+}
 /** Corroded armour zones of the actor (rulings 115–117). */
 export function corrodedZones(b: Battle, actorId: ActorId): Zone[] {
   return Object.values(getEngine(b).corrosion ?? {})
@@ -4731,7 +5044,64 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
     };
     let next: CombatActionState;
     let detail: Record<string, unknown> = {};
-    if (command.type === 'reload' || command.type === 'clear-malfunction') {
+    let pendingSpares: { weapon: string; list: number[] } | null = null;
+    let woundActors: EngineState['wounds']['actors'] | null = null;
+    if (command.type === 'stabilize') {
+      // Ruling 160 (with 83): an ally next to the dying, the whole turn (2 ОД), «Медика» −30 with
+      // a medical kit; success stops the agony.
+      const target = command.target;
+      if (!target || !stabilizeTargets(b, command.actor).includes(target))
+        throw new Error('Стабилизировать можно персонажа в агонии в соседней клетке');
+      const turn = combat.session.turn!;
+      if (turn.od < 2) throw new Error('Нужно 2 ОД — весь ход (решение 160)');
+      if (!command.medKit) throw new Error('Без медицинского набора стабилизировать нельзя');
+      const bonus = medicaBonus(b, command.actor);
+      if (bonus === null && command.modifier === undefined)
+        throw new Error('Навыка «Медика» нет — ведущий задаёт штраф');
+      if (command.modifier !== undefined && !Number.isInteger(command.modifier))
+        throw new Error('Модификатор должен быть целым');
+      const ИН = combatant(b, command.actor).character.characteristics.ИН;
+      const gm = { kind: 'gm', id: 'Модификатор ведущего' };
+      const r = resolveStabilization(
+        state.wounds,
+        {
+          id: command.id,
+          actor: ref(command.actor),
+          target: ref(target),
+          medKit: { kind: 'gm', id: 'Медицинский набор' },
+          medica: {
+            baseValue: ИН.value + (bonus ?? 0),
+            finalSuper: ИН.super,
+            provenance: { source: gm, reason: 'Медика (ИН)' },
+          },
+          context: {
+            ...base.context,
+            modifiers: command.modifier
+              ? [
+                  {
+                    id: `${command.id}:gm`,
+                    value: command.modifier,
+                    source: gm,
+                    provenance: { source: gm, reason: 'Модификатор ведущего' },
+                  },
+                ]
+              : [],
+          },
+        },
+        tape,
+      );
+      woundActors = r.state.actors;
+      next = {
+        ...r.state.combat,
+        session: { ...r.state.combat.session, turn: { ...turn, od: 0 } },
+      };
+      detail = {
+        target,
+        stabilized: r.result.durationHours !== null,
+        check: r.result.check,
+        hours: r.result.durationHours,
+      };
+    } else if (command.type === 'reload' || command.type === 'clear-malfunction') {
       const weapon = command.weapon ? combat.weapons[command.weapon] : undefined;
       if (!weapon || weapon.owner.actorId !== command.actor)
         throw new Error('Выберите стрелковое оружие этого персонажа');
@@ -4753,12 +5123,28 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
           ? combat.containers[weapon.loadedContainerId]
           : undefined;
         if (!loaded) throw new Error('У оружия нет магазина');
-        // A fresh full magazine of the same kind (spares are not tracked yet).
         const spareId = weapon.reloadProgress?.containerId ?? `${weapon.id}:mag:${command.id}`;
+        // Ruling 156: the fullest spare goes in, the removed magazine keeps its rounds;
+        // untracked spares — a fresh full magazine.
+        let rounds = loaded.capacity;
+        if (!combat.containers[spareId]) {
+          const spares = sparesOf(b, state, weapon.id);
+          if (spares) {
+            const best = spares.reduce((m, x, i) => (x > spares[m]! ? i : m), 0);
+            if (!spares.length || spares[best]! <= 0)
+              throw new Error('Нет запасных магазинов с патронами (решение 156)');
+            rounds = spares[best]!;
+            const rest = spares.filter((_, i) => i !== best);
+            pendingSpares = {
+              weapon: weapon.id,
+              list: loaded.currentRounds > 0 ? [...rest, loaded.currentRounds] : rest,
+            };
+          }
+        }
         const spare = combat.containers[spareId] ?? {
           ...loaded,
           id: spareId,
-          currentRounds: loaded.capacity,
+          currentRounds: rounds,
         };
         const withSpare = { ...combat, containers: { ...combat.containers, [spareId]: spare } };
         const r = coreReloadWeapon(withSpare, {
@@ -4839,6 +5225,9 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
     const after = structuredClone(state);
     after.wounds = { ...after.wounds, combat: next };
     after.committed.push(command.id);
+    if (pendingSpares)
+      after.spares = { ...after.spares, [pendingSpares.weapon]: pendingSpares.list };
+    if (woundActors) after.wounds = { ...after.wounds, actors: woundActors };
     if (detail.free) after.firstClassUsed = [...(after.firstClassUsed ?? []), String(detail.kind)];
     if ((command.type === 'clean-armour' || command.type === 'drop-armour') && command.zone) {
       const key = `${command.actor}:${command.zone}`;

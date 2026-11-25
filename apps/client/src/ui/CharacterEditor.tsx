@@ -545,21 +545,24 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
           onSling={(i, sling) =>
             set({
               weapons: doc.weapons.map((w, j) =>
-                j === i
-                  ? sling
-                    ? { ...w, sling: true }
-                    : {
-                        name: w.name,
-                        ref: w.ref,
-                        ...(w.count !== undefined ? { count: w.count } : {}),
-                      }
-                  : w,
+                j === i ? withoutKey({ ...w, sling: true }, sling ? null : 'sling') : w,
               ),
             })
           }
           countable={(ref) => (ref ? weaponById(ref)?.weaponClass === 'Метательное' : false)}
           onCount={(i, count) =>
             set({ weapons: doc.weapons.map((w, j) => (j === i ? { ...w, count } : w)) })
+          }
+          magazineFed={(ref) => {
+            const w = ref ? weaponById(ref) : undefined;
+            return !!w && w.weaponClass !== 'Метательное' && (w.magazine ?? 0) > 0;
+          }}
+          onSpares={(i, spares) =>
+            set({
+              weapons: doc.weapons.map((w, j) =>
+                j === i ? (spares === null ? withoutKey(w, 'spares') : { ...w, spares }) : w,
+              ),
+            })
           }
         />
         <ArsenalSearch
@@ -638,11 +641,24 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
     </div>
   );
 }
+/** A copy without the key (null — unchanged). */
+function withoutKey<T extends object>(o: T, key: string | null): T {
+  if (key === null) return o;
+  const copy = { ...o } as Record<string, unknown>;
+  delete copy[key];
+  return copy as T;
+}
 const currentOr = (d: CharacterDocument) => d.movement.options[d.movement.current]?.skr ?? 3;
 
 /** Items chosen from the Arsenal, with their profile line. */
 function ItemList(props: {
-  items: readonly { name: string; ref: string | null; sling?: boolean; count?: number }[];
+  items: readonly {
+    name: string;
+    ref: string | null;
+    sling?: boolean;
+    count?: number;
+    spares?: number;
+  }[];
   describe: (ref: string | null) => string;
   onRemove: (index: number) => void;
   /** Weapons: «на ремне / цепи» (rulings 81–82). */
@@ -650,6 +666,9 @@ function ItemList(props: {
   /** Thrown items: how many are carried (ruling 154). */
   countable?: (ref: string | null) => boolean;
   onCount?: (index: number, count: number) => void;
+  /** Magazine-fed weapons: spare magazines (ruling 156); null — not tracked. */
+  magazineFed?: (ref: string | null) => boolean;
+  onSpares?: (index: number, spares: number | null) => void;
 }) {
   if (!props.items.length) return <p className="muted small">Пока ничего не выбрано.</p>;
   return (
@@ -685,6 +704,28 @@ function ItemList(props: {
                     )
                   }
                 />
+              </label>
+            )}
+            {props.onSpares && props.magazineFed?.(it.ref) && (
+              <label className="small">
+                запасных магазинов{' '}
+                <input
+                  type="number"
+                  min={0}
+                  max={99}
+                  placeholder="∞"
+                  value={it.spares ?? ''}
+                  style={{ width: '4em' }}
+                  onChange={(e) =>
+                    props.onSpares!(
+                      i,
+                      e.target.value === ''
+                        ? null
+                        : Math.max(0, Math.min(99, Math.round(Number(e.target.value) || 0))),
+                    )
+                  }
+                />
+                <span className="muted"> (пусто — не считать)</span>
               </label>
             )}
           </div>
