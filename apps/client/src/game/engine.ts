@@ -5,6 +5,7 @@ import type {
   CombatActionState,
   CombatSession,
   DamageInput,
+  DiceExpression,
   DiceRoll,
   DiceSource,
   FireMode,
@@ -737,6 +738,29 @@ function applyCrippling(state: EngineState) {
   return { actor: id, wounds: x, agony: logs.length > 0 };
 }
 const sum = (rolls: readonly DiceRoll[]) => rolls.reduce((s, r) => s + r.value, 0);
+/**
+ * The damage roll; an item with no damage in the Arsenal (count 0, ruling 155) rolls nothing and
+ * deals 0 — only its properties act.
+ */
+function damageRoll(
+  expression: DiceExpression,
+  rng: DiceSource,
+  ctx: ResolutionContext,
+): { result: ReturnType<typeof resolveDamageRoll>['result'] } {
+  if (expression.count > 0) return resolveDamageRoll(expression, rng, ctx);
+  return {
+    result: {
+      expression,
+      rolls: [],
+      diceTotal: 0,
+      total: expression.modifier,
+      modifier: expression.modifier,
+      rawDamage: expression.modifier,
+      critical: false,
+      criticalTriggerCountForConsequence: 0,
+    },
+  };
+}
 
 /** Properties the polygon does not apply automatically yet: shown to the GM after the hit. */
 const MANUAL_PROPERTIES = new Set(['Галлюциногенное', 'Частичное опутывание']);
@@ -1061,7 +1085,7 @@ function separateWound(
     penetration: { ...hit.penetration, value: 0 },
     transformations: [],
   };
-  const roll = resolveDamageRoll(expression, rng, hit.context).result;
+  const roll = damageRoll(expression, rng, hit.context).result;
   const damage = resolveProtectionDamage(
     {
       input,
@@ -1176,7 +1200,7 @@ function resolveHit(
       ? { key: `${command.target}:blast`, ob: area.ob, base: area.ob, loss: 0, zone: null }
       : zoneArmour(b, state, command, hit.location);
   setPhase('damage');
-  const roll = preRoll ?? resolveDamageRoll(hit.profile.expression, rng, hit.context).result;
+  const roll = preRoll ?? damageRoll(hit.profile.expression, rng, hit.context).result;
   // «Знаток Цепного оружия»: one more к10 for the damage, the lowest die is dropped (ruling 126).
   let rolled = roll.rolls;
   if (
@@ -1347,19 +1371,28 @@ function resolveHit(
         : []),
     ],
   };
-  const damage = resolveProtectionDamage(
-    {
-      input,
-      state: protectionFor(state, input, ob),
-      endurance,
-      preRolled: roll,
-    },
-    {
-      roll: () => {
-        throw new Error('Unexpected damage reroll');
-      },
-    },
-  );
+  // No damage in the Arsenal (ruling 155): no wound at all, only the properties act.
+  const noDamage = hit.profile.expression.count === 0;
+  if (noDamage) notes.push('Без урона — действуют только свойства');
+  const damage = noDamage
+    ? ({
+        result: { status: 'RESOLVED', finalDamage: 0, bVN: 0 },
+        state: state.protection,
+        logs: [],
+      } as unknown as ReturnType<typeof resolveProtectionDamage>)
+    : resolveProtectionDamage(
+        {
+          input,
+          state: protectionFor(state, input, ob),
+          endurance,
+          preRolled: roll,
+        },
+        {
+          roll: () => {
+            throw new Error('Unexpected damage reroll');
+          },
+        },
+      );
   const manual = traits.filter((t) => MANUAL_PROPERTIES.has(t.name));
   logs.push(
     {
@@ -1384,14 +1417,19 @@ function resolveHit(
   state.protection = damage.state;
   setPhase('consequence');
   // «Калечащий удар / выстрел»: +2 to the critical consequence die (ruling 123).
-  const wound = postDamage(
-    state,
-    damage.result,
-    command,
-    rng,
-    logs,
-    criticalBonus(canonicalTalents(attacker.talents), info.kind === 'melee' ? 'melee' : 'ranged'),
-  );
+  const wound = noDamage
+    ? ({ injuriesCreated: [] } as unknown as ReturnType<typeof postDamage>)
+    : postDamage(
+        state,
+        damage.result,
+        command,
+        rng,
+        logs,
+        criticalBonus(
+          canonicalTalents(attacker.talents),
+          info.kind === 'melee' ? 'melee' : 'ranged',
+        ),
+      );
   setPhase('property');
   // «Деструктор (Х)» (rulings 71, 88): damage above ОБ after ББ — Хк10 as a separate wound,
   // without armour, minus бВН, with its own consequence.
@@ -2052,7 +2090,7 @@ function applyOverheat(
     provenance: [{ source: src, reason: 'Перегрев: урон по профилю, ББ 0' }],
   };
   setPhase('damage');
-  const roll = resolveDamageRoll(template.damage.expression, rng, input.context).result;
+  const roll = damageRoll(template.damage.expression, rng, input.context).result;
   const armour = zoneArmour(b, state, self, location);
   const vn = state.wounds.combat.actors[command.actor]!.characteristics.ВН!;
   const damage = resolveProtectionDamage(
@@ -2220,7 +2258,7 @@ function directDamage(
     provenance: [{ source: src, reason: 'Урон приёма' }],
   };
   setPhase('damage');
-  const roll = resolveDamageRoll(expression, rng, input.context).result;
+  const roll = damageRoll(expression, rng, input.context).result;
   const armour = zoneArmour(b, state, command, location);
   const ob = armourAfterProperties(primitive ? [{ name: 'Примитивное' }] : [], {
     armour: armour.ob,
@@ -2436,7 +2474,7 @@ function trailDamage(
       targetActivity: 'REST',
     };
     setPhase('damage');
-    const roll = resolveDamageRoll(
+    const roll = damageRoll(
       template.damage.expression,
       rng,
       context(state.wounds.combat, t.shooter),
@@ -2533,6 +2571,42 @@ function throwResolve(
     blasts = r;
     landed = r[0]?.at ?? null;
   } else if (!hit) landed = scatterPoint(b, from, aim, info.weaponClass, rng).at;
+  // No blast: a hit on a character acts on it alone (Болас); on a cell — nothing to hit.
+  let struck: unknown = null;
+  if (!blastX && !localX && hit && !command.at && command.target !== command.actor) {
+    const template = weapon.template.profile;
+    const src = { kind: 'weapon', id: command.weapon };
+    const roll = damageRoll(
+      template.damage.expression,
+      rng,
+      context(state.wounds.combat, command.actor),
+    ).result;
+    struck = {
+      actor: command.target,
+      ...resolveHit(
+        b,
+        state,
+        command,
+        {
+          hitId: `${command.id}:throw`,
+          attackId: command.id,
+          attacker: ref(command.actor),
+          target: ref(command.target),
+          location: 'Torso',
+          profile: template.damage,
+          penetration: template.penetration,
+          transformations: [],
+          tags: ['thrown'],
+          context: context(state.wounds.combat, command.actor, command.target),
+          provenance: [{ source: src, reason: 'Бросок' }],
+        },
+        { ...info, degrees: check.totalDegrees },
+        rng,
+        logs,
+        roll,
+      ),
+    };
+  }
   let smoke: unknown = null;
   if (smokeX && landed) {
     // «Дымовое (Х)»: a cloud of radius Х for к10+10 rounds (ruling 146).
@@ -2550,7 +2624,15 @@ function throwResolve(
     ];
     smoke = { at: landed, radius: smokeX, rounds };
   }
-  return { check, hit, aim, landed, ...(blasts ? { blasts } : {}), ...(smoke ? { smoke } : {}) };
+  return {
+    check,
+    hit,
+    aim,
+    landed,
+    ...(blasts ? { blasts } : {}),
+    ...(struck ? { struck } : {}),
+    ...(smoke ? { smoke } : {}),
+  };
 }
 /** A miss: the point scatters by the scheme (ruling 144). */
 function scatterPoint(
@@ -2656,11 +2738,7 @@ function resolveBlasts(
   const out: unknown[] = [];
   for (const [k, at] of points.entries()) {
     setPhase('damage');
-    const roll = resolveDamageRoll(
-      template.damage.expression,
-      rng,
-      context(combat, command.actor),
-    ).result;
+    const roll = damageRoll(template.damage.expression, rng, context(combat, command.actor)).result;
     setPhase('attack');
     const targets: unknown[] = [];
     for (const id of actorIds(b)) {
@@ -2848,11 +2926,7 @@ function sprayResolve(
   });
   setPhase('damage');
   const template = weapon.template.profile;
-  const roll = resolveDamageRoll(
-    template.damage.expression,
-    rng,
-    context(combat, command.actor),
-  ).result;
+  const roll = damageRoll(template.damage.expression, rng, context(combat, command.actor)).result;
   setPhase('attack');
   const targets: unknown[] = [];
   for (const id of inside) {

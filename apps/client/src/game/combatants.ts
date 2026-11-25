@@ -70,17 +70,13 @@ export function throwRange(b: Battle, weaponId: string): number | null {
   const k = w?.arsenal ? thrownMultiplier(w.arsenal) : null;
   return w && k !== null ? k * bonusOf(combatant(b, w.owner).character, 'СЛ') : null;
 }
-const isSmokeOnly = (w: ArsenalWeapon) =>
-  w.properties.some((p) => p.property === 'Дымовое') && !w.damage;
 /** Why an Arsenal weapon cannot be used by the combat engine yet; null — usable. */
 export function weaponProblem(w: ArsenalWeapon | null): string | null {
   if (!w) return 'Оружия нет в Арсенале (решение 76: в бою только оружие Арсенала)';
   if (isThrown(w)) {
     if (thrownMultiplier(w) === null) return 'Дальность броска не прочитана';
-    if (isSmokeOnly(w)) return null;
-    if (!w.damage) return 'В Арсенале нет урона';
-    if (![5, 10].includes(w.damage.sides)) return 'Урон не в к5/к10';
-    if (w.penetration === null) return 'В Арсенале нет ББ';
+    // No damage in the Arsenal («-»): only the properties act; ББ «-» is 0 (ruling 155).
+    if (w.damage && ![5, 10].includes(w.damage.sides)) return 'Урон не в к5/к10';
     return null;
   }
   if (!w.damage) return 'В Арсенале нет урона (зависит от боеприпаса или не указан)';

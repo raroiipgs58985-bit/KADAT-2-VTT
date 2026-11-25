@@ -18,7 +18,7 @@ import type { DiceSource } from '@kadat/contracts';
 import { fixedDice } from './dice';
 import { emptyCharacter } from './character';
 import { arsenal, matchWeaponByName, weaponTraits } from './arsenal';
-import { throwRange } from './combatants';
+import { throwRange, weaponProblem } from './combatants';
 
 const chars = (patch: Partial<Record<'НС' | 'СЛ', number>>) => {
   const base = emptyCharacter('x').characteristics;
@@ -249,5 +249,46 @@ describe('«След» on the way (ruling 152)', () => {
     const before = b.hp.a!;
     moveActor(b, { id: 'mv', actor: 'a', mode: 'full-move', to: { x: 9.5, y: 8.5 } }, dice);
     expect(b.hp.a!).toBeLessThan(before);
+  });
+});
+
+describe('Thrown items without damage (ruling 155)', () => {
+  type Target = {
+    actor: string;
+    finalDamage: number;
+    effects: { property: string; passed: boolean }[];
+    manual: string[];
+  };
+  it('every thrown item of the Arsenal can be thrown; ББ «-» is 0', () => {
+    const thrown = arsenal.weapons.filter((w) => w.weaponClass === 'Метательное');
+    expect(thrown.filter((w) => weaponProblem(w))).toEqual([]);
+    const herbicide = thrown.find((w) => w.name === 'Гербицид')!;
+    expect(herbicide.penetration).toBeNull();
+  });
+  it('a flash-bang does no damage, its properties act on everyone in the blast', () => {
+    const b = scene('Свето-оглушающая');
+    // The throw hits (5), every other test fails (99): nobody leaves the zone.
+    let first = true;
+    const r = run(b, cmd({}), {
+      roll: (s: number) => (s === 100 ? (first ? ((first = false), 5) : 99) : 3),
+    });
+    expect(r.status).toBe('RESOLVED');
+    const t = (r as Thrown).result.thrown as unknown as {
+      blasts: { dice: number[]; targets: Target[] }[];
+    };
+    expect(t.blasts[0]!.dice).toEqual([]);
+    const target = t.blasts[0]!.targets.find((x) => x.actor === 't')!;
+    expect(target.finalDamage).toBe(0);
+    expect(target.effects.map((e) => e.property).sort()).toEqual(['Оглушающее', 'Ослепляющее']);
+  });
+  it('a bolas hit acts on the character alone', () => {
+    const b = scene('Болас');
+    expect(throwRange(b, 'g:0')).toBe(20);
+    const r = run(b, cmd({}), { roll: (s: number) => (s === 100 ? 5 : 3) });
+    const struck = (r as unknown as { result: { thrown: { struck: Target } } }).result.thrown
+      .struck;
+    expect(struck.actor).toBe('t');
+    expect(struck.finalDamage).toBe(0);
+    expect(struck.manual).toContain('Частичное опутывание (0)');
   });
 });

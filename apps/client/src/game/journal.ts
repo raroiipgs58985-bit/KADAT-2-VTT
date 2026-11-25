@@ -2,6 +2,14 @@ import type { DiceRoll } from '@kadat/contracts';
 import type { ActorId, LogEntry } from './model';
 import { moveModes, type MoveCommand, type AttackCommand } from './engine';
 
+type ThrowTarget = {
+  actor: string;
+  avoided: boolean;
+  finalDamage?: number;
+  effects?: { property: string; passed: boolean; state?: string; rounds?: number }[];
+  manual?: string[];
+};
+
 export type JournalTone = 'info' | 'success' | 'warning' | 'author' | 'error';
 export interface JournalLine {
   id: number;
@@ -355,8 +363,9 @@ export function describeEntry(
             blasts?: {
               scatter: { dir: number; distance: number } | null;
               dice: number[];
-              targets: { actor: string; avoided: boolean; finalDamage?: number }[];
+              targets: ThrowTarget[];
             }[];
+            struck?: ThrowTarget;
             smoke?: { radius: number; rounds: number };
           };
         }
@@ -365,29 +374,34 @@ export function describeEntry(
         const at = thrown.landed
           ? ` Упало в (${thrown.landed.x.toFixed(1)}; ${thrown.landed.y.toFixed(1)}).`
           : '';
+        const who = (t: ThrowTarget) => {
+          if (t.avoided) return `${name(t.actor)} — ушёл из зоны`;
+          const fx = [
+            ...(t.effects ?? []).map((e) =>
+              e.passed
+                ? `${e.property}: устоял`
+                : `${e.property}: ${e.state ?? 'да'}${e.rounds ? ` (${e.rounds} р.)` : ''}`,
+            ),
+            ...(t.manual ?? []).map((m) => `${m} — ведущему`),
+          ];
+          return `${name(t.actor)} — ${t.finalDamage ?? 0} ран${fx.length ? ` (${fx.join(', ')})` : ''}`;
+        };
         const boom = (thrown.blasts ?? [])
           .map(
             (x) =>
-              `${x.scatter ? ` Разлёт: направление ${x.scatter.dir}, ${x.scatter.distance} м.` : ''} Урон ${x.dice.join('+')}: ${
-                x.targets.length
-                  ? x.targets
-                      .map((t) =>
-                        t.avoided
-                          ? `${name(t.actor)} — ушёл из зоны`
-                          : `${name(t.actor)} — ${t.finalDamage} ран`,
-                      )
-                      .join('; ')
-                  : 'никого не задело'
+              `${x.scatter ? ` Разлёт: направление ${x.scatter.dir}, ${x.scatter.distance} м.` : ''}${x.dice.length ? ` Урон ${x.dice.join('+')}` : ' Без урона'}: ${
+                x.targets.length ? x.targets.map(who).join('; ') : 'никого не задело'
               }.`,
           )
           .join('');
+        const struck = thrown.struck ? ` ${who(thrown.struck)}.` : '';
         const smoke = thrown.smoke
           ? ` Дым радиусом ${thrown.smoke.radius} м на ${thrown.smoke.rounds} р.`
           : '';
         return {
           ...base,
           title: `${name(a.command.actor)}: бросок (${weapon})`,
-          summary: `${thrown.hit ? 'Точно в цель.' : 'Мимо — отклонение.'}${at}${boom}${smoke}`,
+          summary: `${thrown.hit ? 'Точно в цель.' : 'Мимо — отклонение.'}${at}${boom}${struck}${smoke}`,
           tone: thrown.hit ? 'success' : 'warning',
         };
       }
