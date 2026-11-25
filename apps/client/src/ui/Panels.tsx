@@ -7,6 +7,7 @@ import {
   weaponState,
   weaponSpares,
   stabilizeTargets,
+  partialOf,
   medicaBonus,
   fireChargeDestination,
   weaponInHand,
@@ -818,6 +819,27 @@ export function ActionsPanel(props: {
           </div>
         </div>
       )}
+      {(() => {
+        const held = partialOf(props.battle, props.actor);
+        if (!held) return null;
+        const what = {
+          arm: 'рука опутана — только одноручное оружие, без боя двумя оружиями',
+          torso: 'торс опутан — СКР / 2, уклоняться нельзя',
+          head: 'голова опутана — удушение по решению ведущего',
+        }[held.zone];
+        return (
+          <div className="weapon-note badge-blocked">
+            <p>Частичное опутывание: {what}.</p>
+            <button
+              type="button"
+              disabled={!props.canAct || od < 1}
+              onClick={() => props.onAction('free-partial')}
+            >
+              Освободиться (1 ОД, тест СЛ)
+            </button>
+          </div>
+        );
+      })()}
       {props.onStabilize &&
         stabilizeTargets(props.battle, props.actor).map((t) => (
           <Stabilize

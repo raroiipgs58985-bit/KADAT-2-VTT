@@ -212,6 +212,10 @@ export interface EngineState {
   >;
   /** Smoke clouds (ruling 146): −20 to НС in, from or through them. */
   smokes?: { id: string; x: number; y: number; r: number; untilRound: number }[];
+  /** «Частичное опутывание» (ruling 161): the caught body part and the СКР before it. */
+  partial?: Record<string, { zone: 'arm' | 'torso' | 'head'; skr?: number }>;
+  /** «Пена / Пенокрит (Х ОБ)» (ruling 162): +Х ОБ while the entanglement holds. */
+  foam?: Record<string, { ob: number; condition: string }>;
   /** «Неистовый натиск»: the successful reckless attack of the actor this turn (ruling 157). */
   furious?: Record<string, { id: string; turn: number; modifier?: number }>;
   /** Rounds in each spare magazine by weapon (ruling 156); absent — the starting spares. */
@@ -775,7 +779,24 @@ function damageRoll(
 }
 
 /** Properties the polygon does not apply automatically yet: shown to the GM after the hit. */
-const MANUAL_PROPERTIES = new Set(['Галлюциногенное', 'Частичное опутывание']);
+const MANUAL_PROPERTIES = new Set(['Галлюциногенное']);
+/** «Пена (2 ОБ)», «Пенокрит (4 ОБ)» of the Arsenal record (ruling 162), or 0. */
+function foamRating(w: ArsenalWeapon | null | undefined) {
+  for (const p of w?.properties ?? []) {
+    const m = /^(?:пена|пенокрит)\s*\((\d+)\s*ОБ\)/i.exec(p.raw.trim());
+    if (m) return Number(m[1]);
+  }
+  return 0;
+}
+/** «Пена» ОБ of the target while it is still entangled (ruling 162). */
+function foamOb(state: EngineState, id: ActorId) {
+  const f = state.foam?.[id];
+  return f && state.wounds.combat.session.conditions.some((c) => c.id === f.condition) ? f.ob : 0;
+}
+/** «Частичное опутывание» holding the actor (ruling 161), or null. */
+export function partialOf(b: Battle, id: ActorId) {
+  return getEngine(b).partial?.[id] ?? null;
+}
 
 /**
  * Context of the target's reaction with its skill (ruling 49): the skill bonus is added;
@@ -1062,6 +1083,10 @@ function applyAfterHit(
       };
     }
     state.wounds = { ...state.wounds, combat: { ...combat, session: next } };
+    // «Пена (Х ОБ)»: the foam that holds the target also covers it (ruling 162).
+    const foam =
+      test.onFailure === 'immobilised' ? foamRating(weaponOf(b, command.weapon)?.arsenal) : 0;
+    if (foam) state.foam = { ...state.foam, [command.target]: { ob: foam, condition: id } };
     out.push({
       property: test.property,
       passed: false,
@@ -1336,6 +1361,12 @@ function resolveHit(
     armour.ob += nr;
     notes.push(`Ловец стрел: ОБ +${nr}`);
   }
+  // «Пена» (ruling 162): +Х ОБ to every zone while the foam holds.
+  const foam = foamOb(state, command.target);
+  if (foam) {
+    armour.ob += foam;
+    notes.push(`Пена: ОБ +${foam}`);
+  }
   // Cover (ruling 142): its ОБ adds to the armour of the covered zones.
   const cover = coverFor(b, command.actor, command.target, state);
   const covered = cover && armour.zone && cover.zones.includes(armour.zone) && cover.ob > 0;
@@ -1468,6 +1499,66 @@ function resolveHit(
     rng,
     logs,
   );
+  // «Частичное опутывание» (ruling 161): opposed СЛ of the target against the thrower; a loss —
+  // by the part hit: leg — knocked down, arm — one hand only, torso — СКР / 2 and no dodging,
+  // head — choking (the GM decides by the armour).
+  if (
+    hasTrait(traits, 'Частичное опутывание') &&
+    state.wounds.actors[command.target]?.life.status === 'ALIVE'
+  ) {
+    const opposed = opposedMeleeCheck(
+      state.wounds.combat,
+      ref(command.target),
+      ref(command.actor),
+      'СЛ',
+      context(state.wounds.combat, command.target, command.actor),
+      context(state.wounds.combat, command.actor, command.target),
+      rng,
+    ).result;
+    logs.push({ type: 'partial-entangle', opposed });
+    const caught = opposed.winner?.actorId === command.actor;
+    const zone = zoneOf(hit.location);
+    let what = 'вырвался';
+    if (caught) {
+      const runtime = state.wounds.combat.actors[command.target]!;
+      if (zone === 'legs') {
+        state.wounds = {
+          ...state.wounds,
+          combat: {
+            ...state.wounds.combat,
+            actors: {
+              ...state.wounds.combat.actors,
+              [command.target]: { ...runtime, posture: 'prone' },
+            },
+          },
+        };
+        what = 'нога опутана — сбит с ног';
+      } else if (zone === 'arms') {
+        state.partial = { ...state.partial, [command.target]: { zone: 'arm' } };
+        what = 'рука опутана — только одноручное оружие';
+      } else if (zone === 'torso') {
+        state.partial = {
+          ...state.partial,
+          [command.target]: { zone: 'torso', skr: runtime.movement },
+        };
+        state.wounds = {
+          ...state.wounds,
+          combat: {
+            ...state.wounds.combat,
+            actors: {
+              ...state.wounds.combat.actors,
+              [command.target]: { ...runtime, movement: runtime.movement / 2 },
+            },
+          },
+        };
+        what = 'торс опутан — СКР / 2, уклоняться нельзя';
+      } else {
+        state.partial = { ...state.partial, [command.target]: { zone: 'head' } };
+        what = 'голова опутана — удушение по решению ведущего';
+      }
+    }
+    effects.push({ property: 'Частичное опутывание', passed: !caught, state: what });
+  }
   if (destroyer)
     effects.push({
       property: 'Деструктор',
@@ -2605,7 +2696,8 @@ function throwResolve(
           attackId: command.id,
           attacker: ref(command.actor),
           target: ref(command.target),
-          location: 'Torso',
+          // The part hit by the inverted НС roll («Частичное опутывание» needs it).
+          location: resolveHitLocations(check.rawRoll, 1, rng)[0]!.location,
           profile: template.damage,
           penetration: template.penetration,
           transformations: [],
@@ -2619,6 +2711,36 @@ function throwResolve(
         roll,
       ),
     };
+  }
+  // «Тушит пламя» (ruling 163): burning and fire «След» zones within the blast are put out.
+  let extinguished: unknown = null;
+  const arsenal = weaponOf(b, command.weapon)?.arsenal;
+  if (landed && blastX && arsenal?.properties.some((p) => /тушит пламя/i.test(p.raw))) {
+    const at = landed;
+    const burning = Object.keys(state.burning ?? {}).filter((id) => {
+      const p = posOf(b, id);
+      return Math.hypot(p.x - at.x, p.y - at.y) <= blastX + 1e-9;
+    });
+    const rest = { ...state.burning };
+    for (const id of burning) delete rest[id];
+    state.burning = rest;
+    const touches = (t: Trail) => {
+      if (t.shape.kind === 'circle')
+        return Math.hypot(t.shape.x - at.x, t.shape.y - at.y) <= t.shape.r + blastX;
+      const sh = t.shape;
+      for (let d = 0; d <= sh.range; d += 0.5)
+        for (const a of [-Math.PI / 8, 0, Math.PI / 8]) {
+          const x = sh.x + d * Math.cos(sh.heading + a),
+            y = sh.y + d * Math.sin(sh.heading + a);
+          if (Math.hypot(x - at.x, y - at.y) <= blastX) return true;
+        }
+      return false;
+    };
+    const fires = (state.trails ?? []).filter(
+      (t) => hasTrait(t.info.traits, 'Огненное') && touches(t),
+    );
+    state.trails = (state.trails ?? []).filter((t) => !fires.includes(t));
+    extinguished = { burning, trails: fires.length };
   }
   let smoke: unknown = null;
   if (smokeX && landed) {
@@ -2644,6 +2766,7 @@ function throwResolve(
     landed,
     ...(blasts ? { blasts } : {}),
     ...(struck ? { struck } : {}),
+    ...(extinguished ? { extinguished } : {}),
     ...(smoke ? { smoke } : {}),
   };
 }
@@ -2861,6 +2984,7 @@ function zoneDodge(
 ) {
   const name = actorName(b, id);
   const label = kind === 'spray' ? '«Спрей»' : '«Взрыв»';
+  if (state.partial?.[id]?.zone === 'torso') return false; // no dodging (ruling 161)
   const canLeave =
     ask(command, {
       key: `${kind}:${id}`,
@@ -3426,6 +3550,12 @@ function resolveAttack(
   // Two weapons (rulings 105, 106): both attacks carry the two-weapon flag; a basic ranged
   // weapon is then fired with one hand (−20, «Бой»).
   const dual = Boolean(command.second || command.dualPrimary);
+  // «Частичное опутывание» of an arm: one-handed weapons only, no two-weapon attacks (ruling 161).
+  if (state.partial?.[command.actor]?.zone === 'arm') {
+    if (dual) throw new Error('Рука опутана: бой двумя оружиями невозможен (решение 161)');
+    if (!isFists(command.weapon) && twoHandedWeapon(state.wounds.combat, command.weapon))
+      throw new Error('Рука опутана: двуручным оружием атаковать нельзя (решение 161)');
+  }
   if (dual) {
     const owned = canonicalTalents(combatant(b, command.actor).character.talents);
     const core = kind === 'ranged' ? 'Парное оружие (Стрелковое)' : 'Парное оружие (Рукопашное)';
@@ -3698,7 +3828,10 @@ function resolveAttack(
       text: `${actorName(b, command.target)}: по вам попали (${actorName(b, command.actor)}). Ваша реакция?`,
       options: [
         { label: 'Без реакции', value: 0 },
-        { label: 'Уклонение', value: 1 },
+        // «Частичное опутывание» of the torso: no dodging (ruling 161).
+        ...(state.partial?.[command.target]?.zone === 'torso'
+          ? []
+          : [{ label: 'Уклонение', value: 1 }]),
         ...(canParry ? [{ label: 'Парирование', value: 2 }] : []),
       ],
     });
@@ -4958,7 +5091,8 @@ export type TurnActionType =
   | 'break-free'
   | 'clean-armour'
   | 'drop-armour'
-  | 'stabilize';
+  | 'stabilize'
+  | 'free-partial';
 export interface TurnActionCommand {
   id: string;
   actor: ActorId;
@@ -4988,6 +5122,7 @@ const turnActionName: Record<TurnActionType, string> = {
   'clean-armour': 'Очистить броню',
   'drop-armour': 'Сбросить броню',
   stabilize: 'Стабилизировать',
+  'free-partial': 'Освободиться от опутывания',
 };
 /** Characters in agony next to the actor that it may stabilize (ruling 160). */
 export function stabilizeTargets(b: Battle, actor: ActorId): ActorId[] {
@@ -5046,7 +5181,29 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
     let detail: Record<string, unknown> = {};
     let pendingSpares: { weapon: string; list: number[] } | null = null;
     let woundActors: EngineState['wounds']['actors'] | null = null;
-    if (command.type === 'stabilize') {
+    if (command.type === 'free-partial') {
+      // Ruling 161: 1 ОД, СЛ+0; success frees the body part (СКР comes back).
+      const held = state.partial?.[command.actor];
+      if (!held) throw new Error('Персонаж не опутан частично');
+      const turn = combat.session.turn!;
+      if (turn.od < 1) throw new Error('Нужен 1 ОД (решение 161)');
+      const sl = combatant(b, command.actor).character.characteristics.СЛ;
+      const check = resolveCheck(
+        { baseValue: sl.value, finalSuper: sl.super, context: base.context },
+        tape,
+      ).result;
+      const freed = check.outcome === 'success';
+      const runtime = combat.actors[command.actor]!;
+      next = {
+        ...combat,
+        session: { ...combat.session, turn: { ...turn, od: turn.od - 1 } },
+        actors:
+          freed && held.skr !== undefined
+            ? { ...combat.actors, [command.actor]: { ...runtime, movement: held.skr } }
+            : combat.actors,
+      };
+      detail = { freed, check };
+    } else if (command.type === 'stabilize') {
       // Ruling 160 (with 83): an ally next to the dying, the whole turn (2 ОД), «Медика» −30 with
       // a medical kit; success stops the agony.
       const target = command.target;
@@ -5228,6 +5385,11 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
     if (pendingSpares)
       after.spares = { ...after.spares, [pendingSpares.weapon]: pendingSpares.list };
     if (woundActors) after.wounds = { ...after.wounds, actors: woundActors };
+    if (command.type === 'free-partial' && detail.freed) {
+      const rest = { ...after.partial };
+      delete rest[command.actor];
+      after.partial = rest;
+    }
     if (detail.free) after.firstClassUsed = [...(after.firstClassUsed ?? []), String(detail.kind)];
     if ((command.type === 'clean-armour' || command.type === 'drop-armour') && command.zone) {
       const key = `${command.actor}:${command.zone}`;

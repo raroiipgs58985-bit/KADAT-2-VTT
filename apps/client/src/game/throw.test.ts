@@ -3,6 +3,9 @@ import { createBattle, type Battle } from './model';
 import {
   activeSmokes,
   applyMap,
+  entanglement,
+  getEngine,
+  partialOf,
   attack,
   attackLineProblem,
   coverFor,
@@ -10,6 +13,7 @@ import {
   nextTurn,
   resumeAttack,
   startCombat,
+  turnAction,
   turnInfo,
   weaponState,
   type AttackCommand,
@@ -284,11 +288,60 @@ describe('Thrown items without damage (ruling 155)', () => {
   it('a bolas hit acts on the character alone', () => {
     const b = scene('Болас');
     expect(throwRange(b, 'g:0')).toBe(20);
-    const r = run(b, cmd({}), { roll: (s: number) => (s === 100 ? 5 : 3) });
+    // Throw 5 (hit); opposed СЛ: the target 99 (fails), the thrower 5.
+    let k = 0;
+    const seq = [5, 99, 5];
+    const r = run(b, cmd({}), {
+      roll: (s: number) => (s === 100 ? (seq[k++] ?? 50) : Math.min(3, s)),
+    });
     const struck = (r as unknown as { result: { thrown: { struck: Target } } }).result.thrown
       .struck;
     expect(struck.actor).toBe('t');
     expect(struck.finalDamage).toBe(0);
-    expect(struck.manual).toContain('Частичное опутывание (0)');
+    const fx = struck.effects.find((e) => e.property === 'Частичное опутывание')!;
+    expect(fx.passed).toBe(false);
+    const held = partialOf(b, 't');
+    const prone = getEngine(b).wounds.combat.actors.t!.posture === 'prone';
+    expect(held !== null || prone).toBe(true);
+  });
+});
+
+describe('Foam and fire-fighting grenades (rulings 162–163)', () => {
+  it('«Пена (2 ОБ)»: an entangled target gets +2 ОБ while the foam holds', () => {
+    const b = scene('Сдерживающая');
+    let first = true;
+    run(b, cmd({}), {
+      roll: (s: number) => (s === 100 ? (first ? ((first = false), 5) : 99) : Math.min(3, s)),
+    });
+    expect(getEngine(b).foam?.t?.ob).toBe(2);
+    expect(entanglement(b, 't')).not.toBeNull();
+  });
+  it('«Тушит пламя»: burning within the blast is put out', () => {
+    const b = scene('Пожарная');
+    getEngine(b).burning = { t: { rounds: 3, halfOb: 0 } };
+    let first = true;
+    const r = run(b, cmd({}), {
+      roll: (s: number) => (s === 100 ? (first ? ((first = false), 5) : 99) : Math.min(3, s)),
+    });
+    expect(getEngine(b).burning?.t).toBeUndefined();
+    const ex = (r as unknown as { result: { thrown: { extinguished: { burning: string[] } } } })
+      .result.thrown.extinguished;
+    expect(ex.burning).toEqual(['t']);
+  });
+});
+
+describe('Breaking free of «Частичное опутывание» (ruling 161)', () => {
+  it('1 ОД, СЛ+0: success frees the part and brings back the СКР', () => {
+    const b = scene('Фраг');
+    const engine = getEngine(b);
+    const skr = engine.wounds.combat.actors.g!.movement;
+    engine.partial = { g: { zone: 'torso', skr } };
+    (engine.wounds.combat.actors as Record<string, unknown>).g = {
+      ...engine.wounds.combat.actors.g!,
+      movement: skr / 2,
+    };
+    turnAction(b, { id: 'f1', actor: 'g', type: 'free-partial' }, fixedDice('100:5'));
+    expect(partialOf(b, 'g')).toBeNull();
+    expect(getEngine(b).wounds.combat.actors.g!.movement).toBe(skr);
   });
 });

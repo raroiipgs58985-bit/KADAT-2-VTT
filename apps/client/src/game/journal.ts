@@ -384,6 +384,7 @@ export function describeEntry(
               targets: ThrowTarget[];
             }[];
             struck?: ThrowTarget;
+            extinguished?: { burning: string[]; trails: number };
             smoke?: { radius: number; rounds: number };
           };
         }
@@ -413,13 +414,17 @@ export function describeEntry(
           )
           .join('');
         const struck = thrown.struck ? ` ${who(thrown.struck)}.` : '';
+        const ex = thrown.extinguished;
+        const exText = ex
+          ? ` Тушит пламя: ${ex.burning.length ? `погашены ${ex.burning.map(name).join(', ')}` : 'горящих нет'}${ex.trails ? `, погашено зон огня: ${ex.trails}` : ''}.`
+          : '';
         const smoke = thrown.smoke
           ? ` Дым радиусом ${thrown.smoke.radius} м на ${thrown.smoke.rounds} р.`
           : '';
         return {
           ...base,
           title: `${name(a.command.actor)}: бросок (${weapon})`,
-          summary: `${thrown.hit ? 'Точно в цель.' : 'Мимо — отклонение.'}${at}${boom}${struck}${smoke}`,
+          summary: `${thrown.hit ? 'Точно в цель.' : 'Мимо — отклонение.'}${at}${boom}${struck}${exText}${smoke}`,
           tone: thrown.hit ? 'success' : 'warning',
         };
       }
@@ -543,9 +548,11 @@ export function describeEntry(
                   ? `Броня (${String(d.zone)}): ${c.type === 'clean-armour' ? 'очищена' : 'сброшена, эта зона без защиты'} — коррозия остановлена (${String(d.cost)} ОД).`
                   : c.type === 'break-free'
                     ? `Тест ${String(d.characteristic)}${d.modifier ? ` ${String(d.modifier)}` : ''}: ${d.freed ? 'вырвался, путы сброшены.' : 'не вырвался, всё ещё опутан.'} Потрачен весь ход (2 ОД).`
-                    : c.type === 'stabilize'
-                      ? `${name(String(d.target))}: Медика −30 — ${d.stabilized ? `агония остановлена (стабилизирован на ${String(d.hours)} ч).` : 'не удалось, агония продолжается.'} Потрачен весь ход (2 ОД).`
-                      : '';
+                    : c.type === 'free-partial'
+                      ? `Тест СЛ: ${d.freed ? 'освободился от опутывания.' : 'не освободился.'} 1 ОД.`
+                      : c.type === 'stabilize'
+                        ? `${name(String(d.target))}: Медика −30 — ${d.stabilized ? `агония остановлена (стабилизирован на ${String(d.hours)} ч).` : 'не удалось, агония продолжается.'} Потрачен весь ход (2 ОД).`
+                        : '';
       return {
         ...base,
         title: `${name(c.actor)}: ${String(d.name)}`,
