@@ -272,7 +272,9 @@ export function describeEntry(
               '; ',
             )}. ${storm.target !== a.command.target ? `Удар по ${name(storm.target)}. ` : ''}`
         : '';
+      const smokeCloud = (a.result as { smoke?: { radius: number; rounds: number } }).smoke;
       const fire =
+        (smokeCloud ? `Дым радиусом ${smokeCloud.radius} м на ${smokeCloud.rounds} р. ` : '') +
         ((a.result as { fireCharge?: boolean }).fireCharge
           ? 'Огненный натиск: бег, затем длинная очередь НС+0. '
           : '') +

@@ -32,6 +32,47 @@ const norm = (s: string) =>
 
 export const weaponById = (id: string): ArsenalWeapon | undefined =>
   arsenal.weapons.find((w) => w.id === id);
+/**
+ * Ammunition a launcher whose profile «зависит от боеприпаса» can fire (ruling 167):
+ * 40 mm grenade launchers — the hand grenades of «Взрывчатка»; 90 mm rocket launchers — the
+ * «(90 мм)» rockets of «Стаб и РПУ». Others — none yet (mortars and vehicle launchers later).
+ */
+export function ammoOptions(w: ArsenalWeapon | null | undefined): ArsenalWeapon[] {
+  if (!w?.ammoDependent) return [];
+  if (/40\s*мм/.test(w.name))
+    return arsenal.weapons.filter(
+      (x) => x.sheet === 'Взрывчатка' && x.weaponClass === 'Метательное',
+    );
+  if (/90\s*мм/.test(w.name) && w.sheet === 'Стаб и РПУ' && /гранатомёт/i.test(w.name))
+    return arsenal.weapons.filter(
+      (x) =>
+        x.sheet === 'Стаб и РПУ' &&
+        x.weaponClass === 'ТО' &&
+        /\(90\s*мм\)/.test(x.name) &&
+        !x.ammoDependent,
+    );
+  return [];
+}
+/**
+ * The launcher loaded with the ammunition (ruling 167): range, rate, magazine and reload of the
+ * launcher; damage, ББ («-» — 0) and properties of the ammunition.
+ */
+export function withAmmo(
+  launcher: ArsenalWeapon | undefined,
+  ammoId: string | null | undefined,
+): ArsenalWeapon | undefined {
+  if (!launcher || !ammoId) return launcher;
+  const ammo = ammoOptions(launcher).find((x) => x.id === ammoId);
+  if (!ammo) return launcher;
+  return {
+    ...launcher,
+    damage: ammo.damage,
+    damageText: ammo.damageText,
+    penetration: ammo.penetration ?? 0,
+    properties: [...launcher.properties.filter((p) => p.property !== null), ...ammo.properties],
+    ammoDependent: false,
+  };
+}
 export const armourById = (id: string): ArsenalArmour | undefined =>
   arsenal.armour.find((a) => a.id === id);
 

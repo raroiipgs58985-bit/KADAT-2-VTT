@@ -83,9 +83,14 @@ export function weaponProblem(w: ArsenalWeapon | null): string | null {
     if (w.damage && ![5, 10].includes(w.damage.sides)) return 'Урон не в к5/к10';
     return null;
   }
-  if (!w.damage) return 'В Арсенале нет урона (зависит от боеприпаса или не указан)';
-  if (![5, 10].includes(w.damage.sides)) return 'Урон не в к5/к10';
-  if (w.penetration === null) return 'В Арсенале нет ББ';
+  if (w.ammoDependent) return 'Урон зависит от боеприпаса — выберите боеприпас в редакторе';
+  // No damage in the Arsenal («-», nets): only the properties act; ББ «-» is 0 (ruling 155).
+  const propertiesOnly =
+    !w.damage && RANGED_CLASSES.includes(w.weaponClass) && w.weaponClass !== 'СТ';
+  if (!w.damage && !propertiesOnly) return 'В Арсенале нет урона';
+  if (w.damage && ![5, 10].includes(w.damage.sides)) return 'Урон не в к5/к10';
+  if (w.penetration === null && !propertiesOnly && MELEE_CLASSES.includes(w.weaponClass))
+    return 'В Арсенале нет ББ';
   if (MELEE_CLASSES.includes(w.weaponClass)) {
     if (w.range.meters === null) return 'Дистанция удара не прочитана';
     return null;
@@ -141,10 +146,11 @@ function rangedInstance(
         ...(w.modeModifiers ? { modeModifiers: w.modeModifiers } : {}),
         damage: {
           source,
-          // A smoke grenade has no damage profile.
+          // No damage («-», ruling 155): the core still needs a die; the polygon rolls none
+          // (engine `damageExpression`).
           expression: w.damage
             ? { count: w.damage.count, sides: w.damage.sides, modifier: w.damage.modifier }
-            : { count: 0, sides: 10, modifier: 0 },
+            : { count: 1, sides: 10, modifier: 0 },
         },
         penetration: { source, value: w.penetration ?? 0 },
         compatibleAmmoTypes: ['arsenal-ammo'],

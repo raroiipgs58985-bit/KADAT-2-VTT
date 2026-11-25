@@ -56,6 +56,8 @@ export interface CharacterDocument {
     readonly count?: number;
     /** Spare magazines carried (ruling 156); absent — not tracked, every reload is full. */
     readonly spares?: number;
+    /** Launchers «зависит от боеприпаса»: the Arsenal ID of the loaded ammunition (ruling 167). */
+    readonly ammo?: string;
   }[];
   /** Armour items from the Arsenal (v2); `armour` above holds the ОБ used in combat. */
   readonly armourItems: readonly { readonly name: string; readonly ref: string | null }[];
@@ -175,7 +177,8 @@ export function characterProblems(c: CharacterDocument): string[] {
         !(
           w.spares === undefined ||
           (Number.isInteger(w.spares) && w.spares >= 0 && w.spares <= 99)
-        ),
+        ) ||
+        !(w.ammo === undefined || text(w.ammo, L.maxItemText)),
     )
   )
     p.push('Оружие: до 80 записей');

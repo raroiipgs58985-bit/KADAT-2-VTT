@@ -17,6 +17,7 @@ import {
 import { footprintForSize } from '../game/grid';
 import { loadLibrary, saveLibrary } from './character-library';
 import {
+  ammoOptions,
   armourById,
   armourFromItems,
   withArmourFromItems,
@@ -553,6 +554,14 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
           onCount={(i, count) =>
             set({ weapons: doc.weapons.map((w, j) => (j === i ? { ...w, count } : w)) })
           }
+          ammoFor={(ref) => (ref ? ammoOptions(weaponById(ref)) : [])}
+          onAmmo={(i, ammo) =>
+            set({
+              weapons: doc.weapons.map((w, j) =>
+                j === i ? (ammo ? { ...w, ammo } : withoutKey(w, 'ammo')) : w,
+              ),
+            })
+          }
           magazineFed={(ref) => {
             const w = ref ? weaponById(ref) : undefined;
             return !!w && w.weaponClass !== 'Метательное' && (w.magazine ?? 0) > 0;
@@ -658,6 +667,7 @@ function ItemList(props: {
     sling?: boolean;
     count?: number;
     spares?: number;
+    ammo?: string;
   }[];
   describe: (ref: string | null) => string;
   onRemove: (index: number) => void;
@@ -666,6 +676,9 @@ function ItemList(props: {
   /** Thrown items: how many are carried (ruling 154). */
   countable?: (ref: string | null) => boolean;
   onCount?: (index: number, count: number) => void;
+  /** Launchers: the ammunition to load (ruling 167). */
+  ammoFor?: (ref: string | null) => readonly { id: string; name: string; damageText: string }[];
+  onAmmo?: (index: number, ammo: string | null) => void;
   /** Magazine-fed weapons: spare magazines (ruling 156); null — not tracked. */
   magazineFed?: (ref: string | null) => boolean;
   onSpares?: (index: number, spares: number | null) => void;
@@ -706,6 +719,27 @@ function ItemList(props: {
                 />
               </label>
             )}
+            {props.onAmmo &&
+              (() => {
+                const options = props.ammoFor?.(it.ref) ?? [];
+                if (!options.length) return null;
+                return (
+                  <label className="small">
+                    боеприпас{' '}
+                    <select
+                      value={it.ammo ?? ''}
+                      onChange={(e) => props.onAmmo!(i, e.target.value || null)}
+                    >
+                      <option value="">— не выбран (в бою нельзя) —</option>
+                      {options.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name} — {o.damageText}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                );
+              })()}
             {props.onSpares && props.magazineFed?.(it.ref) && (
               <label className="small">
                 запасных магазинов{' '}

@@ -22,7 +22,7 @@ import {
 } from './geometry';
 import { currentSkr, type CharacterDocument } from './character';
 import { characterFromProfile } from './character-file';
-import { weaponById } from './arsenal';
+import { weaponById, withAmmo } from './arsenal';
 import type { ArsenalWeapon } from '../../../../packages/canonical-data/src/arsenal';
 /** Any participant of the battle: a character from the library or a profile (step 4). */
 export type ActorId = string;
@@ -62,13 +62,15 @@ export const skrOf = (b: Battle, id: ActorId) => currentSkr(combatant(b, id).cha
 export function battleWeapons(b: Battle, owner?: ActorId): BattleWeapon[] {
   const all = actorIds(b).flatMap((id) =>
     combatant(b, id).character.weapons.map((w, i) => {
-      const arsenal = w.ref ? (weaponById(w.ref) ?? null) : null;
+      // A launcher takes damage, ББ and properties from its ammunition (ruling 167).
+      const arsenal = w.ref ? (withAmmo(weaponById(w.ref), w.ammo) ?? null) : null;
+      const ammoName = w.ammo && arsenal && w.ammo !== w.ref ? weaponById(w.ammo)?.name : undefined;
       const weaponId = `${id}:${i}`;
       return {
         id: weaponId,
         // Ruling 114: a weapon taken by «Разоружение» belongs to the taker till the fight ends.
         owner: b.taken?.[weaponId] ?? id,
-        name: w.name,
+        name: ammoName ? `${w.name} (${ammoName})` : w.name,
         arsenal,
         // Thrown items: the «magazine» is how many are carried (ruling 154).
         capacity:

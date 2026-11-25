@@ -782,6 +782,18 @@ function damageRoll(
 
 /** Properties the polygon does not apply automatically yet: shown to the GM after the hit. */
 const MANUAL_PROPERTIES = new Set(['Галлюциногенное']);
+/**
+ * The damage dice of the weapon: an Arsenal record without damage («-», ruling 155) rolls none
+ * (the core profile keeps 1к10 only because the core needs a die there).
+ */
+function damageExpression(
+  b: Battle,
+  weaponId: WeaponId,
+  template: { damage: { expression: { count: number; sides: number; modifier: number } } },
+) {
+  const w = weaponOf(b, weaponId)?.arsenal;
+  return w && !w.damage ? { count: 0, sides: 10, modifier: 0 } : template.damage.expression;
+}
 /** «Пена (2 ОБ)», «Пенокрит (4 ОБ)» of the Arsenal record (ruling 162), or 0. */
 function foamRating(w: ArsenalWeapon | null | undefined) {
   for (const p of w?.properties ?? []) {
@@ -1422,7 +1434,9 @@ function resolveHit(
     ],
   };
   // No damage in the Arsenal (ruling 155): no wound at all, only the properties act.
-  const noDamage = hit.profile.expression.count === 0;
+  const noDamage =
+    hit.profile.expression.count === 0 ||
+    (!hit.tags.includes('overheat') && weaponOf(b, command.weapon)?.arsenal?.damage === null);
   if (noDamage) notes.push('Без урона — действуют только свойства');
   const damage = noDamage
     ? ({
@@ -2601,7 +2615,7 @@ function trailDamage(
     };
     setPhase('damage');
     const roll = damageRoll(
-      template.damage.expression,
+      damageExpression(b, t.weapon, template),
       rng,
       context(state.wounds.combat, t.shooter),
     ).result;
@@ -2703,7 +2717,7 @@ function throwResolve(
     const template = weapon.template.profile;
     const src = { kind: 'weapon', id: command.weapon };
     const roll = damageRoll(
-      template.damage.expression,
+      damageExpression(b, command.weapon, template),
       rng,
       context(state.wounds.combat, command.actor),
     ).result;
@@ -2764,23 +2778,7 @@ function throwResolve(
     state.trails = (state.trails ?? []).filter((t) => !fires.includes(t));
     extinguished = { burning, trails: fires.length };
   }
-  let smoke: unknown = null;
-  if (smokeX && landed) {
-    // «Дымовое (Х)»: a cloud of radius Х for к10+10 rounds (ruling 146).
-    const rounds = rollDie(10, rng).value + 10;
-    const round = state.wounds.combat.session.roundNumber;
-    state.smokes = [
-      ...(state.smokes ?? []),
-      {
-        id: `${command.id}:smoke`,
-        x: landed.x,
-        y: landed.y,
-        r: smokeX,
-        untilRound: round + rounds,
-      },
-    ];
-    smoke = { at: landed, radius: smokeX, rounds };
-  }
+  const smoke = smokeX && landed ? addSmoke(state, command, landed, smokeX, rng) : null;
   return {
     check,
     hit,
@@ -2791,6 +2789,22 @@ function throwResolve(
     ...(extinguished ? { extinguished } : {}),
     ...(smoke ? { smoke } : {}),
   };
+}
+/** «Дымовое (Х)»: a cloud of radius Х for к10+10 rounds (ruling 146). */
+function addSmoke(
+  state: EngineState,
+  command: AttackCommand,
+  at: { x: number; y: number },
+  radius: number,
+  rng: DiceSource,
+) {
+  const rounds = rollDie(10, rng).value + 10;
+  const round = state.wounds.combat.session.roundNumber;
+  state.smokes = [
+    ...(state.smokes ?? []),
+    { id: `${command.id}:smoke`, x: at.x, y: at.y, r: radius, untilRound: round + rounds },
+  ];
+  return { at, radius, rounds };
 }
 /** A miss: the point scatters by the scheme (ruling 144). */
 function scatterPoint(
@@ -2915,7 +2929,11 @@ function resolveBlasts(
   const out: unknown[] = [];
   for (const [k, at] of points.entries()) {
     setPhase('damage');
-    const roll = damageRoll(template.damage.expression, rng, context(combat, command.actor)).result;
+    const roll = damageRoll(
+      damageExpression(b, command.weapon, template),
+      rng,
+      context(combat, command.actor),
+    ).result;
     setPhase('attack');
     const targets: unknown[] = [];
     for (const id of actorIds(b)) {
@@ -3104,7 +3122,11 @@ function sprayResolve(
   });
   setPhase('damage');
   const template = weapon.template.profile;
-  const roll = damageRoll(template.damage.expression, rng, context(combat, command.actor)).result;
+  const roll = damageRoll(
+    damageExpression(b, command.weapon, template),
+    rng,
+    context(combat, command.actor),
+  ).result;
   setPhase('attack');
   const targets: unknown[] = [];
   for (const id of inside) {
@@ -3825,6 +3847,7 @@ function resolveAttack(
   let knockdownDamage: unknown = null;
   let spray: unknown = null;
   let thrown: unknown = null;
+  let launcherSmoke: unknown = null;
   let blasts: unknown = null;
   let stunned: unknown = null;
   // «Перегрев»: the weapon cools down — no shots this round and the next (ruling 137).
@@ -3973,6 +3996,23 @@ function resolveAttack(
         logs,
       );
     else hits.push(...result.hits.map((h) => damageInputFromHit(h)));
+    // A smoke grenade from a launcher (ruling 167): the cloud where it lands (hit — at the
+    // target, miss — scattered by the scheme).
+    const smokeX = traits.find((t) => t.name === 'Дымовое')?.value;
+    if (smokeX && !result.overheated) {
+      const landed =
+        (blasts as { at: { x: number; y: number } }[] | null)?.[0]?.at ??
+        (result.hitsGenerated > 0
+          ? posOf(b, command.target)
+          : scatterPoint(
+              b,
+              posOf(b, command.actor),
+              posOf(b, command.target),
+              arsenalWeapon.weaponClass,
+              rng,
+            ).at);
+      launcherSmoke = addSmoke(state, command, landed, smokeX, rng);
+    }
     if (result.dodge) reaction = result.dodge;
     if (result.overheated) {
       overheat = applyOverheat(b, state, command, arsenalWeapon, rng, logs);
@@ -4271,6 +4311,7 @@ function resolveAttack(
     ...(spray ? { spray } : {}),
     ...(thrown ? { thrown } : {}),
     ...(blasts ? { blasts } : {}),
+    ...(launcherSmoke ? { smoke: launcherSmoke } : {}),
     ...(stunned ? { stunned } : {}),
     ...(hurricane.length
       ? { hurricane: { path: hurricane, target: command.target, at: command.charge! } }
