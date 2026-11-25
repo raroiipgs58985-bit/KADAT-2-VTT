@@ -122,3 +122,12 @@ describe('War hammers (ruling 166)', () => {
     expect(c.effects.some((e) => e.property === 'Оглушающее')).toBe(false);
   });
 });
+
+describe('Heavy laser drill (ruling 168)', () => {
+  it('takes the magazine and reload of the lascannon', () => {
+    const drill = matchWeaponByName('Тяжёлый лазерный бур')!;
+    expect(drill.magazine).toBe(5);
+    expect(drill.reload?.od).toBe(2);
+    expect(weaponProblem(drill)).toBeNull();
+  });
+});

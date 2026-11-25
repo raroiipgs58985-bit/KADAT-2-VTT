@@ -22,10 +22,15 @@ function primitiveDefaults(w: ArsenalWeapon): ArsenalWeapon {
     reload: { od: 1, text: bow ? 'СД (решение 164)' : '1 ОД (решение 164)' },
   };
 }
+/** «Тяжёлый лазерный бур» = лазпушка: magazine 5 and reload 2 ОД of the lascannon (ruling 168). */
+function drillDefaults(w: ArsenalWeapon): ArsenalWeapon {
+  if (w.name.trim() !== 'Тяжёлый лазерный бур' || w.magazine !== null) return w;
+  return { ...w, magazine: 5, reload: { od: 2, text: '2 ОД (как лазпушка, решение 168)' } };
+}
 /** Validated Arsenal dataset (packages/canonical-data, ADR 0005). Read-only in the game. */
 export const arsenal: ArsenalDataset = (() => {
   const raw = dataset as unknown as ArsenalDataset;
-  return { ...raw, weapons: raw.weapons.map(primitiveDefaults) };
+  return { ...raw, weapons: raw.weapons.map((w) => drillDefaults(primitiveDefaults(w))) };
 })();
 const norm = (s: string) =>
   s.replace(/\s+/g, ' ').trim().toLocaleLowerCase('ru-RU').replace(/ё/g, 'е');
