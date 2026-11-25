@@ -369,6 +369,8 @@ export interface AttackForm {
   meleeBase?: 'swift' | 'lightning' | 'cautious' | 'reckless' | '';
   /** Melee technique: grapple, stun, knockdown (core «Бой»). */
   technique?: 'grapple' | 'stun' | 'knockdown' | '';
+  /** War hammer: strike with the spike (ruling 166). */
+  spike?: boolean;
 }
 
 export function AttackPanel(props: {
@@ -666,6 +668,18 @@ export function AttackPanel(props: {
         <p className="muted small">В этом ходу атака уже была: движок разрешает одну атаку.</p>
       )}
       {lineProblem && <p className="weapon-note badge-blocked">{lineProblem}</p>}
+      {weapon?.arsenal?.penetrationAlt !== undefined && (
+        <label>
+          Сторона молота
+          <select
+            value={form.spike ? 'spike' : 'blunt'}
+            onChange={(e) => set({ spike: e.target.value === 'spike' })}
+          >
+            <option value="blunt">Обух — ББ {weapon.arsenal.penetration}, Оглушающее</option>
+            <option value="spike">Клюв — ББ {weapon.arsenal.penetrationAlt}, Калечащее (2)</option>
+          </select>
+        </label>
+      )}
       {props.onFurious && (
         <button type="button" onClick={props.onFurious} disabled={!props.canAct}>
           Доп. безоглядная атака — Неистовый натиск (реакция)

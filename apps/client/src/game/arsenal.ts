@@ -5,8 +5,28 @@ import type {
   ArsenalWeapon,
 } from '../../../../packages/canonical-data/src/arsenal';
 
+/** Bows of the «ХТХ и примитив» sheet: arrows go on for the Free Action (ruling 164). */
+export const isBow = (w: { sheet: string; name: string; weaponClass: string } | null | undefined) =>
+  !!w && w.sheet === 'ХТХ и примитив' && /лук/i.test(w.name) && ['П', 'ОС'].includes(w.weaponClass);
+/**
+ * Bows and crossbows have no rate, magazine or reload columns in the sheet (ruling 164): single
+ * shot, one arrow or bolt; a bow reloads for the Free Action, a crossbow for 1 ОД.
+ */
+function primitiveDefaults(w: ArsenalWeapon): ArsenalWeapon {
+  if (w.sheet !== 'ХТХ и примитив' || !['П', 'ОС'].includes(w.weaponClass) || w.rof) return w;
+  const bow = isBow(w);
+  return {
+    ...w,
+    rof: { single: 1, short: null, long: null },
+    magazine: 1,
+    reload: { od: 1, text: bow ? 'СД (решение 164)' : '1 ОД (решение 164)' },
+  };
+}
 /** Validated Arsenal dataset (packages/canonical-data, ADR 0005). Read-only in the game. */
-export const arsenal = dataset as unknown as ArsenalDataset;
+export const arsenal: ArsenalDataset = (() => {
+  const raw = dataset as unknown as ArsenalDataset;
+  return { ...raw, weapons: raw.weapons.map(primitiveDefaults) };
+})();
 const norm = (s: string) =>
   s.replace(/\s+/g, ' ').trim().toLocaleLowerCase('ru-RU').replace(/ё/g, 'е');
 

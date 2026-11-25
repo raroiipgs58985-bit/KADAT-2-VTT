@@ -125,7 +125,7 @@ import {
   type WeaponKind,
 } from './combatants';
 import type { ArsenalWeapon } from '../../../../packages/canonical-data/src/arsenal';
-import { radProtectedArmour, sealedArmour, weaponById, weaponTraits } from './arsenal';
+import { isBow, radProtectedArmour, sealedArmour, weaponById, weaponTraits } from './arsenal';
 import { canonicalTalents } from './talents';
 import {
   hasExoticProficiency,
@@ -276,6 +276,8 @@ export interface AttackCommand {
    * of the same action. Without «Парное оружие» each attack has −30 («Амбидекстрия»: −20).
    */
   second?: WeaponId;
+  /** War hammer: a blow with the spike — the second ББ and «Калечащее (2)» (ruling 166). */
+  spike?: boolean;
   /** Internal: «Огненный натиск» — the run is done, the long burst is fired from `charge`. */
   fireCharge?: boolean;
   /** Internal: this attack is the follow-up of the two-weapon attack with this primary ID. */
@@ -1278,6 +1280,11 @@ function resolveHit(
       flat += half;
       notes.push(`Цепное: +${half} (½ бСЛ вверх)`);
     }
+  }
+  // Bows (ruling 164, the «ХТХ и примитив» sheet): the damage grows by бСЛ.
+  if (info.kind === 'ranged' && isBow(weaponOf(b, command.weapon)?.arsenal)) {
+    flat += sl;
+    notes.push(`Лук: +${sl} (бСЛ)`);
   }
   // «Мастер Мельта-оружия»: when «Мельта» works, ББ + 2 × ½ degrees of НС, up (ruling 126).
   const meltaMaster =
@@ -3423,13 +3430,33 @@ function resolveAttack(
     };
   }
   const kind = weaponKind(arsenalWeapon);
-  const traits = isFists(command.weapon)
+  // «БС (Х)» of a bow: with бСЛ below Х the bow cannot be drawn (ruling 164).
+  const needSl = arsenalWeapon.properties
+    .map((p) => /^БС\s*\((\d+)\)$/.exec(p.raw.trim()))
+    .find(Boolean);
+  if (needSl && bonusOf(combatant(b, command.actor).character, 'СЛ') < Number(needSl[1]))
+    throw new Error(
+      `${arsenalWeapon.name}: нужен бСЛ ${needSl[1]} — с меньшим лук не натянуть (решение 164)`,
+    );
+  const baseTraits = isFists(command.weapon)
     ? (state.wounds.combat.melee?.weapons[command.weapon]?.template.traits ?? []).slice()
     : withTalentTraits(
         impliedTraits(weaponTraits(arsenalWeapon).traits),
         arsenalWeapon,
         combatant(b, command.actor).character,
       );
+  // War hammer (ruling 166): the blunt side — the first ББ and «Оглушающее»; the spike — the
+  // ББ in brackets and the optional «Калечащее (2)» instead.
+  const spikeAlt = command.spike ? arsenalWeapon.penetrationAlt : undefined;
+  if (command.spike && (spikeAlt === undefined || kind !== 'melee'))
+    throw new Error('Удар клювом — только боевым молотом с двумя ББ (решение 166)');
+  const traits =
+    spikeAlt !== undefined
+      ? [
+          ...baseTraits.filter((t) => t.name !== 'Оглушающее'),
+          ...weaponTraits(arsenalWeapon).optional.filter((t) => t.name === 'Калечащее'),
+        ]
+      : baseTraits;
   // Bare hands against an armed target: −20 to НР; «Кулачный боец» counts as armed (ruling 138).
   if (
     isFists(command.weapon) &&
@@ -4221,7 +4248,17 @@ function resolveAttack(
   }
   if (fistsRestore) restoreFists(state, command.actor, fistsRestore);
   const damage = hits.map((hit) =>
-    resolveHit(b, state, command, hit, { ...info, degrees }, rng, logs),
+    resolveHit(
+      b,
+      state,
+      command,
+      spikeAlt !== undefined
+        ? { ...hit, penetration: { ...hit.penetration, value: spikeAlt } }
+        : hit,
+      { ...info, degrees },
+      rng,
+      logs,
+    ),
   );
   return {
     status: 'RESOLVED',
@@ -5336,7 +5373,9 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
           type: 'reload',
           weaponId: weapon.id,
           containerId: spareId,
-          ...(weaponExpert(b, command.actor, weapon.id) ? { asFreeAction: true } : {}),
+          ...(weaponExpert(b, command.actor, weapon.id) || isBow(weaponOf(b, weapon.id)?.arsenal)
+            ? { asFreeAction: true }
+            : {}),
         });
         next = r.state;
         detail = { ...r.result };
@@ -5980,7 +6019,8 @@ export const readyCost = (b: Battle, actorId: ActorId) =>
 /** Reload cost with «Быстрая перезарядка» (−1 ОД, 1 ОД → СД). */
 export function reloadCost(b: Battle, actorId: ActorId, weaponId: WeaponId): string {
   const base = getEngine(b).wounds.combat.weapons[weaponId]?.template.profile.reload.odCost ?? 1;
-  if (weaponExpert(b, actorId, weaponId)) return 'СД';
+  // A bow: the arrow goes on for the Free Action (ruling 164).
+  if (weaponExpert(b, actorId, weaponId) || isBow(weaponOf(b, weaponId)?.arsenal)) return 'СД';
   const n = hasTalentNamed(b, actorId, RAPID_RELOAD_TALENT) ? base - 1 : base;
   return n <= 0 ? 'СД' : `${n} ОД`;
 }

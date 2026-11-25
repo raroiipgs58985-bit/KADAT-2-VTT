@@ -74,6 +74,11 @@ export interface ArsenalWeapon {
   readonly damage: DamageSpec | null;
   readonly damageText: string;
   readonly penetration: number | null;
+  /**
+   * «1 (3)» (war hammers): the second ББ — a blow with the spike, with «Калечащее (2)»
+   * (author ruling 166). Absent when the sheet gives one number.
+   */
+  readonly penetrationAlt?: number;
   readonly magazine: number | null;
   readonly reload: { readonly od: number | null; readonly text: string } | null;
   readonly properties: readonly PropertyRef[];
@@ -508,7 +513,13 @@ export function importArsenal(original: ArsenalSnapshot): ArsenalDataset {
         rof: c.rof === undefined ? null : parseRof(rofText),
         damage: parseDamage(damageText),
         damageText,
-        penetration: /^\d+$/.test(at(r, c.pen)) ? Number(at(r, c.pen)) : null,
+        ...(() => {
+          const pen = at(r, c.pen);
+          const two = /^(\d+)\s*\((\d+)\)$/.exec(pen);
+          return two
+            ? { penetration: Number(two[1]), penetrationAlt: Number(two[2]) }
+            : { penetration: /^\d+$/.test(pen) ? Number(pen) : null };
+        })(),
         magazine: /^\d+$/.test(at(r, c.mag)) ? Number(at(r, c.mag)) : null,
         reload: c.reload === undefined ? null : parseReload(at(r, c.reload)),
         properties: props(at(r, c.props), src),

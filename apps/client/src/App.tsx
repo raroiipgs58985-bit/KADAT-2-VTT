@@ -1273,6 +1273,10 @@ export function App() {
                             ...(form.meleeBase && !form.called
                               ? { meleeBase: form.meleeBase }
                               : {}),
+                            ...(form.spike &&
+                            weaponOf(battle, form.weapon)?.arsenal?.penetrationAlt !== undefined
+                              ? { spike: true }
+                              : {}),
                             ...(() => {
                               const other = form.dual
                                 ? otherWeaponInHand(battle, info.active, form.weapon)

@@ -1852,7 +1852,8 @@
     "type": "У"
    },
    "damageText": "1к10+2 У",
-   "penetration": null,
+   "penetration": 1,
+   "penetrationAlt": 3,
    "magazine": null,
    "reload": null,
    "properties": [
@@ -1980,7 +1981,8 @@
     "type": "У"
    },
    "damageText": "2к10 У",
-   "penetration": null,
+   "penetration": 2,
+   "penetrationAlt": 4,
    "magazine": null,
    "reload": null,
    "properties": [
@@ -7787,7 +7789,8 @@
     "type": "У"
    },
    "damageText": "2к10+2 У",
-   "penetration": null,
+   "penetration": 3,
+   "penetrationAlt": 5,
    "magazine": null,
    "reload": null,
    "properties": [

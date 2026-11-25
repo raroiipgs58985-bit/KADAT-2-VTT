@@ -56,12 +56,16 @@ const MELEE_CLASSES = ['ББ'];
 const RANGED_CLASSES = ['П', 'ОС', 'ТО', 'СТ'];
 export type WeaponKind = 'ranged' | 'melee';
 
-/** «10хБС», «БС*5»: the multiplier of the Strength bonus for a thrown weapon (ruling 154). */
-export function thrownMultiplier(w: ArsenalWeapon): number | null {
-  if (w.weaponClass !== 'Метательное' || !w.range.formula) return null;
+/** «10хБС», «БС*5»: the multiplier of the Strength bonus in a range formula, or null. */
+export function strengthRangeMultiplier(w: ArsenalWeapon): number | null {
+  if (!w.range.formula) return null;
   const t = w.range.text.replace(/\s/g, '');
   const m = /^(\d+)[хxХX*]БС$/.exec(t) ?? /^БС[хxХX*](\d+)$/.exec(t);
   return m ? Number(m[1]) : null;
+}
+/** Thrown weapons: the range is a multiple of бСЛ (ruling 154). */
+export function thrownMultiplier(w: ArsenalWeapon): number | null {
+  return w.weaponClass === 'Метательное' ? strengthRangeMultiplier(w) : null;
 }
 export const isThrown = (w: ArsenalWeapon | null) => !!w && w.weaponClass === 'Метательное';
 /** Maximum throw distance of a battle weapon in metres: multiplier × бСЛ of the owner (ruling 154). */
@@ -88,7 +92,9 @@ export function weaponProblem(w: ArsenalWeapon | null): string | null {
   }
   if (!RANGED_CLASSES.includes(w.weaponClass))
     return `Класс «${w.weaponClass}» в бою пока не поддержан`;
-  if (w.range.meters === null) return 'Дистанция не прочитана (формула от бСЛ)';
+  // Bows: «БС*10» — the range is a multiple of the owner's бСЛ (ruling 164).
+  if (w.range.meters === null && strengthRangeMultiplier(w) === null)
+    return 'Дистанция не прочитана (формула от бСЛ)';
   if (!w.rof || (!w.rof.single && !w.rof.short && !w.rof.long))
     return 'Режимы стрельбы не прочитаны';
   if (w.magazine === null) return 'Нет магазина в Арсенале';
@@ -241,7 +247,7 @@ export function engineWeapons(b: Battle) {
   for (const w of battleWeapons(b)) {
     if (!w.arsenal || weaponProblem(w.arsenal)) continue;
     if (weaponKind(w.arsenal) === 'ranged') {
-      const thrown = thrownMultiplier(w.arsenal);
+      const thrown = strengthRangeMultiplier(w.arsenal);
       const instance = rangedInstance(
         w.id,
         w.owner,
