@@ -129,6 +129,7 @@ type Drag =
       purpose: 'floor' | 'decoration' | 'obstacle' | 'zone';
     }
   | { kind: 'door'; pointer: number; start: Vertex; end: Vertex }
+  | { kind: 'wall-draw'; pointer: number; start: Vertex; end: Vertex; tap: Vertex }
   | { kind: 'wall-end'; pointer: number; wallId: string; end: 'start' | 'end'; at: Vertex }
   | { kind: 'background'; pointer: number; start: Point; offset: Point };
 
@@ -281,9 +282,14 @@ export function TacticalMap(props: Props) {
     x: clamp(Math.round(p.x), 0, map.cols),
     y: clamp(Math.round(p.y), 0, map.rows),
   });
-  // Wall drawing: successive clicks add vertices; click the last one again, double-click
-  // or press Enter to finish; Escape cancels the chain.
+  // Wall drawing: drag a segment (a finger on the phone) or tap vertices; each next segment goes
+  // on from the last point, snapped to a horizontal or vertical line. «Готово», a tap on the last
+  // point or Enter finishes; Escape or «Отмена» cancels the chain.
   const [wallPoints, setWallPoints] = useState<Vertex[]>([]);
+  const straight = (from: Vertex, v: Vertex): Vertex =>
+    Math.abs(v.x - from.x) >= Math.abs(v.y - from.y)
+      ? { x: v.x, y: from.y }
+      : { x: from.x, y: v.y };
   const finishWall = () => {
     if (wallPoints.length >= 2) props.onAddWall(wallPoints);
     setWallPoints([]);
@@ -362,12 +368,9 @@ export function TacticalMap(props: Props) {
     if (mode === 'editor' && props.tool === 'wall') {
       const v = vertexAt(p);
       const last = wallPoints.at(-1);
-      if (last && last.x === v.x && last.y === v.y) {
-        finishWall();
-        return;
-      }
-      if (last && last.x !== v.x && last.y !== v.y) return; // only straight segments
-      setWallPoints([...wallPoints, v]);
+      svg.current!.setPointerCapture(e.pointerId);
+      const start = last ?? v;
+      setDrag({ kind: 'wall-draw', pointer: e.pointerId, start, end: start, tap: v });
       return;
     }
     if (mode === 'editor' && props.tool === 'door') {
@@ -431,6 +434,8 @@ export function TacticalMap(props: Props) {
       setDrag({ ...drag, offset: { x: p.x - drag.start.x, y: p.y - drag.start.y } });
     } else if (drag.kind === 'wall-end') {
       setDrag({ ...drag, at: vertexAt(p) });
+    } else if (drag.kind === 'wall-draw') {
+      setDrag({ ...drag, end: straight(drag.start, vertexAt(p)) });
     } else if (drag.kind === 'door') {
       // Snap along the dominant axis so the opening stays straight.
       const v = vertexAt(p);
@@ -477,6 +482,16 @@ export function TacticalMap(props: Props) {
       } else if (drag.kind === 'door') {
         if (drag.start.x !== drag.end.x || drag.start.y !== drag.end.y)
           props.onAddDoor(drag.start, drag.end);
+      } else if (drag.kind === 'wall-draw') {
+        const last = wallPoints.at(-1);
+        const dragged = drag.end.x !== drag.start.x || drag.end.y !== drag.start.y;
+        if (dragged) setWallPoints(last ? [...wallPoints, drag.end] : [drag.start, drag.end]);
+        else if (!last) setWallPoints([drag.tap]);
+        else if (last.x === drag.tap.x && last.y === drag.tap.y) finishWall();
+        else {
+          const v = straight(last, drag.tap);
+          if (v.x !== last.x || v.y !== last.y) setWallPoints([...wallPoints, v]);
+        }
       } else if (drag.kind === 'wall-end') {
         const wall = map.walls.find((w) => w.id === drag.wallId);
         const current = wall && (drag.end === 'start' ? wall.points[0] : wall.points.at(-1));
@@ -600,7 +615,7 @@ export function TacticalMap(props: Props) {
         : props.tool === 'select'
           ? 'Выбор: щёлкните стену, дверь, препятствие, зону или декорацию'
           : props.tool === 'wall'
-            ? `Стена: щёлкайте вершины сетки (только по горизонтали/вертикали); повторный щелчок по последней точке или Enter — завершить, Escape — отмена (${wallPoints.length} т.)`
+            ? `Стена: проведите пальцем или мышью отрезок (или касайтесь вершин); следующий отрезок продолжается от последней точки. «Готово» — завершить (${wallPoints.length} т.)`
             : props.tool === 'door'
               ? 'Дверь: протяните по прямому участку стены от вершины до вершины'
               : props.tool === 'obstacle'
@@ -656,6 +671,28 @@ export function TacticalMap(props: Props) {
         <span className="map-hint" title={hint}>
           {hint}
         </span>
+        {mode === 'editor' && props.tool === 'wall' && (
+          <span className="wall-actions">
+            <button
+              type="button"
+              className="primary"
+              disabled={wallPoints.length < 2}
+              onClick={finishWall}
+            >
+              Готово
+            </button>
+            <button
+              type="button"
+              disabled={!wallPoints.length}
+              onClick={() => setWallPoints(wallPoints.slice(0, -1))}
+            >
+              Убрать точку
+            </button>
+            <button type="button" disabled={!wallPoints.length} onClick={() => setWallPoints([])}>
+              Отмена
+            </button>
+          </span>
+        )}
         <span className="coords detail">
           {map.cols} × {map.rows}
           {` · клетка ${hoverCell ? `${hoverCell.col}, ${hoverCell.row}` : '—'}`}
@@ -897,18 +934,28 @@ export function TacticalMap(props: Props) {
               </g>
             );
           })}
-          {mode === 'editor' && props.tool === 'wall' && wallPoints.length > 0 && (
-            <g className="wall-draft" data-testid="wall-draft">
-              <polyline
-                points={[...wallPoints, ...(hover ? [vertexAt(hover)] : [])]
-                  .map((p) => `${p.x},${p.y}`)
-                  .join(' ')}
-              />
-              {wallPoints.map((p, i) => (
-                <circle key={i} cx={p.x} cy={p.y} r={0.12} />
-              ))}
-            </g>
-          )}
+          {mode === 'editor' &&
+            props.tool === 'wall' &&
+            (wallPoints.length > 0 || drag?.kind === 'wall-draw') && (
+              <g className="wall-draft" data-testid="wall-draft">
+                <polyline
+                  points={(drag?.kind === 'wall-draw'
+                    ? [...(wallPoints.length ? wallPoints : [drag.start]), drag.end]
+                    : [
+                        ...wallPoints,
+                        ...(hover && wallPoints.length
+                          ? [straight(wallPoints.at(-1)!, vertexAt(hover))]
+                          : []),
+                      ]
+                  )
+                    .map((p) => `${p.x},${p.y}`)
+                    .join(' ')}
+                />
+                {wallPoints.map((p, i) => (
+                  <circle key={i} cx={p.x} cy={p.y} r={0.12} />
+                ))}
+              </g>
+            )}
           {drag?.kind === 'door' && (
             <line
               className="door-draft"

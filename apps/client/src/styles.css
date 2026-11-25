@@ -664,6 +664,16 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Wall drawing on a phone: big buttons on their own row (the hint line is cut short). */
+.wall-actions {
+  display: flex;
+  gap: 8px;
+  flex-basis: 100%;
+}
+.map-toolbar .wall-actions button {
+  flex: 1 1 0;
+  padding: 10px 8px;
+}
 .coords {
   font-variant-numeric: tabular-nums;
   color: var(--muted);

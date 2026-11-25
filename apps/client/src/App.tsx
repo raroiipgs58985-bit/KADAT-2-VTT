@@ -42,6 +42,7 @@ import {
   looseWeapons,
   activeTrails,
   activeSmokes,
+  incapacity,
   furiousOpen,
   grappleAction,
   placePush,
@@ -976,6 +977,11 @@ export function App() {
               </section>
             ) : (
               <section className="panel actions">
+                {info.active && incapacity(battle, info.active) && (
+                  <p className="weapon-note badge-blocked">
+                    {incapacity(battle, info.active)} Нажмите «Передать ход».
+                  </p>
+                )}
                 <div className="tabs" role="tablist" aria-label="Действия">
                   <button
                     type="button"

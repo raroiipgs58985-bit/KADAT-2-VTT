@@ -444,12 +444,27 @@ await page.getByRole('tab', { name: 'Расстановка' }).click();
   ])
     await click(x, y);
   check((await count('[data-wall]')) === 1, 'a closed wall chain is created');
-  // A diagonal segment is not accepted while drawing.
+  // A diagonal tap snaps to a straight line while drawing.
   await click(2, 2);
-  await click(4, 4);
-  check((await count('[data-testid="wall-draft"] circle')) === 1, 'a diagonal vertex is ignored');
+  await click(4, 5);
+  check((await count('[data-testid="wall-draft"] circle')) === 2, 'a diagonal tap is straightened');
   await page.keyboard.press('Escape');
   check((await count('[data-testid="wall-draft"]')) === 0, 'Escape cancels the wall chain');
+  // A finger drag draws a segment; «Отмена» drops the chain (phone, no keyboard).
+  {
+    const a = await screen(2, 2),
+      b = await screen(6, 2.3);
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    await page.mouse.move(b.x, b.y, { steps: 5 });
+    await page.mouse.up();
+  }
+  check(
+    (await count('[data-testid="wall-draft"] circle')) === 2,
+    'a drag draws a straight segment',
+  );
+  await page.getByRole('button', { name: 'Отмена', exact: true }).click();
+  check((await count('[data-testid="wall-draft"]')) === 0, '«Отмена» drops the wall chain');
 
   // A one-edge door on the west wall and a crate obstacle inside.
   await page.getByRole('button', { name: /Дверь/ }).click();
@@ -1064,8 +1079,8 @@ check(journal >= 7, `journal lists ${journal} entries`);
   );
   await page.getByRole('tab', { name: 'Атака' }).click();
   check(
-    (await page.textContent('.actions')).includes('линия атаки проходит через'),
-    'stand: attack through the room walls is flagged for the author',
+    (await page.textContent('.actions')).includes('Линию атаки перекрывает'),
+    'stand: attack through the room walls is refused',
   );
   check(
     await page.getByRole('button', { name: 'Атаковать' }).isDisabled(),

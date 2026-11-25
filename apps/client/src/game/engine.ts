@@ -4233,16 +4233,28 @@ function resolveAttack(
 }
 
 /**
- * Line of sight and attacks through barriers are not approved yet (author questions 15–16,
- * stages 5–6). An attack whose straight line from centre to centre crosses or touches a wall,
- * a closed door or a vision-blocking obstacle stops before any dice; nothing is guessed.
+ * An attack whose straight line from centre to centre crosses a wall, a closed door or a
+ * vision-blocking obstacle is impossible (ruling 142); a line grazing a wall corner is cover.
  */
 export function attackLineProblem(b: Battle, attacker: ActorId, target: ActorId): string | null {
   // Ruling 142: a line that only grazes a wall corner is allowed — the wall is cover.
   const blocker = sightLine(posOf(b, attacker), posOf(b, target), sceneGeometry(b)).blocker;
   return blocker
-    ? `Ждёт решения автора: линия атаки проходит через ${blocker.label}. Правила линии видимости и атаки сквозь преграды ещё не утверждены (этапы 5–6).`
+    ? `Линию атаки перекрывает ${blocker.label} — атаковать сквозь неё нельзя (решение 142; угол стены — укрытие).`
     : null;
+}
+/** Why the actor cannot act this turn (unconscious, stunned), or null. */
+export function incapacity(b: Battle, id: ActorId): string | null {
+  const types = new Set(
+    getEngine(b)
+      .wounds.combat.session.conditions.filter((c) => c.actor.actorId === id)
+      .map((c) => c.type),
+  );
+  const why = [
+    ...(types.has('Unconscious') ? ['без сознания'] : []),
+    ...(types.has('Stunned') ? ['оглушён'] : []),
+  ];
+  return why.length ? `${actorName(b, id)} ${why.join(' и ')} — действовать не может.` : null;
 }
 /** Local command envelope is atomic; individual accepted resolvers remain unchanged.
  * A pending command retains its full RNG prefix and stable ID for exact continuation. */

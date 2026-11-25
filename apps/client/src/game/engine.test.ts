@@ -935,7 +935,7 @@ describe('Cover (ruling 142)', () => {
   });
   it('a wall the line crosses at a joint between its edges still blocks', async () => {
     const b = await scene('low', true, 9);
-    expect(attackLineProblem(b, 's', 't')).toMatch(/линия атаки проходит через/);
+    expect(attackLineProblem(b, 's', 't')).toMatch(/Линию атаки перекрывает/);
   });
 });
 
