@@ -1,7 +1,7 @@
 // Step 2: clicked routes, difficult terrain and falls (author rulings 7, 8, 9, 11, 42, 43).
 import { describe, expect, it } from 'vitest';
 import { emptyMap, type MapDocument } from './map';
-import { createBattle, planRoute, type Battle } from './model';
+import { createBattle, destinationsWithin, planRoute, type Battle } from './model';
 import {
   applyMap,
   getEngine,
@@ -155,5 +155,18 @@ describe('Running across difficult terrain — rulings 11, 42, 43', () => {
     const replayed = importReplay(JSON.parse(JSON.stringify(exportReplay(b))));
     expect(replayed.positions).toEqual(b.positions);
     expect(getEngine(replayed).wounds.combat.actors['kelus-drakar']!.posture).toBe('prone');
+  });
+});
+
+describe('Route mode highlight', () => {
+  it('shows where the next leg can go with the distance left', () => {
+    const b = createBattle();
+    const from = b.positions['kelus-drakar']!;
+    const first = { x: from.x + 3, y: from.y };
+    const next = destinationsWithin(b, 'kelus-drakar', 5, [first]);
+    expect(next.length).toBeGreaterThan(0);
+    for (const p of next)
+      expect(Math.hypot(p.x - first.x, p.y - first.y)).toBeLessThanOrEqual(2 + 1e-9);
+    expect(destinationsWithin(b, 'kelus-drakar', 3, [first])).toEqual([]);
   });
 });

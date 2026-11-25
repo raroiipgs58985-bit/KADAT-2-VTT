@@ -284,8 +284,20 @@ export function movementProblem(
  * movement (difficult terrain counts double). Only anchors inside the square around the token
  * are visited, so the cost does not grow with map size.
  */
-export function destinationsWithin(b: Battle, id: ActorId, maxDistance: number): Point[] {
-  const from = posOf(b, id);
+export function destinationsWithin(
+  b: Battle,
+  id: ActorId,
+  maxDistance: number,
+  /** Route mode: the points chosen so far; the next leg starts from the last one. */
+  route: readonly Point[] = [],
+): Point[] {
+  const g0 = sceneGeometry(b);
+  const spent = route.length ? planRoute(b, id, route, g0) : null;
+  if (spent?.problem) return [];
+  const used = spent?.cost ?? 0;
+  const from = route.at(-1) ?? posOf(b, id);
+  maxDistance -= used;
+  if (maxDistance <= 1e-9) return [];
   const f = fpOf(b, id);
   const g = sceneGeometry(b);
   const reach = Math.ceil(maxDistance) + 1;
@@ -299,8 +311,8 @@ export function destinationsWithin(b: Battle, id: ActorId, maxDistance: number):
       const c = { x: col + f.width / 2, y: row + f.height / 2 };
       const d = distance(from, c);
       if (d === 0 || d > maxDistance + 1e-9) continue;
-      const plan = planRoute(b, id, [c], g);
-      if (plan.problem === null && plan.cost <= maxDistance + 1e-9) out.push(c);
+      const plan = planRoute(b, id, [...route, c], g);
+      if (plan.problem === null && plan.cost <= maxDistance + used + 1e-9) out.push(c);
     }
   return out;
 }

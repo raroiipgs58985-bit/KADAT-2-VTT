@@ -10,6 +10,7 @@ import {
   partialOf,
   medicaBonus,
   fireChargeDestination,
+  chargeUnavailable,
   weaponInHand,
   weaponDropped,
   weaponHanging,
@@ -548,16 +549,19 @@ export function AttackPanel(props: {
         distance(form.target) > 1.5 &&
         (() => {
           const at = chargeDestination(props.battle, attacker, form.target);
+          const why = at ? null : chargeUnavailable(props.battle, attacker, form.target);
           return (
-            <button
-              type="button"
-              disabled={!props.canAct || !at}
-              onClick={() => at && props.onCharge!(at)}
-              title={at ? '' : 'Нет свободной клетки рядом с целью в пределах 3 × СКР'}
-            >
-              Натиск: подбежать и ударить (2 ОД, +20)
-              {at ? '' : ' — недоступен'}
-            </button>
+            <>
+              <button
+                type="button"
+                disabled={!props.canAct || !at}
+                onClick={() => at && props.onCharge!(at)}
+              >
+                Натиск: подбежать и ударить (2 ОД, +20)
+                {at ? '' : ' — недоступен'}
+              </button>
+              {why && <p className="muted small">{why}</p>}
+            </>
           );
         })()}
       {props.onCharge &&

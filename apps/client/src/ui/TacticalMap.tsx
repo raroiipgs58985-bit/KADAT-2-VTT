@@ -254,12 +254,17 @@ export function TacticalMap(props: Props) {
   // Cell-aligned destinations within the Core distance for the moving token's area.
   const destinations = useMemo(
     () =>
-      // In route mode the straight-line reach from the start would mislead: no highlight.
-      moveIntent && !moveIntent.route
-        ? destinationsWithin(battle, moveIntent.actor, moveIntent.maxDistance)
+      // Route mode: where the next leg can go from the last point with the distance left.
+      moveIntent
+        ? destinationsWithin(
+            battle,
+            moveIntent.actor,
+            moveIntent.maxDistance,
+            moveIntent.route ?? [],
+          )
         : [],
     // `battle` is mutated in place; `version` makes the highlight follow every change.
-    [battle, version, moveIntent?.actor, moveIntent?.maxDistance, moveIntent?.route === null],
+    [battle, version, moveIntent?.actor, moveIntent?.maxDistance, moveIntent?.route],
   );
   const destinationKeys = useMemo(
     () => new Set(destinations.map((d) => `${d.x}:${d.y}`)),

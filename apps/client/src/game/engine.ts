@@ -2070,6 +2070,21 @@ export function chargeProblem(
   if (wall) return `Путь натиска перекрыт: ${wall.label}`;
   return null;
 }
+/** Why no charge to the target is possible now, in words for the player; null — possible. */
+export function chargeUnavailable(b: Battle, actor: ActorId, target: ActorId): string | null {
+  if (chargeDestination(b, actor, target)) return null;
+  const from = posOf(b, actor);
+  const to = posOf(b, target);
+  const cells: { x: number; y: number }[] = [];
+  for (const dx of [-1, 0, 1])
+    for (const dy of [-1, 0, 1]) if (dx || dy) cells.push({ x: to.x + dx, y: to.y + dy });
+  cells.sort(
+    (a, c) => Math.hypot(a.x - from.x, a.y - from.y) - Math.hypot(c.x - from.x, c.y - from.y),
+  );
+  const reasons = [...new Set(cells.map((c) => chargeProblem(b, actor, target, c) ?? ''))];
+  const skr = getEngine(b).wounds.combat.actors[actor]?.movement ?? 0;
+  return `Натиск недоступен: ${reasons.filter(Boolean).slice(0, 2).join('; ')}. Натиск — по прямой без стен, до ${skr * 3} м (3 × СКР), в свободную клетку рядом с целью.`;
+}
 /** The nearest free cell next to the target for a charge, or null. */
 export function chargeDestination(b: Battle, actor: ActorId, target: ActorId) {
   const from = posOf(b, actor);

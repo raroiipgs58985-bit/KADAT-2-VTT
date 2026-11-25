@@ -25,6 +25,7 @@ const conditionLabel: Record<string, string> = {
   Poisoned: 'Отравлен',
   Irradiated: 'Облучён',
   Agony: 'Агония',
+  PersistentFatigue: 'Стойкая усталость',
 };
 const bleedingLabel = { LIGHT: 'лёгкое', MEDIUM: 'среднее', HEAVY: 'тяжёлое' } as const;
 const supportLabel = { supported: 'работает', partial: 'частично', blocked: 'не подключено' };
