@@ -41,6 +41,7 @@ import {
   extractWeapon,
   looseWeapons,
   activeTrails,
+  activeSmokes,
   grappleAction,
   placePush,
   pendingPush,
@@ -60,7 +61,7 @@ import {
   type Battle,
 } from './game/model';
 import { RosterPanel } from './ui/RosterPanel';
-import { modeFor } from './game/combatants';
+import { modeFor, throwRange } from './game/combatants';
 import type { FloorColorId } from './game/map';
 import type { Point } from './game/grid';
 import {
@@ -183,6 +184,8 @@ export function App() {
     setRoute(null);
   };
   const [form, setForm] = useState<AttackForm>(() => defaultAttack(battle, info.active));
+  /** Choosing the cell for a throw on the map (ruling 154). */
+  const [throwPick, setThrowPick] = useState(false);
   const [dice, setDice] = useState<DiceSettings>({
     mode: 'random',
     fixed: '100:45,10:2,100:20',
@@ -745,23 +748,48 @@ export function App() {
               onPlaceFall={(id, p) => run((b) => placeFallen(b, id, p))}
               loose={looseWeapons(battle)}
               trails={activeTrails(battle)}
+              smokes={activeSmokes(battle)}
               placingLoose={
                 mode !== 'combat'
                   ? null
-                  : pendingLoose(battle)
-                    ? { from: pendingLoose(battle)!.from, max: pendingLoose(battle)!.maxDistance }
-                    : pendingPush(battle)
-                      ? {
-                          from: posOf(battle, pendingPush(battle)!.controller),
-                          max: pendingPush(battle)!.maxDistance,
-                        }
-                      : null
+                  : throwPick
+                    ? {
+                        from: posOf(battle, info.active),
+                        max: throwRange(battle, form.weapon) ?? 0,
+                      }
+                    : pendingLoose(battle)
+                      ? { from: pendingLoose(battle)!.from, max: pendingLoose(battle)!.maxDistance }
+                      : pendingPush(battle)
+                        ? {
+                            from: posOf(battle, pendingPush(battle)!.controller),
+                            max: pendingPush(battle)!.maxDistance,
+                          }
+                        : null
               }
-              onPlaceLoose={(p) =>
+              onPlaceLoose={(p) => {
+                if (throwPick) {
+                  setThrowPick(false);
+                  run((b) =>
+                    attack(
+                      b,
+                      {
+                        id: commandId('throw'),
+                        actor: info.active,
+                        target: info.active,
+                        weapon: form.weapon,
+                        targetActivity: form.activity,
+                        modifier: form.modifier,
+                        at: p,
+                      },
+                      source(),
+                    ),
+                  );
+                  return;
+                }
                 run((b) =>
                   pendingPush(b) && !pendingLoose(b) ? placePush(b, p) : placeLoose(b, p),
-                )
-              }
+                );
+              }}
               onPlace={(id, x, y) => run((b) => placeActor(b, id, x, y))}
               onDraftPlace={(id, x, y) =>
                 edit((d) => placeToken(d, id, { x, y }, posOf(battle, id)))
@@ -1135,6 +1163,8 @@ export function App() {
                       )
                     }
                     fromHands={heavyFromHands(battle, info.active)}
+                    onThrowPick={() => setThrowPick((v) => !v)}
+                    throwPicking={throwPick}
                     onCharge={(at) =>
                       run((b) =>
                         attack(

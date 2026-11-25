@@ -41,7 +41,7 @@ import {
   type Battle,
   type WeaponId,
 } from '../game/model';
-import { fireModes, weaponKind, weaponProblem } from '../game/combatants';
+import { fireModes, isThrown, throwRange, weaponKind, weaponProblem } from '../game/combatants';
 
 type TurnInfo = ReturnType<typeof TurnInfoFn>;
 
@@ -386,6 +386,9 @@ export function AttackPanel(props: {
   onDisarm?: (weaponId: string) => void;
   /** «Натиск» to the cell next to the target (2 ОД). */
   onCharge?: (at: { x: number; y: number }) => void;
+  /** Thrown weapon: pick the cell on the map (ruling 154). */
+  onThrowPick?: () => void;
+  throwPicking?: boolean;
 }) {
   const { form, attacker } = props;
   const own = [
@@ -640,6 +643,26 @@ export function AttackPanel(props: {
         <p className="muted small">В этом ходу атака уже была: движок разрешает одну атаку.</p>
       )}
       {lineProblem && <p className="weapon-note badge-blocked">{lineProblem}</p>}
+      {weapon && isThrown(weapon.arsenal) && props.onThrowPick && (
+        <div className="weapon-note">
+          <p className="small">
+            Бросок: до {throwRange(props.battle, weapon.id) ?? 0} м, осталось{' '}
+            {weaponState(props.battle, weapon.id).rounds} шт. Тест НС; промах — разлёт по схеме.
+          </p>
+          <button
+            type="button"
+            onClick={props.onThrowPick}
+            disabled={
+              !props.canAct ||
+              props.attackedThisTurn ||
+              weaponState(props.battle, weapon.id).rounds < 1 ||
+              !props.inHand(weapon.id)
+            }
+          >
+            {props.throwPicking ? 'Выберите клетку на карте…' : 'Бросить в клетку'}
+          </button>
+        </div>
+      )}
       <button
         type="button"
         className="primary"
@@ -860,6 +883,13 @@ export function ActionsPanel(props: {
       {ranged.length > 0 && <h3>Перезарядка</h3>}
       {ranged.map((w) => {
         const st = state(w.id);
+        if (isThrown(w.arsenal))
+          return (
+            <div key={w.id} className="weapon-actions">
+              <strong>{w.name}</strong>
+              <span className="muted small"> · осталось {st.rounds} шт.</span>
+            </div>
+          );
         return (
           <div key={w.id} className="weapon-actions">
             <div>

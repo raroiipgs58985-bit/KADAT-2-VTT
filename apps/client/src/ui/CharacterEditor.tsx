@@ -545,9 +545,21 @@ export function CharacterEditor(props: { onClose: () => void; notify: Notify }) 
           onSling={(i, sling) =>
             set({
               weapons: doc.weapons.map((w, j) =>
-                j === i ? (sling ? { ...w, sling: true } : { name: w.name, ref: w.ref }) : w,
+                j === i
+                  ? sling
+                    ? { ...w, sling: true }
+                    : {
+                        name: w.name,
+                        ref: w.ref,
+                        ...(w.count !== undefined ? { count: w.count } : {}),
+                      }
+                  : w,
               ),
             })
+          }
+          countable={(ref) => (ref ? weaponById(ref)?.weaponClass === 'Метательное' : false)}
+          onCount={(i, count) =>
+            set({ weapons: doc.weapons.map((w, j) => (j === i ? { ...w, count } : w)) })
           }
         />
         <ArsenalSearch
@@ -630,11 +642,14 @@ const currentOr = (d: CharacterDocument) => d.movement.options[d.movement.curren
 
 /** Items chosen from the Arsenal, with their profile line. */
 function ItemList(props: {
-  items: readonly { name: string; ref: string | null; sling?: boolean }[];
+  items: readonly { name: string; ref: string | null; sling?: boolean; count?: number }[];
   describe: (ref: string | null) => string;
   onRemove: (index: number) => void;
   /** Weapons: «на ремне / цепи» (rulings 81–82). */
   onSling?: (index: number, sling: boolean) => void;
+  /** Thrown items: how many are carried (ruling 154). */
+  countable?: (ref: string | null) => boolean;
+  onCount?: (index: number, count: number) => void;
 }) {
   if (!props.items.length) return <p className="muted small">Пока ничего не выбрано.</p>;
   return (
@@ -652,6 +667,24 @@ function ItemList(props: {
                   onChange={(e) => props.onSling!(i, e.target.checked)}
                 />
                 на ремне / цепи
+              </label>
+            )}
+            {props.onCount && props.countable?.(it.ref) && (
+              <label className="small">
+                штук{' '}
+                <input
+                  type="number"
+                  min={0}
+                  max={99}
+                  value={it.count ?? 1}
+                  style={{ width: '4em' }}
+                  onChange={(e) =>
+                    props.onCount!(
+                      i,
+                      Math.max(0, Math.min(99, Math.round(Number(e.target.value) || 0))),
+                    )
+                  }
+                />
               </label>
             )}
           </div>

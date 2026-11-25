@@ -183,6 +183,8 @@ export function radProtectedArmour(items: readonly { ref: string | null }[]): bo
 }
 /** Properties whose rating may be dice with a duration: «Огненное (2к10/3)». */
 const DICE_RATED = new Set(['Огненное', 'След']);
+/** Radii in metres may be fractional: «Взрыв (0.5)» — half a cell (ruling 151). */
+const DECIMAL_RATED = new Set(['Взрыв', 'Локальный взрыв']);
 /**
  * Properties of an Arsenal weapon for the rules engine. A rating that is a whole number
  * becomes `value`; anything else («3+», «2к10/3», «см прим») is not read and is listed for the
@@ -215,14 +217,16 @@ export function weaponTraits(w: ArsenalWeapon): {
           ? { name: p.property, value: Number(split[1]), duration: Number(split[2]) }
           : /^\d+$/.test(v)
             ? { name: p.property, value: Number(v) }
-            : dice
-              ? {
-                  name: p.property,
-                  dice: { count: Number(dice[1]), sides: Number(dice[2]) },
-                  ...(dice[3] ? { value: Number(dice[3]) } : {}),
-                  ...(dice[4] ? { duration: Number(dice[4]) } : {}),
-                }
-              : null;
+            : DECIMAL_RATED.has(p.property) && /^\d+[.,]\d+$/.test(v)
+              ? { name: p.property, value: Number(v.replace(',', '.')) }
+              : dice
+                ? {
+                    name: p.property,
+                    dice: { count: Number(dice[1]), sides: Number(dice[2]) },
+                    ...(dice[3] ? { value: Number(dice[3]) } : {}),
+                    ...(dice[4] ? { duration: Number(dice[4]) } : {}),
+                  }
+                : null;
     }
     if (!trait) unread.push(p.raw);
     else (p.optional ? optional : traits).push(trait);

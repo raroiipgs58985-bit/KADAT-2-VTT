@@ -119,6 +119,7 @@ import {
   fireModes,
   weaponKind,
   weaponProblem,
+  isThrown,
   type WeaponKind,
 } from './combatants';
 import type { ArsenalWeapon } from '../../../../packages/canonical-data/src/arsenal';
@@ -207,6 +208,8 @@ export interface EngineState {
     string,
     { actor: ActorId; zone: Zone; dice: number; hit: DamageInput; command: AttackCommand }
   >;
+  /** Smoke clouds (ruling 146): −20 to НС in, from or through them. */
+  smokes?: { id: string; x: number; y: number; r: number; untilRound: number }[];
   /** «След» zones (ruling 149): half damage to those inside at their turn start or entering. */
   trails?: Trail[];
   /** ОБ lost by cover (ruling 142): obstacle or wall id → loss. */
@@ -271,6 +274,8 @@ export interface AttackCommand {
   technique?: 'grapple' | 'stun' | 'knockdown';
   /** «Стремительная» / «Молниеносная атака» in melee (talents, ruling 130). */
   meleeBase?: 'swift' | 'lightning' | 'cautious' | 'reckless';
+  /** Thrown weapons: a cell aimed at instead of a character (ruling 154). */
+  at?: { x: number; y: number };
   /** Internal: «Двойной выстрел» — the first shot hit, the second gets +20 (ruling 127). */
   doubleShot?: boolean;
 }
@@ -2105,7 +2110,15 @@ export function attackWeapon(b: Battle, weaponId: WeaponId): BattleWeapon | null
   if (!isFists(weaponId)) return weaponOf(b, weaponId);
   const owner = weaponId.slice(0, -':hands'.length);
   if (!b.roster[owner]) return null;
-  return { id: weaponId, owner, name: 'Кулаки', arsenal: FISTS, capacity: null, sling: false };
+  return {
+    id: weaponId,
+    owner,
+    name: 'Кулаки',
+    arsenal: FISTS,
+    capacity: null,
+    sling: false,
+    count: 1,
+  };
 }
 /**
  * Bare hands for this blow (rulings 138–139): a free hand is needed; «Кулачный боец» — 1к10,
@@ -2268,6 +2281,21 @@ export function coverFor(b: Battle, attacker: ActorId, target: ActorId, state = 
       zones: COVER_ZONES[o.coverHeight ?? 'low'],
     });
   }
+  // Windows (ruling 153): a closed door that does not block vision; with cover ОБ it covers a
+  // target right behind it when the shot passes through it.
+  for (const d of b.map.doors) {
+    if (!d.coverOb || (b.doors[d.id] ?? d.open) || d.blocksVision) continue;
+    const mid = { x: (d.from.x + d.to.x) / 2, y: (d.from.y + d.to.y) / 2 };
+    const half = Math.hypot(d.to.x - d.from.x, d.to.y - d.from.y) / 2;
+    if (Math.hypot(to.x - mid.x, to.y - mid.y) > half + 1.5) continue;
+    if (!segmentsCross(from, to, d.from, d.to)) continue;
+    found.push({
+      id: d.id,
+      label: 'окно',
+      ob: left(d.id, d.coverOb),
+      zones: COVER_ZONES[d.coverHeight ?? 'medium'],
+    });
+  }
   for (const c of sightLine(from, to, sceneGeometry(b)).corners) {
     const ob =
       c.kind === 'wall'
@@ -2279,6 +2307,16 @@ export function coverFor(b: Battle, attacker: ActorId, target: ActorId, state = 
     found.push({ id: c.id, label: c.label, ob: left(c.id, ob), zones: COVER_ZONES.high });
   }
   return found.sort((x, y) => y.ob - x.ob)[0] ?? null;
+}
+function segmentsCross(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  c: { x: number; y: number },
+  d: { x: number; y: number },
+) {
+  const o = (p: typeof a, q: typeof a, r: typeof a) =>
+    Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+  return o(a, b, c) !== o(a, b, d) && o(c, d, a) !== o(c, d, b);
 }
 function segmentHitsRect(
   from: { x: number; y: number },
@@ -2383,9 +2421,9 @@ function trailDamage(
   id: ActorId,
   rng: DiceSource,
   logs: unknown[],
-  only: (t: Trail) => boolean = () => true,
+  list: readonly Trail[] = trailsAt(b, id, state),
 ) {
-  for (const t of trailsAt(b, id, state).filter(only)) {
+  for (const t of list) {
     if (state.wounds.actors[id]?.life.status === 'DEAD') return;
     const weapon = state.wounds.combat.weapons[t.weapon];
     if (!weapon) continue;
@@ -2426,6 +2464,141 @@ function trailDamage(
     logs.push({ type: 'trail', actor: id, trail: t.id, finalDamage: r.finalDamage });
   }
 }
+/**
+ * Throwing (ruling 154): an НС test, no range penalties up to the maximum 10 × бСЛ; one item
+ * and 1 ОД. A hit lands on the point aimed at (a cell or a character), a miss scatters by the
+ * scheme in metres. «Взрыв» / «Локальный взрыв» blast there, «Дымовое» leaves a cloud.
+ */
+function throwResolve(
+  b: Battle,
+  state: EngineState,
+  command: AttackCommand,
+  info: Parameters<typeof resolveHit>[4],
+  ctx: ResolutionContext,
+  rng: DiceSource,
+  logs: unknown[],
+) {
+  const combat = state.wounds.combat;
+  const weapon = combat.weapons[command.weapon]!;
+  const container = weapon.loadedContainerId
+    ? combat.containers[weapon.loadedContainerId]
+    : undefined;
+  if (!container || container.currentRounds < 1) throw new Error('Больше нечего бросать');
+  const turn = combat.session.turn!;
+  if (turn.od < 1) throw new Error('Нужен 1 ОД');
+  if (turn.flags.some((f) => f.startsWith('attack:'))) throw new Error('Атака в этот ход уже была');
+  const from = posOf(b, command.actor);
+  const aim = command.at ?? posOf(b, command.target);
+  const max = weapon.template.profile.optimalRange;
+  const d = Math.hypot(aim.x - from.x, aim.y - from.y);
+  if (d > max + 1e-9) throw new Error(`Не добросить: максимум ${max} м (10 × бСЛ)`);
+  const c = combatant(b, command.actor).character;
+  const check = resolveCheck(
+    { baseValue: c.characteristics.НС.value, finalSuper: c.characteristics.НС.super, context: ctx },
+    rng,
+  ).result;
+  state.wounds = {
+    ...state.wounds,
+    combat: {
+      ...combat,
+      session: {
+        ...combat.session,
+        turn: { ...turn, od: turn.od - 1, flags: [...turn.flags, `attack:${command.id}`] },
+      },
+      containers: {
+        ...combat.containers,
+        [container.id]: { ...container, currentRounds: container.currentRounds - 1 },
+      },
+    },
+  };
+  logs.push({ type: 'throw', check });
+  const hit = check.outcome === 'success';
+  const blastX = info.traits.find((t) => t.name === 'Взрыв')?.value;
+  const localX = info.traits.find((t) => t.name === 'Локальный взрыв')?.value;
+  const smokeX = info.traits.find((t) => t.name === 'Дымовое')?.value;
+  let landed = hit ? { ...aim } : null;
+  let blasts: unknown = null;
+  if (blastX || localX) {
+    const r = resolveBlasts(
+      b,
+      state,
+      command,
+      { ...info, degrees: check.totalDegrees },
+      hit ? 1 : 0,
+      blastX ? { radius: blastX, local: false } : { radius: localX!, local: true },
+      rng,
+      logs,
+      aim,
+    ) as { at: { x: number; y: number } }[];
+    blasts = r;
+    landed = r[0]?.at ?? null;
+  } else if (!hit) landed = scatterPoint(b, from, aim, info.weaponClass, rng).at;
+  let smoke: unknown = null;
+  if (smokeX && landed) {
+    // «Дымовое (Х)»: a cloud of radius Х for к10+10 rounds (ruling 146).
+    const rounds = rollDie(10, rng).value + 10;
+    const round = state.wounds.combat.session.roundNumber;
+    state.smokes = [
+      ...(state.smokes ?? []),
+      {
+        id: `${command.id}:smoke`,
+        x: landed.x,
+        y: landed.y,
+        r: smokeX,
+        untilRound: round + rounds,
+      },
+    ];
+    smoke = { at: landed, radius: smokeX, rounds };
+  }
+  return { check, hit, aim, landed, ...(blasts ? { blasts } : {}), ...(smoke ? { smoke } : {}) };
+}
+/** A miss: the point scatters by the scheme (ruling 144). */
+function scatterPoint(
+  b: Battle,
+  from: { x: number; y: number },
+  aim: { x: number; y: number },
+  weaponClass: string,
+  rng: DiceSource,
+) {
+  const dir = rollDie(10, rng).value;
+  const distance = rollDie(10, rng).value * (['ТО', 'СТ'].includes(weaponClass) ? 5 : 1);
+  const len = Math.hypot(aim.x - from.x, aim.y - from.y) || 1;
+  const fwd = { x: (aim.x - from.x) / len, y: (aim.y - from.y) / len };
+  const left = { x: fwd.y, y: -fwd.x };
+  const [f, l] = SCATTER[dir]!;
+  const v = { x: fwd.x * f + left.x * l, y: fwd.y * f + left.y * l };
+  const n = Math.hypot(v.x, v.y);
+  return {
+    at: {
+      x: Math.min(b.map.cols, Math.max(0, aim.x + (v.x / n) * distance)),
+      y: Math.min(b.map.rows, Math.max(0, aim.y + (v.y / n) * distance)),
+    },
+    dir,
+    distance,
+  };
+}
+/** Smoke clouds still hanging (ruling 146). */
+export function activeSmokes(b: Battle, state = getEngine(b)) {
+  const round = state.wounds.combat.session.roundNumber;
+  return (state.smokes ?? []).filter((s) => round <= s.untilRound);
+}
+/** Whether the shot is in, from or through smoke (ruling 146): −20 once. */
+function smokeOnLine(
+  b: Battle,
+  state: EngineState,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+) {
+  return activeSmokes(b, state).some((s) => {
+    const dx = to.x - from.x,
+      dy = to.y - from.y;
+    const len2 = dx * dx + dy * dy;
+    const t = len2
+      ? Math.max(0, Math.min(1, ((s.x - from.x) * dx + (s.y - from.y) * dy) / len2))
+      : 0;
+    return Math.hypot(from.x + dx * t - s.x, from.y + dy * t - s.y) <= s.r + 1e-9;
+  });
+}
 /** Scatter scheme (ruling 144): d10 → direction in units of forward / left. */
 const SCATTER: Record<number, [number, number]> = {
   1: [1, 1],
@@ -2455,13 +2628,16 @@ function resolveBlasts(
   blast: { radius: number; local: boolean },
   rng: DiceSource,
   logs: unknown[],
+  /** Thrown: the point aimed at (a cell or a character). */
+  aimAt?: { x: number; y: number },
 ) {
   const from = posOf(b, command.actor),
-    aim = posOf(b, command.target);
+    aim = aimAt ?? posOf(b, command.target);
   const points: { x: number; y: number; scatter?: { dir: number; distance: number } }[] = [];
   if (hitCount > 0) for (let i = 0; i < hitCount; i++) points.push({ ...aim });
   else if (!blast.local) {
     const dir = rollDie(10, rng).value;
+    // П, ОС and thrown — metres; ТО, СТ — ×5 m (ruling 144).
     const distance = rollDie(10, rng).value * (['ТО', 'СТ'].includes(info.weaponClass) ? 5 : 1);
     const len = Math.hypot(aim.x - from.x, aim.y - from.y) || 1;
     const fwd = { x: (aim.x - from.x) / len, y: (aim.y - from.y) / len };
@@ -2756,7 +2932,7 @@ function resolve(
 ) {
   combatant(b, command.actor);
   combatant(b, command.target);
-  if (command.actor === command.target) throw new Error('Неверные участники атаки');
+  if (command.actor === command.target && !command.at) throw new Error('Неверные участники атаки');
   const selected = attackWeapon(b, command.weapon);
   // Bare hands (rulings 138–139): the hands become the melee weapon of this blow.
   const fistsRestore = isFists(command.weapon) ? prepareFists(b, state, command.actor) : null;
@@ -3023,6 +3199,25 @@ function resolve(
       }
     : {};
   if (command.charge && kind !== 'melee') throw new Error('Натиск — только с оружием ближнего боя');
+  // Smoke (ruling 146): −20 to a shot in, from or through a cloud.
+  if (
+    kind === 'ranged' &&
+    smokeOnLine(b, state, posOf(b, command.actor), command.at ?? posOf(b, command.target))
+  ) {
+    const src = { kind: 'canonical', id: 'Бой J63: туман, дым, смог' };
+    ctx = {
+      ...ctx,
+      modifiers: [
+        ...ctx.modifiers,
+        {
+          id: `${command.id}:smoke`,
+          value: -20,
+          source: src,
+          provenance: { source: src, reason: 'Дым' },
+        },
+      ],
+    };
+  }
   // «Ненависть (Х)»: +10 in melee against a target tagged with a hated faction (ruling 135).
   if (kind === 'melee') {
     const hated = attackerTalentsCanon.flatMap((t) => {
@@ -3144,6 +3339,7 @@ function resolve(
   let overheat: unknown = null;
   let knockdownDamage: unknown = null;
   let spray: unknown = null;
+  let thrown: unknown = null;
   let blasts: unknown = null;
   let stunned: unknown = null;
   // «Перегрев»: the weapon cools down — no shots this round and the next (ruling 137).
@@ -3201,7 +3397,9 @@ function resolve(
     const w = wid ? melee?.weapons[wid] : undefined;
     return !!w && w.held && w.template.profile.family !== 'natural';
   };
-  if (kind === 'ranged' && hasTrait(traits, 'Спрей')) {
+  if (isThrown(arsenalWeapon)) {
+    thrown = throwResolve(b, state, command, { ...info, degrees: 0 }, ctx, rng, logs);
+  } else if (kind === 'ranged' && hasTrait(traits, 'Спрей')) {
     spray = sprayResolve(b, state, command, { ...info, degrees: 0 }, rng, logs);
   } else if (kind === 'ranged') {
     const mode = command.mode ?? 'single';
@@ -3528,6 +3726,7 @@ function resolve(
     ...(overheat ? { overheat } : {}),
     ...(knockdownDamage ? { knockdownDamage } : {}),
     ...(spray ? { spray } : {}),
+    ...(thrown ? { thrown } : {}),
     ...(blasts ? { blasts } : {}),
     ...(stunned ? { stunned } : {}),
     ...(command.technique === 'grapple' &&
@@ -3574,6 +3773,7 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
           'second',
           'meleeBase',
           'technique',
+          'at',
         ] as const
       ).every((key) => current.pending!.command[key] === command[key]))
   )
@@ -3814,7 +4014,9 @@ export function addCombatant(
   b.footprints[id] = footprint;
   b.hp[id] = character.wounds;
   character.weapons.forEach((w, i) => {
-    b.ammo[`${id}:${i}`] = (w.ref ? weaponById(w.ref)?.magazine : null) ?? null;
+    const arsenal = w.ref ? weaponById(w.ref) : undefined;
+    b.ammo[`${id}:${i}`] =
+      arsenal?.weaponClass === 'Метательное' ? (w.count ?? 1) : (arsenal?.magazine ?? null);
   });
   engines.delete(b);
   append(b, 'roster-add', { actor: id, name, side, at: spot, character });
@@ -4133,7 +4335,29 @@ export function moveActor(b: Battle, command: MoveCommand, source: DiceSource = 
     else b.positions[command.actor] = { x, y };
     // «След» (ruling 149): entering a burning zone hurts at once.
     const trailLogs: unknown[] = [];
-    if (!fell) trailDamage(b, next, command.actor, tape, trailLogs, (t) => !insideTrail(t, from));
+    // Passing through a burning zone hurts as well as ending in it (ruling 152).
+    if (!fell) {
+      const round = next.wounds.combat.session.roundNumber;
+      const path = [from, ...points];
+      const crossed = (next.trails ?? []).filter((t) => {
+        if (round < t.fromRound || round > t.untilRound || insideTrail(t, from)) return false;
+        for (let i = 1; i < path.length; i++) {
+          const a = path[i - 1]!,
+            c = path[i]!;
+          const steps = Math.max(1, Math.ceil(Math.hypot(c.x - a.x, c.y - a.y) / 0.25));
+          for (let k = 1; k <= steps; k++)
+            if (
+              insideTrail(t, {
+                x: a.x + ((c.x - a.x) * k) / steps,
+                y: a.y + ((c.y - a.y) * k) / steps,
+              })
+            )
+              return true;
+        }
+        return false;
+      });
+      if (crossed.length) trailDamage(b, next, command.actor, tape, trailLogs, crossed);
+    }
     sync(b, next);
     append(b, 'move', {
       ...(trailLogs.length

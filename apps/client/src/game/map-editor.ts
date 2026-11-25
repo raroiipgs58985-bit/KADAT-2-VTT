@@ -371,7 +371,7 @@ export const addDoor = (m: MapDocument, door: Door): MapDocument => ({
 export const updateDoor = (
   m: MapDocument,
   id: string,
-  patch: Partial<Pick<Door, 'open' | 'blocksMovement' | 'blocksVision'>>,
+  patch: Partial<Omit<Door, 'id' | 'wallId' | 'from' | 'to'>>,
 ): MapDocument => ({ ...m, doors: m.doors.map((x) => (x.id === id ? { ...x, ...patch } : x)) });
 export const removeDoor = (m: MapDocument, id: string): MapDocument => ({
   ...m,

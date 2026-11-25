@@ -52,6 +52,8 @@ export interface CharacterDocument {
     readonly ref: string | null;
     /** Carried on a sling or chain: let go, it hangs instead of falling (rulings 81–82). */
     readonly sling?: boolean;
+    /** How many are carried (grenades and other thrown items, ruling 154); absent — 1. */
+    readonly count?: number;
   }[];
   /** Armour items from the Arsenal (v2); `armour` above holds the ОБ used in combat. */
   readonly armourItems: readonly { readonly name: string; readonly ref: string | null }[];
@@ -166,7 +168,8 @@ export function characterProblems(c: CharacterDocument): string[] {
         !text(w.name, L.maxItemText) ||
         !w.name.trim() ||
         !(w.ref === null || text(w.ref, L.maxItemText)) ||
-        !(w.sling === undefined || typeof w.sling === 'boolean'),
+        !(w.sling === undefined || typeof w.sling === 'boolean') ||
+        !(w.count === undefined || (Number.isInteger(w.count) && w.count >= 0 && w.count <= 99)),
     )
   )
     p.push('Оружие: до 80 записей');

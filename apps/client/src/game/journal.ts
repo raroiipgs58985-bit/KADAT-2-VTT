@@ -347,6 +347,50 @@ export function describeEntry(
             : 'В конусе никого.',
           tone: 'success',
         };
+      const thrown = (
+        a.result as {
+          thrown?: {
+            hit: boolean;
+            landed: { x: number; y: number } | null;
+            blasts?: {
+              scatter: { dir: number; distance: number } | null;
+              dice: number[];
+              targets: { actor: string; avoided: boolean; finalDamage?: number }[];
+            }[];
+            smoke?: { radius: number; rounds: number };
+          };
+        }
+      ).thrown;
+      if (thrown) {
+        const at = thrown.landed
+          ? ` Упало в (${thrown.landed.x.toFixed(1)}; ${thrown.landed.y.toFixed(1)}).`
+          : '';
+        const boom = (thrown.blasts ?? [])
+          .map(
+            (x) =>
+              `${x.scatter ? ` Разлёт: направление ${x.scatter.dir}, ${x.scatter.distance} м.` : ''} Урон ${x.dice.join('+')}: ${
+                x.targets.length
+                  ? x.targets
+                      .map((t) =>
+                        t.avoided
+                          ? `${name(t.actor)} — ушёл из зоны`
+                          : `${name(t.actor)} — ${t.finalDamage} ран`,
+                      )
+                      .join('; ')
+                  : 'никого не задело'
+              }.`,
+          )
+          .join('');
+        const smoke = thrown.smoke
+          ? ` Дым радиусом ${thrown.smoke.radius} м на ${thrown.smoke.rounds} р.`
+          : '';
+        return {
+          ...base,
+          title: `${name(a.command.actor)}: бросок (${weapon})`,
+          summary: `${thrown.hit ? 'Точно в цель.' : 'Мимо — отклонение.'}${at}${boom}${smoke}`,
+          tone: thrown.hit ? 'success' : 'warning',
+        };
+      }
       const blasts = (
         a.result as {
           blasts?: {

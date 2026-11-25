@@ -44,6 +44,8 @@ export interface BattleWeapon {
   capacity: number | null;
   /** On a sling or chain (rulings 81–82). */
   sling: boolean;
+  /** How many are carried (thrown items, ruling 154). */
+  count: number;
 }
 /** Participants in initiative-independent order (the order they were added). */
 export const actorIds = (b: Battle): ActorId[] => Object.keys(b.roster);
@@ -66,8 +68,11 @@ export function battleWeapons(b: Battle, owner?: ActorId): BattleWeapon[] {
         owner: b.taken?.[weaponId] ?? id,
         name: w.name,
         arsenal,
-        capacity: arsenal?.magazine ?? null,
+        // Thrown items: the «magazine» is how many are carried (ruling 154).
+        capacity:
+          arsenal?.weaponClass === 'Метательное' ? (w.count ?? 1) : (arsenal?.magazine ?? null),
         sling: !!w.sling,
+        count: w.count ?? 1,
       };
     }),
   );

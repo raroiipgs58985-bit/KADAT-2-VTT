@@ -56,9 +56,33 @@ const MELEE_CLASSES = ['ББ'];
 const RANGED_CLASSES = ['П', 'ОС', 'ТО', 'СТ'];
 export type WeaponKind = 'ranged' | 'melee';
 
+/** «10хБС», «БС*5»: the multiplier of the Strength bonus for a thrown weapon (ruling 154). */
+export function thrownMultiplier(w: ArsenalWeapon): number | null {
+  if (w.weaponClass !== 'Метательное' || !w.range.formula) return null;
+  const t = w.range.text.replace(/\s/g, '');
+  const m = /^(\d+)[хxХX*]БС$/.exec(t) ?? /^БС[хxХX*](\d+)$/.exec(t);
+  return m ? Number(m[1]) : null;
+}
+export const isThrown = (w: ArsenalWeapon | null) => !!w && w.weaponClass === 'Метательное';
+/** Maximum throw distance of a battle weapon in metres: multiplier × бСЛ of the owner (ruling 154). */
+export function throwRange(b: Battle, weaponId: string): number | null {
+  const w = battleWeapons(b).find((x) => x.id === weaponId);
+  const k = w?.arsenal ? thrownMultiplier(w.arsenal) : null;
+  return w && k !== null ? k * bonusOf(combatant(b, w.owner).character, 'СЛ') : null;
+}
+const isSmokeOnly = (w: ArsenalWeapon) =>
+  w.properties.some((p) => p.property === 'Дымовое') && !w.damage;
 /** Why an Arsenal weapon cannot be used by the combat engine yet; null — usable. */
 export function weaponProblem(w: ArsenalWeapon | null): string | null {
   if (!w) return 'Оружия нет в Арсенале (решение 76: в бою только оружие Арсенала)';
+  if (isThrown(w)) {
+    if (thrownMultiplier(w) === null) return 'Дальность броска не прочитана';
+    if (isSmokeOnly(w)) return null;
+    if (!w.damage) return 'В Арсенале нет урона';
+    if (![5, 10].includes(w.damage.sides)) return 'Урон не в к5/к10';
+    if (w.penetration === null) return 'В Арсенале нет ББ';
+    return null;
+  }
   if (!w.damage) return 'В Арсенале нет урона (зависит от боеприпаса или не указан)';
   if (![5, 10].includes(w.damage.sides)) return 'Урон не в к5/к10';
   if (w.penetration === null) return 'В Арсенале нет ББ';
@@ -67,7 +91,7 @@ export function weaponProblem(w: ArsenalWeapon | null): string | null {
     return null;
   }
   if (!RANGED_CLASSES.includes(w.weaponClass))
-    return `Класс «${w.weaponClass}» (гранаты, метательное) в бою пока не поддержан`;
+    return `Класс «${w.weaponClass}» в бою пока не поддержан`;
   if (w.range.meters === null) return 'Дистанция не прочитана (формула от бСЛ)';
   if (!w.rof || (!w.rof.single && !w.rof.short && !w.rof.long))
     return 'Режимы стрельбы не прочитаны';
@@ -85,7 +109,13 @@ export function fireModes(w: ArsenalWeapon): { mode: FireMode; maxShots: number 
   return out;
 }
 
-function rangedInstance(id: string, owner: ActorId, w: ArsenalWeapon): WeaponInstance {
+function rangedInstance(
+  id: string,
+  owner: ActorId,
+  w: ArsenalWeapon,
+  /** Thrown weapons: 10 × бСЛ of the owner (ruling 154). */
+  rangeOverride?: number,
+): WeaponInstance {
   const source = { kind: 'arsenal', id: `${w.sheet}, стр. ${w.source.row}: ${w.name}` };
   return {
     id,
@@ -103,19 +133,18 @@ function rangedInstance(id: string, owner: ActorId, w: ArsenalWeapon): WeaponIns
       traits: impliedTraits(weaponTraits(w).traits),
       profile: {
         weaponClass: w.weaponClass,
-        optimalRange: w.range.meters!,
-        classification: w.damage!.type === 'Э' ? 'energy-beam' : 'kinetic',
+        optimalRange: rangeOverride ?? w.range.meters!,
+        classification: w.damage?.type === 'Э' ? 'energy-beam' : 'kinetic',
         modes: fireModes(w),
         ...(w.modeModifiers ? { modeModifiers: w.modeModifiers } : {}),
         damage: {
           source,
-          expression: {
-            count: w.damage!.count,
-            sides: w.damage!.sides,
-            modifier: w.damage!.modifier,
-          },
+          // A smoke grenade has no damage profile.
+          expression: w.damage
+            ? { count: w.damage.count, sides: w.damage.sides, modifier: w.damage.modifier }
+            : { count: 0, sides: 10, modifier: 0 },
         },
-        penetration: { source, value: w.penetration! },
+        penetration: { source, value: w.penetration ?? 0 },
         compatibleAmmoTypes: ['arsenal-ammo'],
         compatibleContainerTypes: ['arsenal-magazine'],
         capacityReference: source,
@@ -216,7 +245,13 @@ export function engineWeapons(b: Battle) {
   for (const w of battleWeapons(b)) {
     if (!w.arsenal || weaponProblem(w.arsenal)) continue;
     if (weaponKind(w.arsenal) === 'ranged') {
-      const instance = rangedInstance(w.id, w.owner, w.arsenal);
+      const thrown = thrownMultiplier(w.arsenal);
+      const instance = rangedInstance(
+        w.id,
+        w.owner,
+        w.arsenal,
+        thrown !== null ? thrown * bonusOf(combatant(b, w.owner).character, 'СЛ') : undefined,
+      );
       // «Знаток Мельта-оружия»: optimal range + НС × 2 m (ruling 124).
       const owner = combatant(b, w.owner).character;
       const extra = hasTrait(instance.template.traits ?? [], 'Мельта')
@@ -234,7 +269,10 @@ export function engineWeapons(b: Battle) {
             },
           }
         : instance;
-      containers[`${w.id}:mag`] = magazine(w.id, w.arsenal, b.ammo[w.id] ?? w.arsenal.magazine!);
+      // Thrown items: the «magazine» is how many are carried (ruling 154).
+      containers[`${w.id}:mag`] = isThrown(w.arsenal)
+        ? { ...magazine(w.id, w.arsenal, b.ammo[w.id] ?? w.count), capacity: Math.max(1, w.count) }
+        : magazine(w.id, w.arsenal, b.ammo[w.id] ?? w.arsenal.magazine!);
     } else melee[w.id] = meleeInstance(w.id, w.owner, w.arsenal);
   }
   for (const id of actorIds(b)) {

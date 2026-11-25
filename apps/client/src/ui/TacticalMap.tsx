@@ -84,6 +84,8 @@ interface Props {
       | { kind: 'circle'; x: number; y: number; r: number }
       | { kind: 'sector'; x: number; y: number; heading: number; range: number };
   }[];
+  /** Smoke clouds still hanging (rulings 146, 154). */
+  smokes?: { id: string; x: number; y: number; r: number }[];
   /** Weapons knocked out of the hand lying on the map (ruling 108). */
   loose?: { id: string; name: string; x: number; y: number }[];
   /** A knocked-out weapon waits for its place: within `max` m of `from`. */
@@ -998,6 +1000,20 @@ export function TacticalMap(props: Props) {
             ))}
           </g>
         )}
+        {(props.smokes ?? []).map((s) => (
+          <circle
+            key={s.id}
+            className="smoke-zone"
+            cx={s.x}
+            cy={s.y}
+            r={s.r}
+            fill="rgba(170, 170, 170, 0.45)"
+            stroke="rgba(120, 120, 120, 0.8)"
+            strokeWidth={0.05}
+            strokeDasharray="0.2 0.1"
+            pointerEvents="none"
+          />
+        ))}
         {(props.trails ?? []).map((t) =>
           t.shape.kind === 'circle' ? (
             <circle

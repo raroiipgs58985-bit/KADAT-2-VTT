@@ -95,6 +95,12 @@ export interface Door {
   readonly lockModifier: number;
   /** OD one lock-picking attempt costs, set by the GM (ruling 17). */
   readonly lockOd: number;
+  /**
+   * A window: a closed door that blocks movement but not vision. Shots pass through; with
+   * cover ОБ it covers a target right behind it (ruling 153). Absent or 0 — no ОБ.
+   */
+  readonly coverOb?: number;
+  readonly coverHeight?: CoverHeight;
 }
 /** Cells with independent movement and vision flags; notes are text only, no calculation. */
 export interface Obstacle {
@@ -345,6 +351,9 @@ function environmentProblems(m: MapDocument): string[] {
       !Number.isInteger(d.lockOd) ||
       d.lockOd < 0 ||
       d.lockOd > 10 ||
+      (d.coverOb !== undefined &&
+        (!Number.isInteger(d.coverOb) || d.coverOb < 0 || d.coverOb > 99)) ||
+      (d.coverHeight !== undefined && !['low', 'medium', 'high'].includes(d.coverHeight)) ||
       !isVertex(d.from, { cols: Number.MAX_SAFE_INTEGER, rows: Number.MAX_SAFE_INTEGER }) ||
       !isVertex(d.to, { cols: Number.MAX_SAFE_INTEGER, rows: Number.MAX_SAFE_INTEGER })
     ) {

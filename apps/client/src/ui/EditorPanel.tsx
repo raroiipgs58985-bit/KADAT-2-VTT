@@ -34,7 +34,17 @@ export const toolList: { id: EditorTool; label: string; key: string }[] = [
 ];
 
 type DoorPatch = Partial<
-  Pick<Door, 'open' | 'blocksMovement' | 'blocksVision' | 'locked' | 'lockModifier' | 'lockOd'>
+  Pick<
+    Door,
+    | 'open'
+    | 'blocksMovement'
+    | 'blocksVision'
+    | 'locked'
+    | 'lockModifier'
+    | 'lockOd'
+    | 'coverOb'
+    | 'coverHeight'
+  >
 >;
 type ZonePatch = Partial<Pick<TerrainZone, 'label' | 'modifier'>>;
 type ObstaclePatch = Partial<
@@ -178,6 +188,40 @@ function ObjectProperties(props: {
               max={10}
               onCommit={(v) => props.onUpdateDoor(door.id, { lockOd: v })}
             />
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() =>
+            props.onUpdateDoor(door.id, { open: false, blocksMovement: true, blocksVision: false })
+          }
+        >
+          Сделать окном (не пройти, но видно и можно стрелять)
+        </button>
+        {!door.blocksVision && (
+          <div className="row">
+            <NumberField
+              label="ОБ окна как укрытия"
+              value={door.coverOb ?? 0}
+              min={0}
+              max={99}
+              onCommit={(v) => props.onUpdateDoor(door.id, { coverOb: Math.max(0, Math.round(v)) })}
+            />
+            <label>
+              Что закрывает
+              <select
+                value={door.coverHeight ?? 'medium'}
+                onChange={(e) =>
+                  props.onUpdateDoor(door.id, {
+                    coverHeight: e.target.value as 'low' | 'medium' | 'high',
+                  })
+                }
+              >
+                <option value="low">Ноги</option>
+                <option value="medium">Ноги и торс</option>
+                <option value="high">Всё</option>
+              </select>
+            </label>
           </div>
         )}
         <button type="button" onClick={() => props.onDelete(object)}>

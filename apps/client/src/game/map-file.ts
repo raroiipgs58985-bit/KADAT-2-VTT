@@ -47,6 +47,8 @@ const DOOR_KEYS = [
   'locked',
   'lockModifier',
   'lockOd',
+  'coverOb',
+  'coverHeight',
 ] as const;
 const OBSTACLE_KEYS = [
   'id',
@@ -163,6 +165,11 @@ export function parseMapFile(text: string): MapDocument {
   if (Array.isArray(map.doors))
     map.doors = (map.doors as unknown[]).map((d) =>
       isObject(d) && !('locked' in d) ? { ...d, locked: false, lockModifier: 0, lockOd: 0 } : d,
+    );
+  // Files saved before windows had cover (ruling 153).
+  if (Array.isArray(map.doors))
+    map.doors = (map.doors as unknown[]).map((d) =>
+      isObject(d) && !('coverOb' in d) ? { ...d, coverOb: 0, coverHeight: 'medium' } : d,
     );
   // Files saved before cover (ruling 142): walls and obstacles give no cover.
   if (Array.isArray(map.walls))
