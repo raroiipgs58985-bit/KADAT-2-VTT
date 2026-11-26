@@ -1,7 +1,7 @@
 export { createSequenceDice, rollDice, rollDie } from './dice.js';
 export { resolveCharacteristic, halveCharacteristic } from './characteristics.js';
 export { resolveEffects, resolveModifiers } from './context.js';
-export { resolveCheck } from './checks.js';
+export { checkTarget, resolveCheck } from './checks.js';
 export { resolveDamageRoll } from './damage.js';
 export {
   createCombatSession,
@@ -25,7 +25,7 @@ export {
   resolveOverwatchInterrupts,
 } from './overwatch.js';
 export type { OverwatchActivationRequest } from './overwatch.js';
-export { resolveRangedAttack, HEAVY_FROM_HANDS_TALENT } from './ranged.js';
+export { prepareRangedAttack, resolveRangedAttack, HEAVY_FROM_HANDS_TALENT } from './ranged.js';
 export type { OverwatchEvent } from './ranged.js';
 export { resolveDodge } from './dodge.js';
 export { resolveRange } from './range.js';
@@ -44,7 +44,12 @@ export type {
   MeleeOpposedActionRequest,
   BreakthroughRequest,
 } from './melee-actions.js';
-export { resolveMeleeAttack, resolveKnockdown, resolvePalisadeInterrupts } from './melee-attack.js';
+export {
+  prepareMeleeAttack,
+  resolveMeleeAttack,
+  resolveKnockdown,
+  resolvePalisadeInterrupts,
+} from './melee-attack.js';
 export { resolveParry, resolveMeleeDodge, COUNTERATTACK_TALENT } from './melee-reactions.js';
 export { resolveGrappleAction } from './grapple.js';
 export { prepareDamageExpression, rollAndTransformDamage } from './damage-transformations.js';

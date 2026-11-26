@@ -18,6 +18,7 @@ import type {
   WoundRuntimeState,
   DamageResolutionResult,
 } from '@kadat/contracts';
+import { modifierLabel } from './modifier-labels';
 import {
   adjustDamageDice,
   concussion,
@@ -76,6 +77,9 @@ import {
   resolveWoundCheck,
   resolveDamageRoll,
   resolveMeleeAttack,
+  prepareMeleeAttack,
+  prepareRangedAttack,
+  checkTarget,
   resolvePostDamage,
   resolveProtectionDamage,
   resolveRangedAttack,
@@ -4024,53 +4028,52 @@ function resolveAttack(
     if (!rate) throw new Error(`${selected.name}: нет режима «${mode}»`);
     const shots = command.calledLocation ? 1 : rate.maxShots;
     const runRanged = (defense: 'DECLINE' | 'DODGE' | 'PARRY', src: DiceSource) =>
-      resolveWoundAwareAction(state.wounds, 'НС', ctx, (combat, context) =>
-        resolveRangedAttack(
-          combat,
-          {
-            id: command.id,
-            type: command.calledLocation ? 'called-attack' : 'ranged-attack',
-            ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
-            actor: ref(command.actor),
-            target: ref(command.target),
-            weaponId: command.weapon,
-            mode: command.calledLocation ? 'single' : mode,
-            shotsRequested: shots,
-            ...dualRequest,
-            ...(squall ? { bonusDegrees: squall } : {}),
-            // «Знаток Плазменного оружия»: overheat only on 99+ (ruling 137).
-            ...(family === 'plasma' && attackerTalentsCanon.includes('Знаток Плазменного оружия')
-              ? { overheatFrom: 99 }
-              : {}),
-            distance,
-            dodgeable: true,
-            ...(defense === 'DODGE'
-              ? {
-                  dodge: {
-                    id: `${command.id}:dodge`,
-                    context: reactionContext(
-                      b,
-                      state,
-                      command,
-                      'Уклонение',
-                      lasPenalty
-                        ? [
-                            {
-                              id: `${command.id}:las-expert`,
-                              value: lasPenalty,
-                              reason: 'Знаток Лаз-оружия',
-                            },
-                          ]
-                        : [],
-                    ),
-                  },
-                }
-              : {}),
-            context,
-          },
-          src,
-        ),
-      );
+      resolveWoundAwareAction(state.wounds, 'НС', ctx, (combat, context) => {
+        const request: Parameters<typeof resolveRangedAttack>[1] = {
+          id: command.id,
+          type: command.calledLocation ? 'called-attack' : 'ranged-attack',
+          ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
+          actor: ref(command.actor),
+          target: ref(command.target),
+          weaponId: command.weapon,
+          mode: command.calledLocation ? 'single' : mode,
+          shotsRequested: shots,
+          ...dualRequest,
+          ...(squall ? { bonusDegrees: squall } : {}),
+          // «Знаток Плазменного оружия»: overheat only on 99+ (ruling 137).
+          ...(family === 'plasma' && attackerTalentsCanon.includes('Знаток Плазменного оружия')
+            ? { overheatFrom: 99 }
+            : {}),
+          distance,
+          dodgeable: true,
+          ...(defense === 'DODGE'
+            ? {
+                dodge: {
+                  id: `${command.id}:dodge`,
+                  context: reactionContext(
+                    b,
+                    state,
+                    command,
+                    'Уклонение',
+                    lasPenalty
+                      ? [
+                          {
+                            id: `${command.id}:las-expert`,
+                            value: lasPenalty,
+                            reason: 'Знаток Лаз-оружия',
+                          },
+                        ]
+                      : [],
+                  ),
+                },
+              }
+            : {}),
+          context,
+        };
+        // ADR 0007: the attack preview stops here, at the attack's own check, before any roll.
+        attackProbe?.('НС', () => prepareRangedAttack(combat, request));
+        return resolveRangedAttack(combat, request, src);
+      });
     const trialRun =
       command.defense && !(lasExpert && command.defense === 'DODGE')
         ? null
@@ -4206,40 +4209,41 @@ function resolveAttack(
                   : [],
               )
             : null;
-      return resolveWoundAwareAction(state.wounds, 'НР', ctx, (combat, context) =>
-        resolveMeleeAttack(
-          combat,
-          {
-            id: command.id,
-            type: 'melee-attack',
-            actor: ref(command.actor),
-            ...(command.counter
-              ? { origin: 'COUNTERATTACK' as const, opportunityId: command.counter }
-              : { origin: 'NORMAL' as const }),
-            base: command.calledLocation
-              ? 'called'
-              : command.counter
-                ? 'free'
-                : command.charge
-                  ? 'charge'
-                  : (command.meleeBase ?? 'simple'),
-            ...(command.charge ? { movementDistance: chargeDistance } : {}),
-            ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
-            technique: command.technique ?? 'normal',
-            weaponId: command.weapon,
-            ...(dualRequest.dualWield ? { dualWield: dualRequest.dualWield } : {}),
-            targets: [
-              {
-                actor: ref(command.target),
-                distance,
-                ...(meleeAvoidance ? { avoidance: meleeAvoidance } : {}),
-              },
-            ],
-            context,
-          },
-          src,
-        ),
-      );
+      return resolveWoundAwareAction(state.wounds, 'НР', ctx, (combat, context) => {
+        const request: Parameters<typeof resolveMeleeAttack>[1] = {
+          id: command.id,
+          type: 'melee-attack',
+          actor: ref(command.actor),
+          ...(command.counter
+            ? { origin: 'COUNTERATTACK' as const, opportunityId: command.counter }
+            : { origin: 'NORMAL' as const }),
+          base: command.calledLocation
+            ? 'called'
+            : command.counter
+              ? 'free'
+              : command.charge
+                ? 'charge'
+                : (command.meleeBase ?? 'simple'),
+          ...(command.charge ? { movementDistance: chargeDistance } : {}),
+          ...(command.calledLocation ? { calledLocation: command.calledLocation } : {}),
+          technique: command.technique ?? 'normal',
+          weaponId: command.weapon,
+          ...(dualRequest.dualWield ? { dualWield: dualRequest.dualWield } : {}),
+          targets: [
+            {
+              actor: ref(command.target),
+              distance,
+              ...(meleeAvoidance ? { avoidance: meleeAvoidance } : {}),
+            },
+          ],
+          context,
+        };
+        attackProbe?.('НР', () => {
+          const entry = prepareMeleeAttack(combat, request).prepared[0]!;
+          return { characteristic: entry.characteristic, context: entry.context };
+        });
+        return resolveMeleeAttack(combat, request, src);
+      });
     };
     const trial =
       command.defense || command.counter
@@ -4626,6 +4630,99 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
       committed: false,
     });
     return { status: 'CONTEXT_REQUIRED' as const, reason };
+  }
+}
+/** Attack preview (ADR 0007): the target number of the attack test before any roll. */
+export type AttackPreview =
+  | {
+      status: 'ready';
+      characteristic: 'НС' | 'НР';
+      baseValue: number;
+      finalSuper: number;
+      modifiers: { id: string; label: string; value: number; included: boolean }[];
+      rawModifierSum: number;
+      finalModifier: number;
+      target: number;
+    }
+  | { status: 'unavailable'; reason: string };
+type PreparedCheck = {
+  characteristic: { result: { finalValue: number; finalSuper: number } };
+  context: Parameters<typeof checkTarget>[0]['context'];
+};
+/** Set only while `previewAttack` runs: called at the attack's own check, before its roll. */
+let attackProbe: ((characteristic: 'НС' | 'НР', prepare: () => PreparedCheck) => void) | null =
+  null;
+class AttackPreviewStop extends Error {
+  constructor(readonly preview: AttackPreview) {
+    super('attack preview');
+  }
+}
+class PreviewNeedsRoll extends Error {}
+/**
+ * The attack test's target for `command` as the real attack would compute it: the same client
+ * resolution runs on a throwaway copy of the battle, and at the core call of the attack it stops
+ * with the core's own preparation (`prepareRangedAttack` / `prepareMeleeAttack`) and `checkTarget`.
+ * No dice are rolled (any roll before the attack test stops the preview with a reason), and the
+ * battle, its engine state, log, resources and ammunition stay untouched.
+ */
+export function previewAttack(b: Battle, command: AttackCommand): AttackPreview {
+  const no = (reason: string): AttackPreview => ({ status: 'unavailable', reason });
+  const current = getEngine(b);
+  if (current.pendingTurn) return no('Сначала продолжите начало хода');
+  if (current.pending) return no('Сначала завершите прошлую команду (ответ ведущего)');
+  const line = command.at
+    ? null
+    : attackLineProblem(b, command.actor, command.target, command.weapon);
+  if (line) return no(line);
+  const copy = structuredClone(b);
+  const next = structuredClone(current);
+  delete next.pending;
+  engines.set(copy, next);
+  const saved = { askScope, rollPhase };
+  const probeDice: DiceSource = {
+    roll() {
+      throw new PreviewNeedsRoll();
+    },
+  };
+  attackProbe = (characteristic, prepare) => {
+    const prepared = prepare();
+    const t = checkTarget({
+      baseValue: prepared.characteristic.result.finalValue,
+      finalSuper: prepared.characteristic.result.finalSuper,
+      context: prepared.context,
+    });
+    throw new AttackPreviewStop({
+      status: 'ready',
+      characteristic,
+      baseValue: prepared.characteristic.result.finalValue,
+      finalSuper: prepared.characteristic.result.finalSuper,
+      modifiers: t.modifiers.map((m) => ({
+        id: m.id,
+        label: modifierLabel(m.id, m.provenance?.reason),
+        value: m.value,
+        included: m.included,
+      })),
+      rawModifierSum: t.rawModifierSum,
+      finalModifier: t.finalModifier,
+      target: t.target,
+    });
+  };
+  try {
+    setPhase('attack');
+    resolve(next, copy, command, probeDice, []);
+    return no('Расчёт не дошёл до проверки атаки');
+  } catch (error) {
+    if (error instanceof AttackPreviewStop) return error.preview;
+    if (error instanceof PreviewNeedsRoll)
+      return no('Порог зависит от броска, который делается до проверки атаки');
+    if (error instanceof QuestionRequired)
+      return no(`Нужен ответ ведущего: ${error.question.text}`);
+    return no(explainEngineError(error));
+  } finally {
+    attackProbe = null;
+    askScope = saved.askScope;
+    rollPhase = saved.rollPhase;
+    engines.delete(copy);
   }
 }
 /** A counterattack follows the parried attack at once: only before any other command. */
