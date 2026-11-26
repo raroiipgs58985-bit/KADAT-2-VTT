@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AttackReadout, Lamp, Nixie } from './kit/Kit';
 import type { BleedingActivity } from '@kadat/contracts';
 import type { CalledLocation, FireMode } from '@kadat/contracts';
 import {
@@ -36,6 +37,7 @@ import {
   type MoveMode,
   type MoveOption,
   type turnInfo as TurnInfoFn,
+  type AttackPreview,
 } from '../game/engine';
 import { describeEntry, type JournalTone } from '../game/journal';
 import {
@@ -72,14 +74,15 @@ export function TurnBar(props: {
   return (
     <section className="panel turn-bar" aria-label="Ход и раунд">
       <div className="turn-head">
-        <div>
+        {info.started && <Nixie value={String(info.round).padStart(2, '0')} label="Раунд" />}
+        <div className="turn-title">
           <span className="eyebrow">{info.started ? `Раунд ${info.round}` : 'Подготовка'}</span>
           <h2>{info.started ? `Ход: ${name(info.active)}` : 'Расстановка участников'}</h2>
         </div>
         {info.turnActive && info.od !== null && (
           <div className="od" aria-label={`Очки действий: ${info.od} из ${odMax}`}>
             {Array.from({ length: Math.max(odMax, info.od) }, (_, i) => (
-              <span key={i} className={i < info.od! ? 'pip on' : 'pip'} />
+              <Lamp key={i} className="pip" on={i < info.od!} color="amber" label={`ОД ${i + 1}`} />
             ))}
             <span className="od-label">ОД</span>
           </div>
@@ -92,7 +95,8 @@ export function TurnBar(props: {
               {name(id)}
               {info.started && <span className="muted small"> · иниц. {info.initiative[id]}</span>}
             </span>
-            <span className="muted small">
+            <span className="muted small reaction">
+              <Lamp on={!!info.reactions[id]} color="green" label="Реакция" />
               Реакция: {info.reactions[id] ? 'доступна' : 'потрачена'}
             </span>
           </li>
@@ -116,6 +120,7 @@ export function TurnBar(props: {
       ) : (
         <button
           type="button"
+          className="kit-confirm"
           onClick={props.onNextTurn}
           disabled={!!info.pending || (!info.turnActive && !info.pendingTurn)}
         >
@@ -378,6 +383,8 @@ export interface AttackForm {
 
 export function AttackPanel(props: {
   attacker: ActorId;
+  /** ADR 0007: the attack test's target before the roll. */
+  preview?: AttackPreview | null;
   form: AttackForm;
   onChange: (form: AttackForm) => void;
   onAttack: () => void;
@@ -444,6 +451,7 @@ export function AttackPanel(props: {
   };
   return (
     <div className="stack">
+      <AttackReadout preview={props.preview} />
       <label>
         Цель
         <select value={form.target} onChange={(e) => set({ target: e.target.value })}>
@@ -740,7 +748,7 @@ export function AttackPanel(props: {
       )}
       <button
         type="button"
-        className="primary"
+        className="primary kit-attack-go"
         onClick={props.onAttack}
         disabled={
           !props.canAct ||

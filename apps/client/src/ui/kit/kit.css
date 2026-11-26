@@ -1,0 +1,445 @@
+/*
+ * KADAT 2 UI Kit v0.2 — оформление «Имперский тактический когитатор» поверх styles.css.
+ * Графика — отдельные ресурсы (./assets): 9-slice через border-image, лампы и газоразрядный
+ * индикатор — картинки и живые цифры. Логика компонентов и данные не меняются.
+ * border-image-width больше border-width: рамка рисуется поверх, отступы содержимого прежние.
+ */
+:root {
+  --kit-ink: #ece4cf;
+  --kit-ink-dim: #a8b2ab;
+  --kit-screen: #0b1013;
+  --kit-screen-ink: #e1eaed;
+  --kit-amber: #ffc46b;
+  --kit-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --kit-cond: 'IBM Plex Sans Condensed', 'Roboto Condensed', 'Arial Narrow', system-ui, sans-serif;
+}
+/* ===== Компоненты (работают на любой ширине) ===== */
+/* ---------- экран-компонент (предпросмотр атаки) ---------- */
+.kit-screen {
+  position: relative;
+  border: 12px solid transparent;
+  border-radius: 0;
+  border-image: url('./assets/frame-display.webp') 102 fill / 34px / 8px stretch;
+  background: transparent;
+}
+.kit-screen > * {
+  position: relative;
+}
+.kit-screen::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  background: var(--kit-screen);
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.6);
+}
+/* Блок «ПОРОГ d100» */
+.kit-readout {
+  position: relative;
+  padding: 8px 10px 10px;
+  color: var(--kit-screen-ink);
+  font-family: var(--kit-mono);
+}
+.kit-readout-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.kit-caption {
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  color: var(--kit-ink-dim);
+}
+.kit-readout-base {
+  font-size: 0.95rem;
+  margin-top: 2px;
+}
+.kit-readout-mods {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px solid rgba(220, 230, 232, 0.2);
+  display: grid;
+  gap: 2px;
+  font-size: 0.85rem;
+}
+.kit-readout-mods li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.kit-readout-mods li > span:first-child {
+  color: #b9c6ca;
+}
+.kit-readout-mods li.off {
+  opacity: 0.55;
+}
+.kit-readout-mods .plus {
+  color: #a6e590;
+}
+.kit-readout-mods .minus {
+  color: #ff917a;
+}
+.kit-readout-reason,
+.kit-readout-note {
+  margin-top: 8px;
+  font-size: 0.82rem;
+  color: #ffd27a;
+  line-height: 1.35;
+}
+
+/* ---------- газоразрядный индикатор ---------- */
+.kit-nixie {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 10px solid transparent;
+  border-image: url('./assets/frame-nixie.webp') 78 / 26px / 8px stretch;
+  background: radial-gradient(#1c0d05, #0b0503);
+  background-clip: padding-box;
+  min-width: 72px;
+  height: 48px;
+  flex: none;
+}
+.kit-nixie-digits {
+  font-family: var(--kit-mono);
+  font-weight: 700;
+  font-size: 1.45rem;
+  line-height: 1;
+  color: #ffa04a;
+  text-shadow:
+    0 0 10px #ff6a10,
+    0 0 2px #ffdcae;
+  letter-spacing: 0.04em;
+}
+.kit-nixie-lg {
+  min-width: 108px;
+  height: 64px;
+}
+.kit-nixie-lg .kit-nixie-digits {
+  font-size: 2.2rem;
+}
+
+/* ---------- лампы ОД и реакции ---------- */
+.kit-lamp {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  background: url('./assets/lamp-amber-off.webp') center / 100% 100% no-repeat;
+  vertical-align: middle;
+}
+.kit-lamp-amber.on {
+  background-image: url('./assets/lamp-amber-on.webp');
+  filter: drop-shadow(0 0 5px rgba(255, 170, 60, 0.55));
+}
+.kit-lamp-green {
+  width: 18px;
+  height: 18px;
+  margin-right: 4px;
+  background-image: url('./assets/lamp-green-off.webp');
+}
+.kit-lamp-green.on {
+  background-image: url('./assets/lamp-green-on.webp');
+  filter: drop-shadow(0 0 4px rgba(90, 240, 70, 0.5));
+}
+.turn-head {
+  justify-content: flex-start;
+}
+.turn-head .turn-title {
+  flex: 1;
+  min-width: 0;
+}
+.turn-bar .od {
+  gap: 2px;
+}
+.kit-lamp.pip {
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+}
+.initiative .reaction {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ===== Оболочка desktop (телефон — после утверждения desktop) ===== */
+@media (min-width: 761px) {
+  body {
+    background: #090a0a;
+  }
+
+  /* ---------- металлические панели ---------- */
+  .app-header,
+  .layout > .column > .panel,
+  .layout > .column > section.panel,
+  .layout > .column .panel.pending-banner {
+    position: relative;
+    border: 12px solid transparent;
+    border-radius: 0;
+    border-image: url('./assets/panel-gun.webp') 162 fill / 54px / 10px round;
+    background: transparent;
+    box-shadow: none;
+    isolation: isolate;
+  }
+  /* Притемнение фактуры под содержимым — ради читаемости текста на металле. */
+  .layout > .column > .panel:not(.log)::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    background: linear-gradient(180deg, rgba(8, 10, 11, 0.42), rgba(8, 10, 11, 0.58));
+    pointer-events: none;
+    z-index: -1;
+  }
+  .app-header {
+    border-image-source: url('./assets/panel-olive-cut.webp');
+    margin: 6px 6px 16px;
+    /* Меню шапки (Сценарии) — поверх панелей раскладки. */
+    z-index: 20;
+  }
+  .layout > .column.right > .panel:first-child {
+    border-image-source: url('./assets/panel-navy.webp');
+  }
+  .brand-mark {
+    border: 8px solid transparent;
+    border-image: url('./assets/plate-brass.webp') 66 fill / 22px / 8px stretch;
+    background: none;
+    color: #1e1911;
+    text-shadow: 0 1px 0 rgba(255, 245, 220, 0.35);
+    border-radius: 0;
+  }
+
+  /* ---------- клавиши (key-sm, 9-slice, состояния — отдельные файлы) ---------- */
+  .layout button,
+  .app-header button,
+  .app-header .file-button,
+  .app-header .menu > summary {
+    border: 6px solid transparent;
+    border-radius: 0;
+    border-image: url('./assets/key-sm-normal.webp') 42 fill / 14px / 6px stretch;
+    background: transparent;
+    color: var(--kit-ink);
+    text-shadow: 0 1px 1px #000;
+    font-weight: 600;
+    min-height: 32px;
+    padding: 1px 10px 0;
+    box-shadow: none;
+  }
+  .layout button:hover:not(:disabled),
+  .app-header button:hover:not(:disabled),
+  .app-header .file-button:hover {
+    filter: brightness(1.12);
+    background: transparent;
+  }
+  .layout button:active:not(:disabled),
+  .app-header button:active:not(:disabled) {
+    border-image-source: url('./assets/key-sm-pressed.webp');
+  }
+  .layout button.chosen,
+  .layout button[aria-pressed='true'],
+  .layout button[aria-selected='true'],
+  .app-header button.chosen {
+    border-image-source: url('./assets/key-sm-active.webp');
+    color: #ffd690;
+    text-shadow:
+      0 0 6px rgba(255, 170, 60, 0.6),
+      0 1px 1px #000;
+    background: transparent;
+  }
+  .layout button:disabled,
+  .app-header button:disabled {
+    border-image-source: url('./assets/key-sm-disabled.webp');
+    color: #8f8c84;
+    text-shadow: none;
+    opacity: 1;
+  }
+  .layout button.primary {
+    border-image-source: url('./assets/key-sm-active.webp');
+    color: #ffd690;
+  }
+  /* Главные действия хода — крупные клавиши */
+  .layout button.kit-attack-go {
+    border: 8px solid transparent;
+    border-image: url('./assets/key-danger.webp') 78 fill / 26px / 8px stretch;
+    min-height: 56px;
+    font-family: var(--kit-cond);
+    font-size: 1.05rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #fff0ea;
+    padding-top: 8px;
+  }
+  .layout button.kit-attack-go:active:not(:disabled) {
+    border-image-source: url('./assets/key-danger-pressed.webp');
+  }
+  .layout button.kit-attack-go:disabled,
+  .layout button.kit-confirm:disabled {
+    border-image-source: url('./assets/key-disabled.webp');
+    color: #8f8c84;
+  }
+  .layout button.kit-confirm {
+    border: 8px solid transparent;
+    border-image: url('./assets/key-confirm.webp') 78 fill / 26px / 8px stretch;
+    min-height: 52px;
+    font-family: var(--kit-cond);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #e4fbd8;
+    padding-top: 8px;
+  }
+  /* Мелкие кнопки панели карты — компактнее */
+  .layout .map-toolbar button {
+    min-height: 30px;
+    padding: 0 8px;
+  }
+
+  /* ---------- поля ввода (field-inset) ---------- */
+  .layout select,
+  .layout input:not([type='checkbox']):not([type='file']),
+  .layout textarea {
+    border: 6px solid transparent;
+    border-radius: 0;
+    border-image: url('./assets/field-inset.webp') 36 fill / 12px / 6px stretch;
+    background: transparent;
+    color: var(--kit-screen-ink);
+    box-shadow: none;
+  }
+  .layout select option {
+    background: #15191a;
+    color: var(--kit-screen-ink);
+  }
+  .layout input[type='checkbox'] {
+    appearance: none;
+    width: 24px;
+    height: 24px;
+    margin: 0 6px 0 0;
+    border: 0;
+    background: url('./assets/check-off.webp') center / 100% 100% no-repeat;
+    vertical-align: middle;
+    cursor: pointer;
+  }
+  .layout input[type='checkbox']:checked {
+    background-image: url('./assets/check-on.webp');
+  }
+
+  /* ---------- главная рамка карты ---------- */
+  .map-shell {
+    position: relative;
+    border: 10px solid transparent;
+    border-radius: 0;
+    border-image: url('./assets/frame-display-heavy.webp') 156 / 52px / 8px stretch;
+    background: #0d1112;
+  }
+  .map-shell > .map-toolbar {
+    background: rgba(10, 12, 13, 0.82);
+  }
+
+  /* ---------- экраны (журнал, предпросмотр атаки) ---------- */
+  .kit-screen,
+  .layout .panel.log {
+    border: 12px solid transparent;
+    border-radius: 0;
+    border-image: url('./assets/frame-display.webp') 102 fill / 34px / 8px stretch;
+    background: transparent;
+  }
+  .layout .panel.log {
+    border-image-source: url('./assets/frame-display-heavy.webp');
+    border-image-slice: 156 fill;
+    border-image-width: 52px;
+  }
+  .kit-screen > *,
+  .layout .panel.log > * {
+    position: relative;
+  }
+  .kit-screen::before,
+  .layout .panel.log::before {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    background: var(--kit-screen);
+    box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.6);
+  }
+  .layout .panel.log h2 {
+    font-family: var(--kit-mono);
+    font-size: 0.8rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--kit-ink-dim);
+  }
+  .layout .panel.log h2::before {
+    content: '+++ ';
+  }
+  .layout .panel.log h2::after {
+    content: ' +++';
+  }
+  .log-line {
+    background: transparent;
+    border: 0;
+    border-left: 3px solid #5d6c70;
+    border-radius: 0;
+    color: var(--kit-screen-ink);
+    font-family: var(--kit-mono);
+    font-size: 0.82rem;
+  }
+  .log-line.tone-success {
+    border-left-color: #a6e590;
+  }
+  .log-line.tone-warning {
+    border-left-color: #ffd27a;
+  }
+  .log-line.tone-error {
+    border-left-color: #ff917a;
+  }
+  .log-head strong {
+    font-family: var(--kit-cond);
+    font-size: 0.95rem;
+    color: #f0f5f6;
+  }
+
+  /* ---------- карточка бойца: шкалы в прорезях (bar-slot) ---------- */
+  .actor-card .meter {
+    position: relative;
+    height: 16px;
+    border-radius: 0;
+    background: #050606;
+    overflow: visible;
+  }
+  .actor-card .meter > div {
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    bottom: 3px;
+    max-width: calc(100% - 6px);
+    border-radius: 0;
+  }
+  .actor-card .meter::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 4px solid transparent;
+    border-image: url('./assets/bar-slot.webp') 30 / 10px / 6px stretch;
+    pointer-events: none;
+  }
+  .actor-card .vital-label strong {
+    font-family: var(--kit-mono);
+  }
+  .actor-card .avatar {
+    border-radius: 0;
+    clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+  }
+
+  /* ---------- служебные подписи: не мельче 11 px ---------- */
+  .muted.small,
+  .small,
+  .eyebrow,
+  .od-label,
+  .log-id,
+  .log-tone {
+    font-size: max(0.74rem, 11px);
+  }
+  .eyebrow,
+  .layout h3 {
+    font-family: var(--kit-mono);
+    letter-spacing: 0.16em;
+  }
+}

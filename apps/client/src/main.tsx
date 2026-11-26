@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import './styles.css';
+import './ui/kit/kit.css';
 import { combatStore } from './ui/store';
 
 // Development-only test hook (absent from production builds): lets the browser check simulate

@@ -3,6 +3,9 @@ import { fixedDice, randomDice, seededDice } from './game/dice';
 import {
   actorStatus,
   attack,
+  previewAttack,
+  type AttackCommand,
+  type AttackPreview,
   cancelUnstarted,
   moveActor,
   getEngine,
@@ -146,6 +149,42 @@ import {
 } from './ui/TacticalMap';
 
 const commandId = (kind: string) => `${kind}-${crypto.randomUUID().slice(0, 8)}`;
+/** The attack command of the form: the same object for «Атаковать» and the preview (ADR 0007). */
+function attackCommandFrom(
+  battle: Battle,
+  actor: ActorId,
+  form: AttackForm,
+  id: string,
+): AttackCommand {
+  return {
+    id,
+    actor,
+    target: form.target,
+    weapon: form.weapon,
+    ...(() => {
+      const m = modeFor(weaponOf(battle, form.weapon)?.arsenal ?? null, form.mode);
+      return m ? { mode: m } : {};
+    })(),
+    ...(form.called ? { calledLocation: form.called } : {}),
+    targetActivity: form.activity,
+    modifier: form.modifier,
+    ...(form.technique && !form.called ? { technique: form.technique } : {}),
+    ...(form.meleeBase && !form.called ? { meleeBase: form.meleeBase } : {}),
+    ...(() => {
+      const a = weaponOf(battle, form.weapon)?.arsenal;
+      return form.optional && a && weaponTraits(a).optional.some((t) => t.name === form.optional)
+        ? { optional: form.optional }
+        : {};
+    })(),
+    ...(form.spike && weaponOf(battle, form.weapon)?.arsenal?.penetrationAlt !== undefined
+      ? { spike: true }
+      : {}),
+    ...(() => {
+      const other = form.dual ? otherWeaponInHand(battle, actor, form.weapon) : null;
+      return other ? { second: other } : {};
+    })(),
+  };
+}
 const defaultAttack = (b: Battle, attacker: ActorId): AttackForm => ({
   target:
     actorIds(b).find((id) => id !== attacker && b.roster[id]?.side !== b.roster[attacker]?.side) ??
@@ -155,7 +194,8 @@ const defaultAttack = (b: Battle, attacker: ActorId): AttackForm => ({
   weapon:
     battleWeapons(b, attacker).find((w) => weaponInHand(b, w.id))?.id ??
     battleWeapons(b, attacker)[0]?.id ??
-    '',
+    // No weapons: bare hands — what the attack panel already shows as the first option.
+    `${attacker}:hands`,
   mode: 'single',
   shots: 1,
   called: '',
@@ -384,6 +424,14 @@ export function App() {
   );
   const busy = !!info.pending || !!info.pendingTurn;
   const canAct = info.turnActive && !busy && selected === info.active;
+  // ADR 0007: the attack test's target before the roll, recomputed with every form change.
+  const attackPreview = useMemo<AttackPreview | null>(
+    () =>
+      mode === 'combat' && info.started && tab === 'attack' && form.target && form.weapon
+        ? previewAttack(battle, attackCommandFrom(battle, info.active, form, 'preview'))
+        : null,
+    [battle, version, mode, info.started, info.active, tab, form],
+  );
   const chosen = options.find((o) => o.mode === moveMode && o.available);
   // The scene revision this render previews; a move sends it so a stale preview is refused.
   const previewRevision = battle.sceneRevision;
@@ -1168,6 +1216,7 @@ export function App() {
                 ) : (
                   <AttackPanel
                     attacker={info.active}
+                    preview={attackPreview}
                     form={form}
                     onChange={setForm}
                     canAct={canAct}
@@ -1253,46 +1302,7 @@ export function App() {
                       run((b) =>
                         attack(
                           b,
-                          {
-                            id: commandId('attack'),
-                            actor: info.active,
-                            target: form.target,
-                            weapon: form.weapon,
-                            ...(() => {
-                              const m = modeFor(
-                                weaponOf(battle, form.weapon)?.arsenal ?? null,
-                                form.mode,
-                              );
-                              return m ? { mode: m } : {};
-                            })(),
-                            ...(form.called ? { calledLocation: form.called } : {}),
-                            targetActivity: form.activity,
-                            modifier: form.modifier,
-                            ...(form.technique && !form.called
-                              ? { technique: form.technique }
-                              : {}),
-                            ...(form.meleeBase && !form.called
-                              ? { meleeBase: form.meleeBase }
-                              : {}),
-                            ...(() => {
-                              const a = weaponOf(battle, form.weapon)?.arsenal;
-                              return form.optional &&
-                                a &&
-                                weaponTraits(a).optional.some((t) => t.name === form.optional)
-                                ? { optional: form.optional }
-                                : {};
-                            })(),
-                            ...(form.spike &&
-                            weaponOf(battle, form.weapon)?.arsenal?.penetrationAlt !== undefined
-                              ? { spike: true }
-                              : {}),
-                            ...(() => {
-                              const other = form.dual
-                                ? otherWeaponInHand(battle, info.active, form.weapon)
-                                : null;
-                              return other ? { second: other } : {};
-                            })(),
-                          },
+                          attackCommandFrom(battle, info.active, form, commandId('attack')),
                           source(),
                         ),
                       )
