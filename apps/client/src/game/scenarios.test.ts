@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mapProblems } from './map';
-import { stage3Stand, stage3StandMap } from './scenarios';
+import { demoOutpost, demoOutpostMap, stage3Stand, stage3StandMap } from './scenarios';
 import {
   attack,
   attackLineProblem,
@@ -96,5 +96,20 @@ describe('Attacks and the stage 3 stand walls', () => {
         to: { x: 4.5, y: 18.5 },
       }),
     ).toThrow(/больше допустимой/);
+  });
+});
+
+describe('Demo outpost', () => {
+  it('is a valid map, tokens placed, combat starts with the real core', () => {
+    expect(mapProblems(demoOutpostMap())).toEqual([]);
+    const b = demoOutpost();
+    expect(turnInfo(b).started).toBe(false);
+    expect(b.positions.pak).toEqual({ x: 17.5, y: 15.5 });
+    expect(b.doors['post-window']).toBe(false);
+    startCombat(b, fixedDice('10:9,10:2'));
+    expect(turnInfo(b).started).toBe(true);
+    // Kelus leaves the barracks through the open door into the corridor.
+    moveActor(b, { id: 'm', actor: 'kelus-drakar', mode: 'half-move', to: { x: 5.5, y: 8.5 } });
+    expect(b.positions['kelus-drakar']).toEqual({ x: 5.5, y: 8.5 });
   });
 });

@@ -1,5 +1,14 @@
 import { useSyncExternalStore } from 'react';
 import { createBattle, type Battle } from '../game/model';
+import { demoOutpost } from '../game/scenarios';
+
+/** The demo build (VITE_KADAT_DEMO=1) or `#demo` in the address opens the demo outpost. */
+const initialBattle = (): Battle => {
+  const hash = typeof location === 'undefined' ? '' : location.hash;
+  return import.meta.env.VITE_KADAT_DEMO === '1' || hash === '#demo'
+    ? demoOutpost()
+    : createBattle();
+};
 
 /**
  * Framework-free game state lives in `src/game`; this store only publishes a new snapshot
@@ -12,7 +21,7 @@ export interface CombatSnapshot {
 type Listener = () => void;
 
 export class CombatStore {
-  #snapshot: CombatSnapshot = { battle: createBattle(), version: 0 };
+  #snapshot: CombatSnapshot = { battle: initialBattle(), version: 0 };
   readonly #listeners = new Set<Listener>();
 
   subscribe = (listener: Listener) => {

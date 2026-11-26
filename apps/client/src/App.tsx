@@ -139,7 +139,7 @@ import { commandFeedback } from './ui/feedback';
 import { combatStore, useCombat } from './ui/store';
 import { CharacterEditor } from './ui/CharacterEditor';
 import { saveTextFile } from './ui/download';
-import { stage3Stand } from './game/scenarios';
+import { demoOutpost, stage3Stand } from './game/scenarios';
 import {
   TacticalMap,
   type EditorTool,
@@ -535,6 +535,46 @@ export function App() {
       setHistory(startEditing(combatStore.getSnapshot().battle));
   };
 
+  // Scene mode tabs: above the map on the phone, inside the map toolbar in the desktop shell.
+  const modeSwitch = (
+    <div className="mode-switch" role="tablist" aria-label="Режим сцены">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === 'editor'}
+        className={mode === 'editor' ? 'chosen' : ''}
+        disabled={info.started}
+        title={info.started ? 'Во время боя карту менять нельзя' : undefined}
+        onClick={enterEditor}
+      >
+        Редактор карты{dirty ? ' •' : ''}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === 'placement'}
+        className={mode === 'placement' ? 'chosen' : ''}
+        disabled={info.started}
+        onClick={() => setSetupMode('placement')}
+      >
+        Расстановка
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === 'combat'}
+        className={mode === 'combat' ? 'chosen' : ''}
+        disabled={!info.started}
+        title={info.started ? undefined : 'Бой начинается кнопкой «Начать бой» в расстановке'}
+      >
+        Бой
+      </button>
+      <span className="muted small map-name detail">
+        {battle.map.name} · {battle.map.cols} × {battle.map.rows} · ревизия {battle.mapRevision}
+      </span>
+    </div>
+  );
+
   return (
     <div className={`app view-${view}${details ? ' show-details' : ''}`}>
       <header className="app-header">
@@ -570,6 +610,17 @@ export function App() {
                   e.currentTarget.closest('details')?.removeAttribute('open');
               }}
             >
+              <button
+                type="button"
+                onClick={() =>
+                  replaceBattle(
+                    demoOutpost(),
+                    'Демо-аванпост загружен: казарма, пост с окном, склад, мастерская, двор с укрытиями. ОБ укрытий — демо-значения.',
+                  )
+                }
+              >
+                Демо: аванпост
+              </button>
               <button
                 type="button"
                 onClick={() =>
@@ -764,46 +815,9 @@ export function App() {
           </aside>
 
           <section className="column center">
-            <div className="mode-switch" role="tablist" aria-label="Режим сцены">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mode === 'editor'}
-                className={mode === 'editor' ? 'chosen' : ''}
-                disabled={info.started}
-                title={info.started ? 'Во время боя карту менять нельзя' : undefined}
-                onClick={enterEditor}
-              >
-                Редактор карты{dirty ? ' •' : ''}
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mode === 'placement'}
-                className={mode === 'placement' ? 'chosen' : ''}
-                disabled={info.started}
-                onClick={() => setSetupMode('placement')}
-              >
-                Расстановка
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mode === 'combat'}
-                className={mode === 'combat' ? 'chosen' : ''}
-                disabled={!info.started}
-                title={
-                  info.started ? undefined : 'Бой начинается кнопкой «Начать бой» в расстановке'
-                }
-              >
-                Бой
-              </button>
-              <span className="muted small map-name detail">
-                {battle.map.name} · {battle.map.cols} × {battle.map.rows} · ревизия{' '}
-                {battle.mapRevision}
-              </span>
-            </div>
+            {modeSwitch}
             <TacticalMap
+              toolbarEnd={modeSwitch}
               battle={battle}
               version={version}
               mode={mode}

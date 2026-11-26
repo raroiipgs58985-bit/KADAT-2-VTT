@@ -180,6 +180,21 @@
 }
 
 /* ===== Оболочка desktop (телефон — после утверждения desktop) ===== */
+/* Toolbar copy of the scene mode tabs exists only in the desktop shell. */
+.map-toolbar > .toolbar-end {
+  display: none;
+}
+/* Pointer gauges and the diagnostic strip belong to the desktop shell only. */
+.gauges,
+.diag-strip {
+  display: none;
+}
+/* Token hardware is drawn only in the desktop shell; the phone keeps flat tokens. */
+.token-rim,
+.token-dome {
+  display: none;
+}
+
 @media (min-width: 761px) {
   body {
     background: #090a0a;
@@ -529,7 +544,9 @@
     fill: url(#kt-floor);
   }
   .map.textured [data-testid='floor'] rect {
-    opacity: 0.74;
+    /* The colour tints the steel; the texture stays visible underneath. */
+    mix-blend-mode: color;
+    opacity: 0.85;
   }
   .map.textured .grid-minor {
     stroke: rgba(205, 220, 212, 0.11);
@@ -566,7 +583,51 @@
     filter: drop-shadow(0.06px 0.1px 0.03px rgba(0, 0, 0, 0.8));
   }
   .map.textured .obstacle.solid.transparent rect {
-    fill-opacity: 0.7;
+    fill-opacity: 0.92;
+  }
+  .map.textured .obstacle.cover-low rect {
+    stroke: #c9b98c;
+    stroke-dasharray: 0.18 0.08;
+  }
+  .map.textured .obstacle.cover-medium rect {
+    stroke: #c9b98c;
+  }
+  .map.textured .obstacle text {
+    paint-order: stroke;
+    stroke: rgba(0, 0, 0, 0.85);
+    stroke-width: 0.08;
+  }
+
+  /* ---------- токены: хромированный обод и выпуклое стекло ---------- */
+  .token-rim,
+  .token-dome {
+    display: inline;
+  }
+  .token-rim {
+    fill: url(#kt-chrome);
+    stroke: #101312;
+    stroke-width: 0.03;
+    filter: drop-shadow(0.05px 0.1px 0.05px rgba(0, 0, 0, 0.85));
+  }
+  .token-dome {
+    fill: url(#kt-dome);
+    pointer-events: none;
+  }
+  .token-body {
+    stroke: #121514;
+    stroke-width: 0.04;
+  }
+  .token.selected .token-rim {
+    stroke: #fff6d8;
+    stroke-width: 0.07;
+  }
+  .token.selected .token-body {
+    stroke: #121514;
+    stroke-width: 0.04;
+  }
+  .token-initials {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    fill: #0b0f0e;
   }
   .map.textured .obstacle.passable rect {
     fill: rgba(150, 160, 150, 0.16);
@@ -692,5 +753,247 @@
   .layout h3 {
     font-family: var(--kit-mono);
     letter-spacing: 0.16em;
+  }
+
+  /* ---------- финал: карта больше, действия без прокрутки ---------- */
+  .layout > .column.center {
+    position: relative;
+    gap: 0;
+  }
+  /* Режимы сцены — в строке инструментов карты, а не отдельной строкой над ней. */
+  .layout > .column.center > .mode-switch {
+    display: none;
+  }
+  .map-shell > .map-toolbar {
+    flex-wrap: wrap;
+  }
+  .map-toolbar > .toolbar-end {
+    display: flex;
+    margin-left: auto;
+    flex: none;
+  }
+  .map-toolbar .mode-switch {
+    display: flex;
+    gap: 4px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+  }
+  .map-toolbar .mode-switch .map-name {
+    display: none;
+  }
+  .map-toolbar .mode-switch button {
+    min-height: 30px;
+    padding: 2px 12px;
+    font-size: 0.82rem;
+  }
+  .map-shell .map-hint {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .layout > .column.left > .turn-bar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: rgba(8, 10, 10, 0.94);
+  }
+  .layout .panel.actions .kit-attack-go {
+    position: sticky;
+    bottom: 0;
+    z-index: 4;
+    box-shadow: 0 -12px 16px rgba(6, 8, 9, 0.92);
+  }
+  .layout .actor-tabs button {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  /* ---------- диагностика бойца ---------- */
+  .diag-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: -2px 0 10px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid rgba(232, 236, 226, 0.1);
+    font:
+      700 0.66rem/1 'IBM Plex Mono',
+      ui-monospace,
+      monospace;
+    letter-spacing: 0.18em;
+    color: #9fa89f;
+  }
+  .diag-strip > :first-child {
+    flex: 1;
+  }
+  .diag-lamp {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #3a3f3a;
+    box-shadow: inset 0 1px 2px #000;
+  }
+  .diag-lamp.diag-alive {
+    background: radial-gradient(circle at 35% 30%, #d9ffd9, #4fd16b 45%, #1d5a2a);
+    box-shadow: 0 0 8px #4fd16b88;
+  }
+  .diag-lamp.diag-agony,
+  .diag-lamp.diag-stabilized {
+    background: radial-gradient(circle at 35% 30%, #fff1c9, #f2a531 45%, #6b3d07);
+    box-shadow: 0 0 8px #f2a53188;
+  }
+  .diag-lamp.diag-dead {
+    background: radial-gradient(circle at 35% 30%, #ffd1c9, #e0442f 45%, #5e140a);
+    box-shadow: 0 0 8px #e0442f88;
+  }
+
+  /* ---------- стрелочные приборы ран и крови ---------- */
+  .actor-card .vital-bar {
+    display: none;
+  }
+  .actor-card .vitals {
+    display: block;
+  }
+  .gauges {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .gauge {
+    position: relative;
+    text-align: center;
+  }
+  .gauge svg {
+    display: block;
+    width: 100%;
+    max-width: 150px;
+    margin: 0 auto;
+    filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.7));
+  }
+  .gauge-bezel {
+    fill: #3c3f3c;
+    stroke: #a7aaa2;
+    stroke-width: 2.4;
+  }
+  .gauge-face {
+    fill: #e6dfc9;
+    stroke: #1b1d1b;
+    stroke-width: 1;
+  }
+  .gauge-track {
+    fill: none;
+    stroke: #c6bea6;
+    stroke-width: 4;
+  }
+  .gauge-value {
+    fill: none;
+    stroke-width: 4;
+  }
+  .gauge-wounds .gauge-value {
+    stroke: #2f8f6a;
+  }
+  .gauge-blood .gauge-value {
+    stroke: #b4322c;
+  }
+  .gauge-tick {
+    stroke: #33332e;
+    stroke-width: 1.2;
+  }
+  .gauge-scale {
+    font:
+      700 7px 'IBM Plex Mono',
+      ui-monospace,
+      monospace;
+    fill: #33332e;
+  }
+  .gauge-needle {
+    stroke: #c4301f;
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    transition: all 0.35s ease;
+  }
+  .gauge-hub {
+    fill: #262826;
+    stroke: #b9bbb3;
+    stroke-width: 1.2;
+  }
+  .gauge-name {
+    font:
+      700 6.5px 'IBM Plex Mono',
+      ui-monospace,
+      monospace;
+    letter-spacing: 0.12em;
+    fill: #55534b;
+  }
+  .gauge-label {
+    display: none;
+  }
+  .gauge-window {
+    fill: #0b0d0c;
+    stroke: #6f726b;
+    stroke-width: 0.8;
+  }
+  .gauge-digits {
+    font:
+      700 9.5px 'IBM Plex Mono',
+      ui-monospace,
+      monospace;
+    fill: #f6dd9a;
+  }
+  .gauge-readout {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    margin-top: -10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .gauge-label-unused {
+    font:
+      700 0.62rem/1 'IBM Plex Mono',
+      ui-monospace,
+      monospace;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #a6ada6;
+  }
+  .gauge-readout strong {
+    font:
+      700 1.02rem/1.1 'IBM Plex Mono',
+      ui-monospace,
+      monospace;
+    color: #f2e7c4;
+    padding: 2px 8px;
+    background: #0b0d0c;
+    border: 1px solid #2f3330;
+    border-radius: 2px;
+  }
+
+  /* Низкие окна (≤ 820 px): журнал и порог компактнее, чтобы форма атаки помещалась. */
+  @media (max-height: 820px) {
+    .layout > .column.right > .panel.log {
+      flex: 1 1 150px;
+      min-height: 130px;
+    }
+    .kit-readout {
+      padding: 2px 4px;
+    }
+    .kit-readout .kit-nixie-lg {
+      transform: scale(0.8);
+      transform-origin: right center;
+    }
+    .layout > .column.right {
+      gap: 6px;
+    }
   }
 }

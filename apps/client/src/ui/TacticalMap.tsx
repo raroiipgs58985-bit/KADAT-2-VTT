@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react';
 import { cellKey, cellsOf, distance, snapCenter, type Cell, type Point } from '../game/grid';
 import type { Vertex } from '../game/map';
@@ -58,6 +59,8 @@ export interface MoveIntent {
   route: Point[] | null;
 }
 interface Props {
+  /** Extra controls at the end of the map toolbar (desktop shell). */
+  toolbarEnd?: ReactNode;
   battle: Battle;
   /** Bumps on every published state change; derived highlights are keyed by it. */
   version: number;
@@ -736,6 +739,7 @@ export function TacticalMap(props: Props) {
           {map.cols} × {map.rows}
           {` · клетка ${hoverCell ? `${hoverCell.col}, ${hoverCell.row}` : '—'}`}
         </span>
+        {props.toolbarEnd && <div className="toolbar-end">{props.toolbarEnd}</div>}
       </div>
       <svg
         ref={svg}
@@ -766,6 +770,18 @@ export function TacticalMap(props: Props) {
           <pattern id="kt-hazard" patternUnits="userSpaceOnUse" width={0.6} height={0.6}>
             <image href={mapHazardTex} width={0.6} height={0.6} preserveAspectRatio="none" />
           </pattern>
+          {/* Token hardware: chrome rim and a domed highlight (desktop styling only). */}
+          <linearGradient id="kt-chrome" x1="0" y1="0" x2="0.4" y2="1">
+            <stop offset="0" stopColor="#f2f0e6" />
+            <stop offset="0.45" stopColor="#8d918c" />
+            <stop offset="0.55" stopColor="#4b4f4d" />
+            <stop offset="1" stopColor="#c9c6b8" />
+          </linearGradient>
+          <radialGradient id="kt-dome" cx="0.38" cy="0.3" r="0.75">
+            <stop offset="0" stopColor="#fff" stopOpacity="0.55" />
+            <stop offset="0.45" stopColor="#fff" stopOpacity="0.08" />
+            <stop offset="1" stopColor="#000" stopOpacity="0.45" />
+          </radialGradient>
           <clipPath id="map-area">
             <rect x={0} y={0} width={map.cols} height={map.rows} />
           </clipPath>
@@ -889,7 +905,7 @@ export function TacticalMap(props: Props) {
           {map.obstacles.map((o) => (
             <g
               key={o.id}
-              className={`obstacle ${o.blocksMovement ? 'solid' : 'passable'} ${o.blocksVision ? 'opaque' : 'transparent'} ${isSelected('obstacle', o.id) ? 'selected' : ''}`}
+              className={`obstacle ${o.blocksMovement ? 'solid' : 'passable'} ${o.blocksVision ? 'opaque' : 'transparent'}${o.coverOb ? ` cover cover-${o.coverHeight ?? 'medium'}` : ''} ${isSelected('obstacle', o.id) ? 'selected' : ''}`}
               data-obstacle={o.id}
               data-object-kind="obstacle"
               data-object-id={o.id}
@@ -1229,11 +1245,17 @@ export function TacticalMap(props: Props) {
                 />
               )}
               <rect
+                className="token-rim"
+                {...rectOf({ x: 0, y: 0 }, bodyW + 0.12, bodyH + 0.12)}
+                rx={radius + 0.06}
+              />
+              <rect
                 className="token-body"
                 {...rectOf({ x: 0, y: 0 }, bodyW, bodyH)}
                 rx={radius}
                 style={{ fill: tokenColor(battle, id) }}
               />
+              <rect className="token-dome" {...rectOf({ x: 0, y: 0 }, bodyW, bodyH)} rx={radius} />
               <text className="token-initials" textAnchor="middle" dominantBaseline="central">
                 {initials(battle, id)}
               </text>

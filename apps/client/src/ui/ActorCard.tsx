@@ -39,6 +39,70 @@ function Meter({ value, max, tone }: { value: number; max: number; tone: string 
   );
 }
 
+/**
+ * Pointer instrument for wounds and blood (desktop shell): the needle and the readout show the
+ * exact value from the Rules Engine; the dial is a picture of the same number, nothing more.
+ */
+function Gauge(props: { label: string; value: number; max: number; tone: 'wounds' | 'blood' }) {
+  const { value, max } = props;
+  const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
+  // 240° dial: from 150° (empty) clockwise to 30° (full), angles in SVG degrees.
+  const angle = (r: number) => ((150 + 240 * r) * Math.PI) / 180;
+  const at = (r: number, radius: number) => ({
+    x: 50 + radius * Math.cos(angle(r)),
+    y: 50 + radius * Math.sin(angle(r)),
+  });
+  const arc = (from: number, to: number, radius: number) => {
+    const a = at(from, radius),
+      b = at(to, radius);
+    return `M ${a.x} ${a.y} A ${radius} ${radius} 0 ${240 * (to - from) > 180 ? 1 : 0} 1 ${b.x} ${b.y}`;
+  };
+  const tip = at(ratio, 33);
+  return (
+    <div
+      className={`gauge gauge-${props.tone}`}
+      role="meter"
+      aria-label={props.label}
+      aria-valuenow={value}
+      aria-valuemin={0}
+      aria-valuemax={max}
+    >
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <circle className="gauge-bezel" cx={50} cy={50} r={47} />
+        <circle className="gauge-face" cx={50} cy={50} r={42} />
+        <path className="gauge-track" d={arc(0, 1, 36)} />
+        {ratio > 0 && <path className="gauge-value" d={arc(0, ratio, 36)} />}
+        {Array.from({ length: 11 }, (_, i) => {
+          const a = at(i / 10, 39),
+            b = at(i / 10, i % 5 === 0 ? 31 : 34);
+          return <line key={i} className="gauge-tick" x1={a.x} y1={a.y} x2={b.x} y2={b.y} />;
+        })}
+        <text className="gauge-scale" x={at(0, 24).x} y={at(0, 24).y + 2} textAnchor="middle">
+          0
+        </text>
+        <text className="gauge-scale" x={at(1, 24).x} y={at(1, 24).y + 2} textAnchor="middle">
+          {max}
+        </text>
+        <line className="gauge-needle" x1={50} y1={50} x2={tip.x} y2={tip.y} />
+        <text className="gauge-name" x={50} y={66} textAnchor="middle">
+          {props.label.toUpperCase()}
+        </text>
+        <rect className="gauge-window" x={27} y={71} width={46} height={15} rx={1.5} />
+        <text className="gauge-digits" x={50} y={82.5} textAnchor="middle">
+          {value} / {max}
+        </text>
+        <circle className="gauge-hub" cx={50} cy={50} r={4.5} />
+      </svg>
+      <div className="gauge-readout">
+        <span className="gauge-label">{props.label}</span>
+        <strong>
+          {value} / {max}
+        </strong>
+      </div>
+    </div>
+  );
+}
+
 export function ActorCard({
   battle,
   id,
@@ -62,6 +126,11 @@ export function ActorCard({
 
   return (
     <article className="actor-card" aria-label={`Персонаж ${profile.name}`}>
+      <div className="diag-strip" aria-hidden="true">
+        <span>ДИАГНОСТИКА</span>
+        <span className={`diag-lamp diag-${status.life.toLowerCase()}`} />
+        <span>{(lifeLabel[status.life] ?? status.life).toUpperCase()}</span>
+      </div>
       <header className="actor-head">
         <div className={`avatar ${c.side === 'b' ? 'side-b' : 'side-a'}`}>{profile.name[0]}</div>
         <div>
@@ -74,7 +143,16 @@ export function ActorCard({
       </header>
 
       <div className="vitals">
-        <div>
+        <div className="gauges">
+          <Gauge label="Раны" value={status.wounds} max={status.maxWounds} tone="wounds" />
+          <Gauge
+            label="Кровь"
+            value={status.blood.currentBlood}
+            max={status.blood.maxBlood}
+            tone="blood"
+          />
+        </div>
+        <div className="vital-bar">
           <div className="vital-label">
             <span>Раны</span>
             <strong>
@@ -83,7 +161,7 @@ export function ActorCard({
           </div>
           <Meter value={status.wounds} max={status.maxWounds} tone="wounds" />
         </div>
-        <div>
+        <div className="vital-bar">
           <div className="vital-label">
             <span>Кровь</span>
             <strong>
