@@ -450,7 +450,7 @@ export function AttackPanel(props: {
     'full-auto': 'Длинная очередь',
   };
   return (
-    <div className="stack">
+    <div className="stack attack-form">
       <AttackReadout preview={props.preview} />
       <label>
         Цель
@@ -1176,6 +1176,11 @@ export function CombatLog({ battle }: { battle: Battle }) {
               {line.summary && <p>{line.summary}</p>}
               {line.dice && (
                 <p className="dice-line detail">Броски: {line.diceDetailed || line.dice}</p>
+              )}
+              {typeof (entry.detail as { diagnostic?: unknown }).diagnostic === 'string' && (
+                <p className="dice-line detail">
+                  Ядро: {(entry.detail as { diagnostic: string }).diagnostic}
+                </p>
               )}
               <details className="detail">
                 <summary>Данные движка</summary>

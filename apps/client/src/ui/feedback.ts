@@ -1,5 +1,6 @@
 import { describeEntry, type JournalTone } from '../game/journal';
 import type { LogEntry } from '../game/model';
+import { describeEngineError } from '../game/errors';
 
 export interface Feedback {
   text: string;
@@ -26,5 +27,5 @@ export function commandFeedback(
     };
   }
   if (error === undefined) return { text: 'Команда выполнена.', tone: 'info' };
-  return { text: error instanceof Error ? error.message : String(error), tone: 'error' };
+  return { text: describeEngineError(error).text, tone: 'error' };
 }

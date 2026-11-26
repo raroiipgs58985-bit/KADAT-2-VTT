@@ -19,6 +19,7 @@ import type {
   DamageResolutionResult,
 } from '@kadat/contracts';
 import { modifierLabel } from './modifier-labels';
+import { describeEngineError, engineReason } from './errors';
 import {
   adjustDamageDice,
   concussion,
@@ -4608,7 +4609,7 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
       append(b, 'rejected', {
         command,
         rolls: used,
-        reason: explainEngineError(error),
+        ...engineReason(error),
         committed: false,
       });
       throw error;
@@ -4644,7 +4645,7 @@ export type AttackPreview =
       finalModifier: number;
       target: number;
     }
-  | { status: 'unavailable'; reason: string };
+  | { status: 'unavailable'; reason: string; diagnostic?: string };
 type PreparedCheck = {
   characteristic: { result: { finalValue: number; finalSuper: number } };
   context: Parameters<typeof checkTarget>[0]['context'];
@@ -4717,7 +4718,8 @@ export function previewAttack(b: Battle, command: AttackCommand): AttackPreview 
       return no('Порог зависит от броска, который делается до проверки атаки');
     if (error instanceof QuestionRequired)
       return no(`Нужен ответ ведущего: ${error.question.text}`);
-    return no(explainEngineError(error));
+    const { text, diagnostic } = describeEngineError(error);
+    return diagnostic ? { status: 'unavailable', reason: text, diagnostic } : no(text);
   } finally {
     attackProbe = null;
     askScope = saved.askScope;
@@ -4958,47 +4960,11 @@ const noDice: DiceSource = {
     throw new Error('Movement actions never consume dice');
   },
 };
-const coreMessages: [RegExp, string][] = [
-  [/Insufficient OD/, 'Недостаточно ОД в этом ходу'],
-  [/Unavailable Reaction/, 'Реакция уже потрачена'],
-  [/Action requires active own turn/, 'Сейчас не ход этого персонажа'],
-  [/Action prohibited by effect/, 'Действие запрещено активным эффектом'],
-  [/Reaction prohibited by effect/, 'Реакция запрещена активным эффектом'],
-  [/Empty or repeated action ID/, 'Команда с таким ID уже исполнена'],
-  [/Second attack requires/, 'В этом ходу атака уже была: разрешена одна атака за ход'],
-  [/Free Action already used/, 'Свободное действие (СД) в этом ходу уже использовано'],
-  [/unavailable while crawling/, 'Ползком Бег и Спринт недоступны'],
-  [
-    /Unbraced heavy weapon cannot fire bursts/,
-    'Тяжёлое оружие без опоры стреляет только одиночными (−30). Сначала «Установить на опору» (1 ОД, «Бой» A55)',
-  ],
-  [/Weapon is already braced/, 'Оружие уже установлено на опору'],
-  [/not in an appropriate jammed state/, 'Оружие не заклинило'],
-  [
-    /Invalid actor\/target\/selected weapon|Melee weapon is not owned\/held\/readied|Invalid actor\/selected weapon/,
-    'Оружие не в руках: сначала «Взять в руки» (1 ОД, решение 81)',
-  ],
-  [/Weapon is not in hand/, 'Это оружие не в руках'],
-  [
-    /Weapon must be picked up/,
-    'Оружие на полу или на ремне: его поднимают («Поднять», решение 82)',
-  ],
-  [/Weapon is not dropped or hanging/, 'Оружие не на полу и не на ремне'],
-  [/Parry requires an eligible weapon/, 'Этим оружием нельзя парировать'],
-  [/Incoming action is not dodgeable/, 'От этой атаки нельзя уклониться'],
-  [/Dodge prohibited by effect/, 'Уклонение запрещено состоянием цели'],
-  [/Parry prohibited by effect/, 'Парирование запрещено состоянием цели'],
-  [/Insufficient ammunition/, 'Не хватает боезапаса в магазине'],
-  [/Jammed weapon cannot fire/, 'Оружие заклинило: сначала исправить осечку'],
-  [/Target outside effective melee reach/, 'Цель дальше досягаемости оружия ближнего боя'],
-];
 const coreErrorPattern =
   /^(Insufficient|Unavailable|Action |Reaction |Empty or repeated|Free Action|Run and Sprint|Second attack|Unbraced|Weapon is|Jammed|Target outside)/;
-/** Russian explanation for Core validation errors; the original message is kept. */
+/** Russian text of an engine error; the core original goes to `diagnostic` (see errors.ts). */
 export function explainEngineError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  const known = coreMessages.find(([pattern]) => pattern.test(message));
-  return known ? `${known[1]} (Core: ${message})` : message;
+  return describeEngineError(error).text;
 }
 function authorBoundary(state: EngineState, actorId: ActorId, mode: MoveMode): string | null {
   if ((mode === 'run' || mode === 'sprint') && rulings.runSprintDistances !== 'mechanics')
@@ -5052,7 +5018,7 @@ export function movementOptions(b: Battle, actorId: ActorId): MoveOption[] {
         ...m,
         available: false,
         maxDistance: null,
-        reason: explainEngineError(error),
+        ...engineReason(error),
         blockedBy:
           error instanceof Error && coreErrorPattern.test(error.message) ? 'engine' : 'state',
       };
@@ -5205,7 +5171,7 @@ export function moveActor(b: Battle, command: MoveCommand, source: DiceSource = 
   } catch (error) {
     append(b, 'move-rejected', {
       command,
-      reason: explainEngineError(error),
+      ...engineReason(error),
       authorDecisionRequired: error instanceof RuleDecisionRequired,
       committed: false,
     });
@@ -5736,7 +5702,7 @@ export function turnAction(b: Battle, command: TurnActionCommand, source: DiceSo
     append(b, 'turn-action-rejected', {
       command,
       name: turnActionName[command.type],
-      reason: explainEngineError(error),
+      ...engineReason(error),
       committed: false,
     });
     throw error;
@@ -5843,7 +5809,7 @@ export function disarm(
     });
     return { status: 'RESOLVED' as const, disarmed: Boolean(r.result.disarmed), distance, degrees };
   } catch (error) {
-    append(b, 'disarm-rejected', { command, reason: explainEngineError(error), committed: false });
+    append(b, 'disarm-rejected', { command, ...engineReason(error), committed: false });
     throw error;
   }
 }
@@ -6038,7 +6004,7 @@ export function extractWeapon(
     });
     return { status: 'RESOLVED' as const, wounds };
   } catch (error) {
-    append(b, 'extract-rejected', { command, reason: explainEngineError(error), committed: false });
+    append(b, 'extract-rejected', { command, ...engineReason(error), committed: false });
     throw error;
   }
 }
@@ -6161,7 +6127,7 @@ export function grappleAction(
     append(b, 'grapple-rejected', {
       command,
       name: grappleActionName[command.type],
-      reason: explainEngineError(error),
+      ...engineReason(error),
       committed: false,
     });
     throw error;
@@ -6262,7 +6228,7 @@ export function pickUpWeapon(b: Battle, command: { id: string; actor: ActorId; w
   } catch (error) {
     append(b, 'pick-up-weapon-rejected', {
       command,
-      reason: explainEngineError(error),
+      ...engineReason(error),
       committed: false,
     });
     throw error;
@@ -6337,7 +6303,7 @@ export function takeWeapon(
   } catch (error) {
     append(b, 'take-weapon-rejected', {
       command,
-      reason: explainEngineError(error),
+      ...engineReason(error),
       committed: false,
     });
     throw error;
@@ -6373,7 +6339,7 @@ export function dropWeapon(b: Battle, command: { id: string; actor: ActorId; wea
   } catch (error) {
     append(b, 'drop-weapon-rejected', {
       command,
-      reason: explainEngineError(error),
+      ...engineReason(error),
       committed: false,
     });
     throw error;
@@ -6429,7 +6395,7 @@ export function braceWeapon(b: Battle, command: { id: string; actor: ActorId; we
     });
     return { status: 'RESOLVED' as const };
   } catch (error) {
-    append(b, 'brace-rejected', { command, reason: explainEngineError(error), committed: false });
+    append(b, 'brace-rejected', { command, ...engineReason(error), committed: false });
     throw error;
   }
 }
@@ -6469,7 +6435,7 @@ export function standUp(b: Battle, command: { id: string; actor: ActorId }) {
     });
     return { status: 'RESOLVED' as const };
   } catch (error) {
-    append(b, 'posture-rejected', { command, reason: explainEngineError(error), committed: false });
+    append(b, 'posture-rejected', { command, ...engineReason(error), committed: false });
     throw error;
   }
 }

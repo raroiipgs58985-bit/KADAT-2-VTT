@@ -17,5 +17,7 @@ _Пока встроенного стороннего кода нет._
 под лицензией **CC0 1.0** (общественное достояние, указание авторства не
 требуется): `metal_plate_02`, `green_metal_rust`, `blue_metal_plate`,
 `rusty_metal_sheet`, `metal_plate`, `worn_shutter`. Текстура сигнальных полос
-нарисована самостоятельно. Ассеты с ограничительными лицензиями (GameReadyPixels,
+нарисована самостоятельно. Плитки карты `map-floor`, `map-wall`, `map-crate`
+(Stage 2) — уменьшенные и тонированные текстуры `metal_plate_02`,
+`rusty_metal_sheet`, `metal_plate`; `map-hazard` нарисована самостоятельно. Ассеты с ограничительными лицензиями (GameReadyPixels,
 StationSupply, Nexa Visuals) не используются.

@@ -46,6 +46,9 @@ export function AttackReadout({ preview }: { preview: AttackPreview | null | und
           <Nixie value="—" label="Порог d100" size="lg" />
         </div>
         <p className="kit-readout-reason">{preview.reason}</p>
+        {preview.diagnostic && (
+          <p className="kit-readout-diag detail">Ядро: {preview.diagnostic}</p>
+        )}
       </section>
     );
   // Only what changes the target: zero contributions are left out.

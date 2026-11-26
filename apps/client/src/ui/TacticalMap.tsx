@@ -1,3 +1,7 @@
+import mapFloorTex from './kit/assets/map-floor.webp';
+import mapWallTex from './kit/assets/map-wall.webp';
+import mapCrateTex from './kit/assets/map-crate.webp';
+import mapHazardTex from './kit/assets/map-hazard.webp';
 import {
   useEffect,
   useMemo,
@@ -188,6 +192,23 @@ export function TacticalMap(props: Props) {
   });
   const [drag, setDrag] = useState<Drag | null>(null);
   const [hover, setHover] = useState<Point | null>(null);
+  // Map look: industrial textures (CC0) or the clean grid; remembered in the browser.
+  const [textured, setTextured] = useState(() => {
+    try {
+      return localStorage.getItem('kadat.ui.mapTextures') !== 'off';
+    } catch {
+      return true;
+    }
+  });
+  const toggleTextured = () =>
+    setTextured((t) => {
+      try {
+        localStorage.setItem('kadat.ui.mapTextures', t ? 'off' : 'on');
+      } catch {
+        // Storage unavailable: the switch still works for this session.
+      }
+      return !t;
+    });
 
   // A new map size resets the camera to show the whole map.
   useEffect(() => {
@@ -673,6 +694,19 @@ export function TacticalMap(props: Props) {
         >
           Вся карта
         </button>
+        <button
+          type="button"
+          className="map-style-toggle"
+          aria-pressed={textured}
+          title={
+            textured
+              ? 'Показать чистую сетку без фактур'
+              : 'Показать фактуры пола, стен и препятствий'
+          }
+          onClick={toggleTextured}
+        >
+          Фактуры
+        </button>
         <span className="map-hint" title={hint}>
           {hint}
         </span>
@@ -705,7 +739,7 @@ export function TacticalMap(props: Props) {
       </div>
       <svg
         ref={svg}
-        className={`map mode-${mode} ${moveIntent || (mode === 'editor' && props.tool !== 'hand') ? 'is-targeting' : ''} ${drag?.kind === 'pan' ? 'is-panning' : ''}`}
+        className={`map mode-${mode}${textured ? ' textured' : ''} ${moveIntent || (mode === 'editor' && props.tool !== 'hand') ? 'is-targeting' : ''} ${drag?.kind === 'pan' ? 'is-panning' : ''}`}
         style={{ aspectRatio: `${world.w} / ${world.h}` }}
         viewBox={`${center.x - vw / 2} ${center.y - vh / 2} ${vw} ${vh}`}
         role="application"
@@ -719,6 +753,19 @@ export function TacticalMap(props: Props) {
         onPointerCancel={() => setDrag(null)}
       >
         <defs>
+          {/* Industrial textures (Poly Haven, CC0) for the textured look; tile sizes in metres. */}
+          <pattern id="kt-floor" patternUnits="userSpaceOnUse" width={4} height={4}>
+            <image href={mapFloorTex} width={4} height={4} preserveAspectRatio="none" />
+          </pattern>
+          <pattern id="kt-wall" patternUnits="userSpaceOnUse" width={1} height={1}>
+            <image href={mapWallTex} width={1} height={1} preserveAspectRatio="none" />
+          </pattern>
+          <pattern id="kt-crate" patternUnits="userSpaceOnUse" width={1} height={1}>
+            <image href={mapCrateTex} width={1} height={1} preserveAspectRatio="none" />
+          </pattern>
+          <pattern id="kt-hazard" patternUnits="userSpaceOnUse" width={0.6} height={0.6}>
+            <image href={mapHazardTex} width={0.6} height={0.6} preserveAspectRatio="none" />
+          </pattern>
           <clipPath id="map-area">
             <rect x={0} y={0} width={map.cols} height={map.rows} />
           </clipPath>

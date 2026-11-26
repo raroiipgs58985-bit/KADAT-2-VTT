@@ -217,6 +217,28 @@ export function App() {
   const info = useMemo(() => turnInfo(battle), [battle, version]);
   const [selected, setSelected] = useState<ActorId>(info.active);
   const [tab, setTab] = useState<'move' | 'attack' | 'actions'>('move');
+  // Desktop docks («Планшет»): side panels fold into rails; remembered in the browser.
+  const [docks, setDocks] = useState<{ left: boolean; right: boolean }>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('kadat.ui.docks') ?? 'null') as {
+        left?: unknown;
+        right?: unknown;
+      } | null;
+      return { left: saved?.left !== false, right: saved?.right !== false };
+    } catch {
+      return { left: true, right: true };
+    }
+  });
+  const toggleDock = (side: 'left' | 'right') =>
+    setDocks((d) => {
+      const next = { ...d, [side]: !d[side] };
+      try {
+        localStorage.setItem('kadat.ui.docks', JSON.stringify(next));
+      } catch {
+        // Storage may be unavailable (private mode); folding still works for this session.
+      }
+      return next;
+    });
   const [moveMode, setMoveModeRaw] = useState<MoveMode | null>(null);
   /** Clicked route points (author ruling 8); null — a click moves at once. */
   const [route, setRoute] = useState<Point[] | null>(null);
@@ -642,8 +664,21 @@ export function App() {
           notify={(text, tone) => setToast({ text, tone, full: true })}
         />
       ) : (
-        <main className="layout">
-          <aside className="column left">
+        <main
+          className={`layout${docks.left ? '' : ' left-closed'}${docks.right ? '' : ' right-closed'}`}
+        >
+          <aside className="column left" id="dock-left">
+            <button
+              type="button"
+              className="dock-toggle"
+              aria-expanded={docks.left}
+              aria-controls="dock-left"
+              title={docks.left ? 'Свернуть панель хода и бойца' : 'Развернуть панель хода и бойца'}
+              onClick={() => toggleDock('left')}
+            >
+              <span aria-hidden="true">{docks.left ? '◂' : '▸'}</span>
+              <span className="dock-label">{docks.left ? 'Свернуть' : 'Ход и боец'}</span>
+            </button>
             <TurnBar
               battle={battle}
               info={info}
@@ -942,7 +977,22 @@ export function App() {
             />
           </section>
 
-          <aside className="column right">
+          <aside className="column right" id="dock-right">
+            <button
+              type="button"
+              className="dock-toggle"
+              aria-expanded={docks.right}
+              aria-controls="dock-right"
+              title={
+                docks.right
+                  ? 'Свернуть панель действий и журнала'
+                  : 'Развернуть панель действий и журнала'
+              }
+              onClick={() => toggleDock('right')}
+            >
+              <span aria-hidden="true">{docks.right ? '▸' : '◂'}</span>
+              <span className="dock-label">{docks.right ? 'Свернуть' : 'Действия и журнал'}</span>
+            </button>
             {editing && history ? (
               <EditorPanel
                 nameOf={(id) => actorName(battle, id)}
