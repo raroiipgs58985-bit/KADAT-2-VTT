@@ -6,33 +6,27 @@ KADAT 2 — разрабатываемая браузерная платформ
 
 ## Статус
 
-**Early development / tactical scene client — Phase 3A-1.**
+**Early development — локальный VTT для боя по правилам KADAT, без сервера.**
+Где проект сейчас, текущий этап и открытые вопросы — в
+[docs/handoff.md](docs/handoff.md); план — в [ПЛАН-РАЗРАБОТКИ.md](ПЛАН-РАЗРАБОТКИ.md).
 
-Создан минимальный TypeScript workspace: техническая стартовая страница
-клиента и сервер с `GET /health`. В общих пакетах реализован deterministic
-rules kernel: характеристики, проверки, броски, инициатива, раунды и Stunned.
-Поверх ядра добавлены действия, Wait, Overwatch и дистанционная атака с Dodge
-до выдачи неразрешённых HitRecords. Добавлены melee action/reaction,
-стойки, хваты, техники и Grapple. Добавлен protection/damage pipeline до
-`finalDamage`: поля, выбор совместимой защиты, cover, BB и текущий bVN.
-Добавлены source-linked последствия ранений, Injury, Bleeding/Blood, Fatigue,
-Agony/Death и combat-facing stabilization.
-
-**Phase 3A-1:** в `apps/client` работает локальная тактическая сцена: карта
-20 × 20 м с сеткой и масштабом, перетаскиваемые токены, карточка персонажа,
-перемещение и атака через принятый Combat Core, журнал и replay — см.
-[тактическую сцену клиента](docs/tactical-scene-client.md). Realtime, сервер
-боя, база данных, аутентификация и CI не подключены.
-
-**Тактическая карта, этап 1:** редактор карты (размер до 200 × 200 клеток,
-разметка пола, отмена/повтор, атомарное применение с проверкой расстановки) и
-режимы «Редактор карты» / «Расстановка» / «Бой».
-
-**Тактическая карта, этап 2:** подложка PNG/JPEG/WebP с калибровкой по двум
-точкам, декорации с подписями и переносимый файл карты `*.kadat-map.json`.
-
-**Тактическая карта, этап 3:** стены, двери, препятствия и зоны трудного
-ландшафта; проверка позиции и прямого пути токена; replay v0.4 со снимком карты.
+- **Rules Engine** — Infantry Rules Kernel, сверенный с каноном
+  ([СВЕРКА-ЯДРА.md](СВЕРКА-ЯДРА.md)) и дополненный решениями автора
+  ([ВОПРОСЫ-ПО-ПРАВИЛАМ.md](ВОПРОСЫ-ПО-ПРАВИЛАМ.md)): проверки, инициатива,
+  ОД, движение, дальний и ближний бой, реакции, захват, броня и урон, ранения,
+  кровь, подавление, свойства оружия, таланты, гранаты, укрытия.
+- **Клиент** (`apps/client`) — тактическая сцена: карта до 200 × 200 с
+  редактором (подложка, декорации, стены, двери и окна, препятствия, зоны
+  трудного ландшафта, файл `*.kadat-map.json`); бой любого состава из
+  библиотеки персонажей с оружием и бронёй из «Арсенала»; предварительный
+  порог атаки d100 через ядро; журнал и replay. На ПК — интерфейс «Планшет»
+  на KADAT 2 UI Kit, на телефоне — упрощённая вёрстка. Демо-локация — меню
+  «Сценарии» → «Демо: аванпост». Подробно —
+  [тактическая сцена](docs/tactical-scene-client.md) и
+  [редизайн интерфейса](docs/ui-redesign.md).
+- **Генератор персонажей** (`apps/generator`) — открывается из VTT и передаёт
+  персонажа в библиотеку ([ADR 0006](docs/adr/0006-character-generator-in-monorepo.md)).
+- Realtime, сервер боя, база данных, аутентификация и CI не подключены.
 
 ## Основные принципы
 
@@ -63,12 +57,15 @@ Node.js LTS + Fastify для сервера и независимый Rules Engi
 
 ```text
 apps/
-  client/          React + TypeScript + Vite: тактическая сцена (src/game, src/ui)
+  client/          React + TypeScript + Vite: тактическая сцена (src/game, src/ui, src/ui/kit)
+  generator/       генератор персонажей (статическое приложение, /generator/)
   server/          Fastify bootstrap и health endpoint
 packages/
+  canonical-data/  снимки канонических таблиц («Арсенал», профили) и их импорт
   contracts/       независимые domain contracts kernel
   rules-engine/    deterministic resolvers и unit tests
-docs/              документация проекта
+experiments/       прежний прототип локального боя Келус — Пак
+docs/              документация проекта, handoff и ТЗ этапов (docs/stages)
 ```
 
 У общих пакетов нет runtime зависимостей. Rules Engine использует contracts
@@ -106,17 +103,17 @@ pnpm install --frozen-lockfile
 
 ## Команды из корня репозитория
 
-| Команда             | Назначение                                               |
-| ------------------- | -------------------------------------------------------- |
-| `pnpm typecheck`    | Проверка типов всех четырёх workspace пакетов            |
-| `pnpm lint`         | ESLint для исходников и конфигураций                     |
-| `pnpm format`       | Форматирование Prettier                                  |
-| `pnpm format:check` | Проверка форматирования                                  |
-| `pnpm test`         | Запуск Vitest во всех workspace пакетах                  |
-| `pnpm build`        | Production сборка клиента, сервера и обоих общих пакетов |
-| `pnpm dev:client`   | Тактическая сцена на http://127.0.0.1:5173               |
-| `pnpm dev:server`   | Локальный сервер с перезапуском при изменениях           |
-| `pnpm start:server` | Запуск собранного сервера после `pnpm build`             |
+| Команда             | Назначение                                         |
+| ------------------- | -------------------------------------------------- |
+| `pnpm typecheck`    | Проверка типов workspace пакетов                   |
+| `pnpm lint`         | ESLint для исходников и конфигураций               |
+| `pnpm format`       | Форматирование Prettier                            |
+| `pnpm format:check` | Проверка форматирования                            |
+| `pnpm test`         | Запуск Vitest во всех workspace пакетах            |
+| `pnpm build`        | Production сборка клиента, сервера и общих пакетов |
+| `pnpm dev:client`   | Тактическая сцена на http://127.0.0.1:5173         |
+| `pnpm dev:server`   | Локальный сервер с перезапуском при изменениях     |
+| `pnpm start:server` | Запуск собранного сервера после `pnpm build`       |
 
 Сервер по умолчанию слушает `127.0.0.1:3000`. `HOST` и `PORT` позволяют
 переопределить адрес. `GET /health` возвращает `{"status":"ok"}`.
@@ -127,11 +124,12 @@ unit tests Rules Engine. Отдельный запуск ядра:
 больше не допускается. Клиент тестирует слой игры (`apps/client/src/game`); contracts пока
 используют `--passWithNoTests`.
 Typecheck Rules Engine также проверяет тесты и предварительно собирает
-объявления contracts. Playwright отложен до браузерного функционала.
+объявления contracts. Браузерная проверка клиента — `node apps/client/scripts/browser-smoke.mjs [адрес] [папка снимков]` (Playwright, Chromium) при запущенном `pnpm dev:client`.
 
 ## Документация
 
-- [Правила для coding agents](AGENTS.md).
+- [Правила для coding agents](AGENTS.md), в том числе порядок этапов.
+- [Handoff — где проект сейчас](docs/handoff.md) и [шаблон ТЗ этапа](docs/stages/TEMPLATE.md).
 - [Архитектура](docs/architecture.md).
 - [Канонические источники правил](docs/rules-sources.md).
 - [Границы и использование Infantry Rules Kernel](docs/infantry-combat-kernel.md).
@@ -139,5 +137,6 @@ Typecheck Rules Engine также проверяет тесты и предва�
 - [Ближний бой и Grapple Phase 2.2B-2](docs/infantry-melee-actions.md).
 - [Защита и урон Phase 2.2C-1](docs/infantry-protection-damage.md).
 - [Последствия ранений Phase 2.2C-2](docs/infantry-wound-consequences.md).
-- [Тактическая сцена клиента Phase 3A-1](docs/tactical-scene-client.md).
+- [Тактическая сцена клиента](docs/tactical-scene-client.md).
+- [Редизайн интерфейса и KADAT 2 UI Kit](docs/ui-redesign.md).
 - [Назначение Architecture Decision Records](docs/adr/README.md).
