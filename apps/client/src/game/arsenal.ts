@@ -270,6 +270,24 @@ const DECIMAL_RATED = new Set(['Взрыв', 'Локальный взрыв']);
  * becomes `value`; anything else («3+», «2к10/3», «см прим») is not read and is listed for the
  * GM, like optional properties («(опц)», switched on for a free action) and unknown names.
  */
+/**
+ * «Оборонительное (Х)» of a shield (ruling 180): ОБ by zones head / arms / torso / legs
+ * («-/6/6/-»), one number or «все Х» — every zone. Null when the text is not read.
+ */
+export function shieldZones(
+  text: string,
+): { head: number; arms: number; torso: number; legs: number } | null {
+  const v = text.trim().toLowerCase();
+  const all = /^(?:все\s*)?(\d+)$/.exec(v);
+  if (all) {
+    const n = Number(all[1]);
+    return { head: n, arms: n, torso: n, legs: n };
+  }
+  const parts = v.split('/');
+  if (parts.length !== 4 || !parts.every((x) => x === '-' || /^\d+$/.test(x))) return null;
+  const n = parts.map((x) => (x === '-' ? 0 : Number(x)));
+  return { head: n[0]!, arms: n[1]!, torso: n[2]!, legs: n[3]! };
+}
 export function weaponTraits(w: ArsenalWeapon): {
   traits: WeaponTrait[];
   optional: WeaponTrait[];
@@ -291,22 +309,29 @@ export function weaponTraits(w: ArsenalWeapon): {
         ? /^(\d+)к(\d+)(?:\+(\d+))?(?:\/(\d+))?$/.exec(v)
         : null;
       const split = p.property === 'Токсичное' ? /^(\d+)\/(\d+)$/.exec(v) : null;
-      trait = WORD_RATED[p.property]?.includes(v)
-        ? { name: p.property, text: v }
-        : split
-          ? { name: p.property, value: Number(split[1]), duration: Number(split[2]) }
-          : /^\d+$/.test(v)
-            ? { name: p.property, value: Number(v) }
-            : DECIMAL_RATED.has(p.property) && /^\d+[.,]\d+$/.test(v)
-              ? { name: p.property, value: Number(v.replace(',', '.')) }
-              : dice
-                ? {
-                    name: p.property,
-                    dice: { count: Number(dice[1]), sides: Number(dice[2]) },
-                    ...(dice[3] ? { value: Number(dice[3]) } : {}),
-                    ...(dice[4] ? { duration: Number(dice[4]) } : {}),
-                  }
-                : null;
+      // «Сила (4+)» is the same as «Сила (4)» (ruling 179); «Оборонительное (-/6/6/-)» keeps
+      // the ОБ by zones as text (ruling 180, read by `shieldArmour`).
+      const strength = p.property === 'Сила' ? /^(\d+)\+$/.exec(v) : null;
+      trait = strength
+        ? { name: p.property, value: Number(strength[1]) }
+        : p.property === 'Оборонительное' && shieldZones(v)
+          ? { name: p.property, text: v }
+          : WORD_RATED[p.property]?.includes(v)
+            ? { name: p.property, text: v }
+            : split
+              ? { name: p.property, value: Number(split[1]), duration: Number(split[2]) }
+              : /^\d+$/.test(v)
+                ? { name: p.property, value: Number(v) }
+                : DECIMAL_RATED.has(p.property) && /^\d+[.,]\d+$/.test(v)
+                  ? { name: p.property, value: Number(v.replace(',', '.')) }
+                  : dice
+                    ? {
+                        name: p.property,
+                        dice: { count: Number(dice[1]), sides: Number(dice[2]) },
+                        ...(dice[3] ? { value: Number(dice[3]) } : {}),
+                        ...(dice[4] ? { duration: Number(dice[4]) } : {}),
+                      }
+                    : null;
     }
     if (!trait) unread.push(p.raw);
     else (p.optional ? optional : traits).push(trait);

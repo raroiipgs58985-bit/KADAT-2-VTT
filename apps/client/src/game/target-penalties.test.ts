@@ -102,3 +102,15 @@ describe('ranged target penalties (rulings 174–176)', () => {
     expect(labels(b)).toEqual([]);
   });
 });
+
+describe('line of fire (ruling 184)', () => {
+  it('another participant on the line gives −20', () => {
+    const b = createBattle();
+    addCombatant(b, combatant(b, 'pak').character, 'b');
+    const extra = Object.keys(b.roster).find((id) => id !== 'pak' && id !== 'kelus-drakar')!;
+    placeActor(b, extra, 10.5, 10.5); // between Kelus (5.5) and Pak (15.5)
+    startCombat(b, fixedDice('10:9,10:2,10:1'));
+    for (let i = 0; i < 4 && turnInfo(b).active !== 'kelus-drakar'; i++) nextTurn(b, fixedDice(''));
+    expect(labels(b)).toEqual(['На линии огня другой участник']);
+  });
+});

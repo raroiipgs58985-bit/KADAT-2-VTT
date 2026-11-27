@@ -133,7 +133,14 @@ import {
   type WeaponKind,
 } from './combatants';
 import type { ArsenalWeapon } from '../../../../packages/canonical-data/src/arsenal';
-import { isBow, radProtectedArmour, sealedArmour, weaponById, weaponTraits } from './arsenal';
+import {
+  isBow,
+  radProtectedArmour,
+  sealedArmour,
+  weaponById,
+  weaponTraits,
+  shieldZones,
+} from './arsenal';
 import { canonicalTalents } from './talents';
 import {
   hasExoticProficiency,
@@ -562,7 +569,13 @@ const zoneName: Record<Zone, string> = {
  * ОБ of the hit location from the character (profile or armour items) minus the loss in this
  * fight. Eyes and joints without an undersuit — the GM gives the ОБ (ruling 75).
  */
-function zoneArmour(b: Battle, state: EngineState, command: AttackCommand, location: string) {
+function zoneArmour(
+  b: Battle,
+  state: EngineState,
+  command: AttackCommand,
+  location: string,
+  withShield = false,
+) {
   const c = combatant(b, command.target).character;
   const zone = zoneOf(location);
   if (!zone) {
@@ -579,7 +592,21 @@ function zoneArmour(b: Battle, state: EngineState, command: AttackCommand, locat
   const key = `${command.target}:${zone}`;
   const base = c.armour[zone];
   const loss = state.armorLoss[key] ?? 0;
-  return { key, ob: Math.max(0, base - loss), base, loss, zone };
+  // «Оборонительное» (ruling 180): a shield in hand adds its ОБ to the zone.
+  const shield = withShield ? shieldArmour(b, state, command.target)[zone] : 0;
+  return { key, ob: Math.max(0, base - loss) + shield, base, loss, zone, shield };
+}
+/** ОБ by zones from the shields in the character's hands (ruling 180), the best per zone. */
+export function shieldArmour(b: Battle, state: EngineState, actor: ActorId) {
+  const out = { head: 0, arms: 0, torso: 0, legs: 0 };
+  for (const w of battleWeapons(b, actor)) {
+    if (!w.arsenal || !weaponInHandState(state, w.id)) continue;
+    const t = weaponTraits(w.arsenal).traits.find((x) => x.name === 'Оборонительное');
+    const z = t?.text ? shieldZones(t.text) : null;
+    if (!z) continue;
+    for (const k of Object.keys(out) as (keyof typeof out)[]) out[k] = Math.max(out[k], z[k]);
+  }
+  return out;
 }
 function protectionFor(state: EngineState, input: DamageInput, ob: number) {
   const id = `armor:${input.target.actorId}:${input.location}`;
@@ -916,9 +943,28 @@ function reactionContext(
       max: 0,
     });
   const gm = { kind: 'gm', id: `${skillName}: ${skill ? 'навык' : 'штраф ведущего'}` };
-  const mods = [{ id: `${command.id}:skill:${skillName}`, value, reason: gm.id }, ...extra].filter(
-    (m) => m.value !== 0,
-  );
+  // «Сила (Х)» (ruling 179): the attacker short of бСЛ — +10 per missing point to the defence.
+  const attackerWeapon = weaponOf(b, command.weapon)?.arsenal;
+  const strength = attackerWeapon
+    ? strengthRequirement(
+        weaponTraits(attackerWeapon).traits,
+        bonusOf(combatant(b, command.actor).character, 'СЛ'),
+      )
+    : null;
+  const strengthBonus = strength?.defenceBonus
+    ? [
+        {
+          id: `${command.id}:strength-short`,
+          value: strength.defenceBonus,
+          reason: 'Сила (Х): у атакующего не хватает бСЛ',
+        },
+      ]
+    : [];
+  const mods = [
+    { id: `${command.id}:skill:${skillName}`, value, reason: gm.id },
+    ...strengthBonus,
+    ...extra,
+  ].filter((m) => m.value !== 0);
   return {
     ...context(state.wounds.combat, command.target, command.actor),
     modifiers: mods.map((m) => ({
@@ -1331,7 +1377,7 @@ function resolveHit(
   const armour =
     area?.ob !== undefined
       ? { key: `${command.target}:blast`, ob: area.ob, base: area.ob, loss: 0, zone: null }
-      : zoneArmour(b, state, command, hit.location);
+      : zoneArmour(b, state, command, hit.location, true);
   setPhase('damage');
   const roll = preRoll ?? damageRoll(hit.profile.expression, rng, hit.context).result;
   // «Знаток Цепного оружия»: one more к10 for the damage, the lowest die is dropped (ruling 126).
@@ -4554,7 +4600,7 @@ const RUNNING_TARGET_MODES: readonly MoveMode[] = ['full-move', 'run', 'sprint']
  * Ranged attack penalties for the target's situation (author rulings 174–176), −20 each and
  * they add up: it ran (full move, charge, run or sprint in its latest own turn — until its
  * next turn starts), it lies, it stands right next to any other living participant (not the
- * shooter).
+ * shooter); another living participant stands on the line of fire (ruling 184).
  */
 export function rangedTargetPenalties(
   b: Battle,
@@ -4596,6 +4642,28 @@ export function rangedTargetPenalties(
     });
   if (engaged)
     out.push({ key: 'target-engaged', reason: 'Цель в ближнем бою с другими', ruling: 176 });
+  // Ruling 184: another living participant on the line of fire — −20, no risk to hit them.
+  const from = b.positions[shooter],
+    to = b.positions[target];
+  if (from && to) {
+    const len = Math.hypot(to.x - from.x, to.y - from.y);
+    const steps = Math.max(1, Math.ceil(len / 0.05));
+    const inBox = (o: ReturnType<typeof box>, x: number, y: number) =>
+      x > o.l + 0.05 && x < o.r - 0.05 && y > o.t + 0.05 && y < o.d - 0.05;
+    const blocked = actorIds(b).some((id) => {
+      if (id === target || id === shooter || !b.positions[id]) return false;
+      if (state.wounds.actors[id]?.life.status === 'DEAD') return false;
+      const o = box(id);
+      for (let k = 1; k < steps; k++) {
+        const x = from.x + ((to.x - from.x) * k) / steps,
+          y = from.y + ((to.y - from.y) * k) / steps;
+        if (inBox(o, x, y)) return true;
+      }
+      return false;
+    });
+    if (blocked)
+      out.push({ key: 'line-of-fire', reason: 'На линии огня другой участник', ruling: 184 });
+  }
   return out;
 }
 
