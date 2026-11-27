@@ -288,6 +288,8 @@ export function shieldZones(
   const n = parts.map((x) => (x === '-' ? 0 : Number(x)));
   return { head: n[0]!, arms: n[1]!, torso: n[2]!, legs: n[3]! };
 }
+/** Properties without a combat rule (ruling 181). */
+const NO_RULE = new Set(['Окно', 'Прочное']);
 export function weaponTraits(w: ArsenalWeapon): {
   traits: WeaponTrait[];
   optional: WeaponTrait[];
@@ -298,7 +300,10 @@ export function weaponTraits(w: ArsenalWeapon): {
   const unread: string[] = [];
   for (const p of w.properties) {
     if (!p.property) {
-      if (!p.attachment && !p.armourTrait) unread.push(p.raw);
+      // «Свободная ладонь» (ruling 181) is read by the hands logic, «Окно» and «Прочное» carry
+      // no rule (ruling 181): they are not «unread».
+      if (p.raw === 'Свободная ладонь') traits.push({ name: 'Свободная ладонь' });
+      else if (!p.attachment && !p.armourTrait && !NO_RULE.has(p.raw)) unread.push(p.raw);
       continue;
     }
     let trait: WeaponTrait | null = { name: p.property };

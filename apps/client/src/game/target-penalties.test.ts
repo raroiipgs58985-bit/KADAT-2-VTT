@@ -8,11 +8,13 @@ import {
   nextTurn,
   placeActor,
   previewAttack,
+  setDoorOpen,
   startCombat,
   turnInfo,
   type AttackCommand,
 } from './engine';
 import { fixedDice } from './dice';
+import { stage3Stand } from './scenarios';
 
 // Author rulings 174–176: ranged attacks on a target that runs, lies or is in close combat with
 // others get −20 each; they add up.
@@ -112,5 +114,25 @@ describe('line of fire (ruling 184)', () => {
     startCombat(b, fixedDice('10:9,10:2,10:1'));
     for (let i = 0; i < 4 && turnInfo(b).active !== 'kelus-drakar'; i++) nextTurn(b, fixedDice(''));
     expect(labels(b)).toEqual(['На линии огня другой участник']);
+  });
+});
+
+describe('through an open door (ruling 185)', () => {
+  const room = (kelus: { x: number; y: number }, pak: { x: number; y: number }) => {
+    const b = stage3Stand();
+    setDoorOpen(b, 'west-door', true);
+    placeActor(b, 'kelus-drakar', kelus.x, kelus.y);
+    placeActor(b, 'pak', pak.x, pak.y);
+    startCombat(b, fixedDice('10:9,10:2'));
+    expect(turnInfo(b).active).toBe('kelus-drakar');
+    return b;
+  };
+  it('straight through the doorway — no penalty', () => {
+    expect(labels(room({ x: 5.5, y: 10.5 }, { x: 10.5, y: 10.5 }))).toEqual([]);
+  });
+  it('more than 45° to the doorway — −20', () => {
+    expect(labels(room({ x: 6.5, y: 7.5 }, { x: 9.5, y: 13.5 }))).toEqual([
+      'Сквозь открытую дверь под углом',
+    ]);
   });
 });

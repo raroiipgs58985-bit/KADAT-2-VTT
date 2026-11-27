@@ -446,6 +446,11 @@ export function getEngine(b: Battle): EngineState {
       .filter((wid) => wid.startsWith(`${id}:`))
       .sort((a, b) => Number(a.split(':')[1]) - Number(b.split(':')[1]))[0];
     combat = putInHand(combat, id, first ?? null);
+    // «Свободная ладонь» (ruling 181): wrist weapons are worn, not held — in hand from the start.
+    combat = setHeld(
+      combat,
+      Object.keys(w.melee).filter((m) => m.startsWith(`${id}:`) && freePalm(b, m)),
+    );
   }
   const state: EngineState = {
     wounds: createWoundRuntime(
@@ -4663,6 +4668,32 @@ export function rangedTargetPenalties(
     });
     if (blocked)
       out.push({ key: 'line-of-fire', reason: 'На линии огня другой участник', ruling: 184 });
+    // Ruling 185: a shot through an open doorway at more than 45° to it — −20.
+    const cross = (
+      a: { x: number; y: number },
+      c: { x: number; y: number },
+      p: { x: number; y: number },
+      q: { x: number; y: number },
+    ) => {
+      const d1x = c.x - a.x,
+        d1y = c.y - a.y,
+        d2x = q.x - p.x,
+        d2y = q.y - p.y;
+      const den = d1x * d2y - d1y * d2x;
+      if (Math.abs(den) < 1e-9) return false;
+      const t = ((p.x - a.x) * d2y - (p.y - a.y) * d2x) / den;
+      const u = ((p.x - a.x) * d1y - (p.y - a.y) * d1x) / den;
+      return t > 0 && t < 1 && u >= 0 && u <= 1;
+    };
+    const slanted = b.map.doors.some((d) => {
+      if (!(b.doors[d.id] ?? d.open) || !cross(from, to, d.from, d.to)) return false;
+      const horizontal = d.from.y === d.to.y;
+      const along = horizontal ? Math.abs(to.y - from.y) : Math.abs(to.x - from.x);
+      const angle = (Math.acos(Math.min(1, along / Math.max(len, 1e-9))) * 180) / Math.PI;
+      return angle > 45 + 1e-9;
+    });
+    if (slanted)
+      out.push({ key: 'door-angle', reason: 'Сквозь открытую дверь под углом', ruling: 185 });
   }
   return out;
 }
@@ -4676,6 +4707,22 @@ export function watchSectors(b: Battle) {
     const p = posOf(b, id);
     return [{ actor: id, x: p.x, y: p.y, heading: ov.sector.headingDegrees }];
   });
+}
+/** «Свободная ладонь» (ruling 181): the weapon is worn on the wrist and takes no hand. */
+export function freePalm(b: Battle, weapon: WeaponId): boolean {
+  return !!weaponOf(b, weapon)?.arsenal?.properties.some((p) => p.raw === 'Свободная ладонь');
+}
+/** Marks the actor's weapons as in hand (ranged readied, melee held and readied). */
+function setHeld(combat: CombatActionState, ids: readonly WeaponId[]): CombatActionState {
+  if (!ids.length) return combat;
+  const weapons = { ...combat.weapons };
+  for (const id of ids) if (weapons[id]) weapons[id] = { ...weapons[id]!, readied: true };
+  const melee = combat.melee;
+  if (!melee) return { ...combat, weapons };
+  const mw = { ...melee.weapons };
+  for (const id of ids)
+    if (mw[id]) mw[id] = { ...mw[id]!, held: true, readied: true, dropped: false };
+  return { ...combat, weapons, melee: { ...melee, weapons: mw } };
 }
 /** Melee reach of a weapon in metres (fists — 1 m). */
 function weaponReach(b: Battle, weapon: WeaponId): number {
@@ -6852,6 +6899,9 @@ export function takeWeapon(
         twoHandedWeapon(state.wounds.combat, command.weapon))
     )
       throw new Error('Двуручное оружие нельзя держать вторым (решение 105)');
+    const heldBefore = battleWeapons(b, command.actor)
+      .map((w) => w.id)
+      .filter((id) => weaponInHandState(state, id));
     if (!combatStarted(b))
       combat = putInHand(state.wounds.combat, command.actor, command.weapon, command.keep);
     else {
@@ -6867,6 +6917,12 @@ export function takeWeapon(
       combat = r.state;
       cost = r.result.free ? 'СД' : '1 ОД';
     }
+    // «Свободная ладонь» (ruling 181): a wrist weapon takes no hand — taking it keeps what was in
+    // hand, and taking another weapon keeps the wrist weapon on.
+    combat = setHeld(
+      combat,
+      freePalm(b, command.weapon) ? heldBefore : heldBefore.filter((id) => freePalm(b, id)),
+    );
     const next = structuredClone(state);
     next.wounds = { ...next.wounds, combat };
     // Setting up before the fight does not start it (combatStarted looks at committed ids).
