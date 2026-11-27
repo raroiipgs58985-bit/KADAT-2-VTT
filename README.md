@@ -7,8 +7,7 @@ KADAT 2 — разрабатываемая браузерная платформ
 ## Статус
 
 **Early development — локальный VTT для боя по правилам KADAT, без сервера.**
-Где проект сейчас, текущий этап и открытые вопросы — в
-[docs/handoff.md](docs/handoff.md); план — в [ПЛАН-РАЗРАБОТКИ.md](ПЛАН-РАЗРАБОТКИ.md).
+План — в [ПЛАН-РАЗРАБОТКИ.md](ПЛАН-РАЗРАБОТКИ.md).
 
 - **Rules Engine** — Infantry Rules Kernel, сверенный с каноном
   ([СВЕРКА-ЯДРА.md](СВЕРКА-ЯДРА.md)) и дополненный решениями автора
@@ -65,7 +64,7 @@ packages/
   contracts/       независимые domain contracts kernel
   rules-engine/    deterministic resolvers и unit tests
 experiments/       прежний прототип локального боя Келус — Пак
-docs/              документация проекта, handoff и ТЗ этапов (docs/stages)
+docs/              документация проекта
 ```
 
 У общих пакетов нет runtime зависимостей. Rules Engine использует contracts
@@ -128,8 +127,7 @@ Typecheck Rules Engine также проверяет тесты и предва�
 
 ## Документация
 
-- [Правила для coding agents](AGENTS.md), в том числе порядок этапов.
-- [Handoff — где проект сейчас](docs/handoff.md) и [шаблон ТЗ этапа](docs/stages/TEMPLATE.md).
+- [Правила для coding agents](AGENTS.md).
 - [Архитектура](docs/architecture.md).
 - [Канонические источники правил](docs/rules-sources.md).
 - [Границы и использование Infantry Rules Kernel](docs/infantry-combat-kernel.md).
