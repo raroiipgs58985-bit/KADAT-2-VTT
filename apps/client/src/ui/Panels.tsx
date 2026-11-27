@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { AttackReadout, Lamp, Nixie } from './kit/Kit';
 import type { BleedingActivity } from '@kadat/contracts';
-import type { CalledLocation, FireMode } from '@kadat/contracts';
+import type { CalledLocation, FireMode, MeleeGrip } from '@kadat/contracts';
 import {
   weaponSupport,
   attackLineProblem,
@@ -38,6 +38,12 @@ import {
   type MoveOption,
   type turnInfo as TurnInfoFn,
   type AttackPreview,
+  meleeStance,
+  stanceLabel,
+  gripLabel,
+  type MeleeStanceName,
+  watchTriggerLabel,
+  type WatchTrigger,
 } from '../game/engine';
 import { describeEntry, type JournalTone } from '../game/journal';
 import {
@@ -214,6 +220,8 @@ export function MovePanel(props: {
   canAct: boolean;
   posture: 'standing' | 'kneeling' | 'prone';
   onStand: () => void;
+  /** «Лечь» / «Присесть» for the turn's Free Action (ruling 21). */
+  onPosture: (to: 'prone' | 'kneeling') => void;
   footprint: { width: number; height: number };
   mapSize: { cols: number; rows: number };
   /** Route by clicked points (author ruling 8). */
@@ -303,11 +311,27 @@ export function MovePanel(props: {
           )}
         </div>
       )}
-      {props.posture !== 'standing' && (
-        <button type="button" onClick={props.onStand} disabled={!props.canAct}>
-          Встать (1 ОД) — персонаж {props.posture === 'prone' ? 'лежит' : 'на колене'}
-        </button>
-      )}
+      <div className="row posture-row">
+        {props.posture !== 'standing' && (
+          <button type="button" onClick={props.onStand} disabled={!props.canAct}>
+            Встать (1 ОД) — персонаж {props.posture === 'prone' ? 'лежит' : 'на колене'}
+          </button>
+        )}
+        {props.posture !== 'prone' && (
+          <button type="button" onClick={() => props.onPosture('prone')} disabled={!props.canAct}>
+            Лечь (СД)
+          </button>
+        )}
+        {props.posture === 'standing' && (
+          <button
+            type="button"
+            onClick={() => props.onPosture('kneeling')}
+            disabled={!props.canAct}
+          >
+            Присесть на колено (СД)
+          </button>
+        )}
+      </div>
       {chosen && (
         <form
           className="coords-form detail"
@@ -409,6 +433,11 @@ export function AttackPanel(props: {
   /** Thrown weapon: pick the cell on the map (ruling 154). */
   onThrowPick?: () => void;
   throwPicking?: boolean;
+  /** «Дозор» (rulings 177–178): triggers chosen; the heading is tapped on the map next. */
+  onWatch?: (triggers: WatchTrigger[]) => void;
+  watchPicking?: boolean;
+  /** «Сменить стойку или хват» for the Free Action (ruling 21, Core limits; ruling 177). */
+  onStanceGrip?: (change: { stance?: MeleeStanceName; grip?: MeleeGrip }) => void;
 }) {
   const { form, attacker } = props;
   const own = [
@@ -519,6 +548,50 @@ export function AttackPanel(props: {
           )}
         </div>
       )}
+      {weapon?.arsenal &&
+        weaponKind(weapon.arsenal) === 'melee' &&
+        props.onStanceGrip &&
+        props.inHand(weapon.id) &&
+        (() => {
+          const st = meleeStance(props.battle, attacker, weapon.id);
+          const grip = st.grips.includes(st.grip) ? st.grip : st.grips[0];
+          const palisadeOk = ['glaive', 'spear', 'bayonet'].includes(st.family ?? '');
+          return (
+            <>
+              <label>
+                Стойка (СД)
+                <select
+                  value={st.stance}
+                  disabled={!props.canAct}
+                  onChange={(e) =>
+                    props.onStanceGrip!({ stance: e.target.value as MeleeStanceName })
+                  }
+                >
+                  <option value="standard">{stanceLabel.standard}</option>
+                  <option value="defensive">
+                    {stanceLabel.defensive}: +1 реакция ближнего боя, по вам −20; атака — только со
+                    щитом (2 ОД)
+                  </option>
+                  {palisadeOk && <option value="palisade">{stanceLabel.palisade}</option>}
+                </select>
+              </label>
+              <label>
+                Хват (СД)
+                <select
+                  value={grip}
+                  disabled={!props.canAct}
+                  onChange={(e) => props.onStanceGrip!({ grip: e.target.value as MeleeGrip })}
+                >
+                  {st.grips.map((g) => (
+                    <option key={g} value={g}>
+                      {gripLabel[g]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          );
+        })()}
       {weapon?.arsenal && weaponKind(weapon.arsenal) === 'melee' && (
         <label>
           Тип атаки
@@ -746,6 +819,17 @@ export function AttackPanel(props: {
           </button>
         </div>
       )}
+      {props.onWatch &&
+        weapon?.arsenal &&
+        modes.length > 0 &&
+        !isThrown(weapon.arsenal) &&
+        props.inHand(weapon.id) && (
+          <WatchBox
+            canAct={props.canAct && !props.attackedThisTurn}
+            picking={!!props.watchPicking}
+            onWatch={props.onWatch}
+          />
+        )}
       <button
         type="button"
         className="primary kit-attack-go"
@@ -762,6 +846,40 @@ export function AttackPanel(props: {
         Атаковать
       </button>
     </div>
+  );
+}
+
+/** «Дозор»: triggers, then the heading on the map; 1 ОД, the turn ends (rulings 177–178). */
+function WatchBox(props: {
+  canAct: boolean;
+  picking: boolean;
+  onWatch: (triggers: WatchTrigger[]) => void;
+}) {
+  const [triggers, setTriggers] = useState<WatchTrigger[]>(['move']);
+  const toggle = (t: WatchTrigger) =>
+    setTriggers((v) => (v.includes(t) ? v.filter((x) => x !== t) : [...v, t]));
+  return (
+    <details className="watch-box">
+      <summary>Дозор (1 ОД, ход заканчивается)</summary>
+      <p className="muted small">
+        Сектор 90° в выбранную сторону, до края карты; стены закрывают. Одна атака этим оружием и
+        режимом — реакцией, до действия врага. Дозор держится до вашего следующего хода.
+      </p>
+      {(['move', 'attack'] as const).map((t) => (
+        <label key={t} className="check">
+          <input type="checkbox" checked={triggers.includes(t)} onChange={() => toggle(t)} />
+          {watchTriggerLabel[t]}
+        </label>
+      ))}
+      <button
+        type="button"
+        disabled={!props.canAct || triggers.length === 0}
+        onClick={() => props.onWatch(triggers)}
+      >
+        {props.picking ? 'Отменить выбор направления' : 'Указать направление на карте'}
+      </button>
+      {props.picking && <p className="muted small">Щёлкните по карте в центр сектора.</p>}
+    </details>
   );
 }
 

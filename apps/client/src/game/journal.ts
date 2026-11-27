@@ -1,6 +1,13 @@
-import type { DiceRoll } from '@kadat/contracts';
+import type { DiceRoll, MeleeGrip } from '@kadat/contracts';
 import type { ActorId, LogEntry } from './model';
-import { moveModes, type MoveCommand, type AttackCommand } from './engine';
+import {
+  moveModes,
+  stanceLabel,
+  gripLabel,
+  type MoveCommand,
+  type AttackCommand,
+  type MeleeStanceName,
+} from './engine';
 
 type ThrowTarget = {
   actor: string;
@@ -234,15 +241,29 @@ export function describeEntry(
         tone: d.fell ? 'warning' : 'success',
       };
     }
-    case 'posture':
+    case 'posture': {
+      const to = (d.command as { to?: string }).to;
+      const act = to === 'prone' ? 'Лечь' : to === 'kneeling' ? 'Присесть на колено' : 'Встать';
+      const pose = (p: unknown) =>
+        p === 'prone'
+          ? 'лёжа'
+          : p === 'kneeling'
+            ? 'на колене'
+            : p === 'standing'
+              ? 'стоя'
+              : String(p);
       return {
         ...base,
-        title: `${name((d.command as { actor: string }).actor)}: Встать`,
-        summary: `Поза: ${d.from} → ${d.to} · ОД ${d.odBefore} → ${d.odAfter}`,
+        title: `${name((d.command as { actor: string }).actor)}: ${act}`,
+        summary: `Поза: ${pose(d.from)} → ${pose(d.to)} · ОД ${d.odBefore} → ${d.odAfter}${to ? ' · СД' : ''}`,
         tone: 'success',
       };
-    case 'posture-rejected':
-      return { ...base, title: 'Встать не удалось', summary: String(d.reason), tone: 'warning' };
+    }
+    case 'posture-rejected': {
+      const to = (d.command as { to?: string }).to;
+      const act = to === 'prone' ? 'Лечь' : to === 'kneeling' ? 'Присесть' : 'Встать';
+      return { ...base, title: `${act} не удалось`, summary: String(d.reason), tone: 'warning' };
+    }
     case 'move-rejected':
       return {
         ...base,
@@ -691,6 +712,65 @@ export function describeEntry(
         title: `${name((d.command as { actor: string }).actor)}: оружие на опоре`,
         summary: `${String(d.weaponName)} установлено на опору (1 ОД, «Бой» A55): доступны очереди, без штрафа −30. Любое движение снимает опору.`,
         tone: 'success',
+      };
+    case 'overwatch': {
+      const c = d.command as { actor: string; triggers: string[]; heading: number };
+      return {
+        ...base,
+        title: `${name(c.actor)}: дозор`,
+        summary: `${String(d.weaponName)} · сектор 90° · на: ${c.triggers.map((t) => (t === 'move' ? 'движение врага' : 'атаку врага')).join(', ')} · 1 ОД, ход завершён`,
+        tone: 'success',
+      };
+    }
+    case 'overwatch-rejected':
+      return { ...base, title: 'Дозор не заявлен', summary: String(d.reason), tone: 'warning' };
+    case 'watch-trigger':
+      return {
+        ...base,
+        title:
+          d.kind === 'palisade'
+            ? `Частокол: ${name(String(d.watcher))} может ударить`
+            : `Дозор: ${name(String(d.watcher))} может стрелять`,
+        summary:
+          d.kind === 'palisade'
+            ? 'Частокол: враг бежит натиском — удар длинным оружием до его удара.'
+            : d.kind === 'attack'
+              ? 'Враг в секторе начинает атаку — дозорный стреляет первым (реакция).'
+              : 'Враг вошёл в сектор — остановлен в точке входа, дозорный стреляет (реакция).',
+        tone: 'warning',
+      };
+    case 'watch-skip':
+      return {
+        ...base,
+        title: `${name(String(d.watcher))} не стреляет из дозора`,
+        summary: 'Действие врага продолжается.',
+        tone: 'success',
+      };
+    case 'watch-continue':
+      return {
+        ...base,
+        title: `${name(String(d.actor))}: ${d.stopped ? 'остановился после дозора' : 'продолжает движение'}`,
+        summary: d.stopped
+          ? 'Движение закончено в точке входа.'
+          : 'Движение продолжено после выстрела из дозора.',
+        tone: 'success',
+      };
+    case 'stance': {
+      const c = d.command as { actor: string; stance?: string; grip?: string };
+      const to = d.to as { stance: MeleeStanceName; grip: MeleeGrip };
+      return {
+        ...base,
+        title: `${name(c.actor)}: ${c.stance ? 'стойка' : 'хват'} (СД)`,
+        summary: `Стойка: ${stanceLabel[to.stance]} · хват: ${gripLabel[to.grip]}`,
+        tone: 'success',
+      };
+    }
+    case 'stance-rejected':
+      return {
+        ...base,
+        title: 'Сменить стойку или хват не удалось',
+        summary: String(d.reason),
+        tone: 'warning',
       };
     case 'brace-rejected':
       return {

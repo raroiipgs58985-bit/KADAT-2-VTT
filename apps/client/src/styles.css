@@ -1624,3 +1624,23 @@ textarea {
   padding: 8px 0;
   border-top: 1px solid var(--line);
 }
+
+/* Overwatch (rulings 177–178): the 90° sector on the map and the declaration box. */
+.watch-sector {
+  fill: rgba(240, 170, 60, 0.1);
+  stroke: rgba(240, 170, 60, 0.65);
+  stroke-width: 0.05;
+  stroke-dasharray: 0.25 0.12;
+}
+.watch-box {
+  display: grid;
+  gap: 6px;
+}
+.watch-box > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.posture-row {
+  flex-wrap: wrap;
+  gap: 6px;
+}

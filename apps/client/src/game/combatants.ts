@@ -2,6 +2,7 @@ import type {
   Characteristics,
   CombatActorRuntime,
   MeleeActorState,
+  MeleeGrip,
   MeleeWeaponInstance,
   WeaponInstance,
   AmmoContainerInstance,
@@ -176,9 +177,36 @@ function magazine(id: string, w: ArsenalWeapon, rounds: number): AmmoContainerIn
     provenance: engineProvenance,
   };
 }
+/**
+ * Melee weapon family by the Arsenal name, for the Core grip and stance limits (ruling 177):
+ * «кулак» — axe, hook, hammer; «Частокол» — glaive, spear, bayonet. Other weapons — 'arsenal'.
+ */
+export function meleeFamily(name: string): string {
+  const n = name.toLowerCase();
+  if (/щит/.test(n)) return 'shield';
+  if (/топор/.test(n)) return 'axe';
+  if (/кирка|клевец/.test(n)) return 'hook';
+  if (/молот/.test(n)) return 'hammer';
+  if (/копь|пика|трезуб/.test(n)) return 'spear';
+  if (/коса$|глеф|алебард/.test(n)) return 'glaive';
+  if (/штык/.test(n)) return 'bayonet';
+  if (/меч|сабл|шпаг|шотел/.test(n)) return 'sword';
+  return 'arsenal';
+}
+/** Grips by the Core (ruling 177): one or two hands and the close grip for every weapon, the
+ * «fist» grip for axes, hooks and hammers; mordhau needs a mace profile the Arsenal lacks. */
+export function meleeGrips(family: string, twoHanded: boolean): MeleeGrip[] {
+  return [
+    twoHanded ? 'two-handed' : 'one-handed',
+    twoHanded ? 'one-handed' : 'two-handed',
+    'close',
+    ...(['axe', 'hook', 'hammer'].includes(family) ? (['fist'] as const) : []),
+  ];
+}
 function meleeInstance(id: string, owner: ActorId, w: ArsenalWeapon): MeleeWeaponInstance {
   const source = { kind: 'arsenal', id: `${w.sheet}, стр. ${w.source.row}: ${w.name}` };
   const twoHanded = /2р/.test(w.classNote ?? '');
+  const family = meleeFamily(w.name);
   return {
     id,
     owner: ref(owner),
@@ -194,9 +222,9 @@ function meleeInstance(id: string, owner: ActorId, w: ArsenalWeapon): MeleeWeapo
       traits: impliedTraits(weaponTraits(w).traits),
       profile: {
         source,
-        family: 'arsenal',
+        family,
         handedness: twoHanded ? 'two-handed' : 'one-handed',
-        validGrips: [twoHanded ? 'two-handed' : 'one-handed'],
+        validGrips: meleeGrips(family, twoHanded),
         reach: w.range.meters!,
         damage: {
           source,

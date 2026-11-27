@@ -93,6 +93,8 @@ interface Props {
   }[];
   /** Smoke clouds still hanging (rulings 146, 154). */
   smokes?: { id: string; x: number; y: number; r: number }[];
+  /** Overwatch sectors: 90° by heading, drawn to the map edge (ruling 178). */
+  watchSectors?: { actor: string; x: number; y: number; heading: number }[];
   /** Weapons knocked out of the hand lying on the map (ruling 108). */
   loose?: { id: string; name: string; x: number; y: number }[];
   /** A knocked-out weapon waits for its place: within `max` m of `from`. */
@@ -1115,6 +1117,23 @@ export function TacticalMap(props: Props) {
             ))}
           </g>
         )}
+        {(props.watchSectors ?? []).map((w) => {
+          const r = Math.hypot(map.cols, map.rows);
+          const ray = (deg: number) => {
+            const a = (deg * Math.PI) / 180;
+            return `${w.x + r * Math.cos(a)} ${w.y + r * Math.sin(a)}`;
+          };
+          return (
+            <path
+              key={`watch-${w.actor}`}
+              className="watch-sector"
+              data-testid="watch-sector"
+              d={`M ${w.x} ${w.y} L ${ray(w.heading - 45)} A ${r} ${r} 0 0 1 ${ray(w.heading + 45)} Z`}
+              clipPath="url(#map-area)"
+              pointerEvents="none"
+            />
+          );
+        })}
         {(props.smokes ?? []).map((s) => (
           <circle
             key={s.id}

@@ -33,6 +33,16 @@ import {
   setDoorOpen,
   setFootprint,
   standUp,
+  changePosture,
+  changeStanceGrip,
+  declareOverwatch,
+  skipOverwatch,
+  continueAfterWatch,
+  watchSectors,
+  pendingWatch,
+  getEngineOverwatch,
+  meleeStanceWeapon,
+  type WatchTrigger,
   startCombat,
   turnInfo,
   counterattacks,
@@ -261,6 +271,8 @@ export function App() {
   const [form, setForm] = useState<AttackForm>(() => defaultAttack(battle, info.active));
   /** Choosing the cell for a throw on the map (ruling 154). */
   const [throwPick, setThrowPick] = useState(false);
+  // «Дозор»: triggers chosen, waiting for the heading tapped on the map (rulings 177–178).
+  const [watchPick, setWatchPick] = useState<WatchTrigger[] | null>(null);
   const [dice, setDice] = useState<DiceSettings>({
     mode: 'random',
     fixed: '100:45,10:2,100:20',
@@ -813,6 +825,135 @@ export function App() {
                     </button>
                   </div>
                 ))}
+            {(() => {
+              const w = pendingWatch(battle);
+              if (!w) return null;
+              const watcher = actorName(battle, w.watcher);
+              const who = actorName(battle, w.actor);
+              return (
+                <div className="panel pending-banner watch-banner">
+                  {!w.fired && w.kind === 'palisade' ? (
+                    <>
+                      <p>
+                        <strong>Частокол:</strong> {who} бежит натиском — {watcher} может ударить
+                        длинным оружием первым (свободный удар).
+                      </p>
+                      <div className="row">
+                        <button
+                          type="button"
+                          className="primary"
+                          onClick={() =>
+                            run((b) =>
+                              attack(
+                                b,
+                                {
+                                  id: commandId('palisade'),
+                                  actor: w.watcher,
+                                  target: w.actor,
+                                  weapon: meleeStanceWeapon(battle, w.watcher),
+                                  palisade: true,
+                                  targetActivity: 'PHYSICAL_ACTION',
+                                },
+                                source(),
+                              ),
+                            )
+                          }
+                        >
+                          Удар частоколом
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => run((b) => skipOverwatch(b, { watcher: w.watcher }))}
+                        >
+                          Не бить
+                        </button>
+                      </div>
+                    </>
+                  ) : !w.fired ? (
+                    <>
+                      <p>
+                        <strong>Дозор:</strong> {watcher} может выстрелить по {who}{' '}
+                        {w.kind === 'move'
+                          ? '— враг вошёл в сектор и остановлен в точке входа.'
+                          : '— враг в секторе начинает атаку, дозорный стреляет первым.'}{' '}
+                        Выстрел тратит реакцию.
+                      </p>
+                      <div className="row">
+                        <button
+                          type="button"
+                          className="primary"
+                          onClick={() => {
+                            const ov = getEngineOverwatch(battle, w.watcher);
+                            if (!ov) return;
+                            run((b) =>
+                              attack(
+                                b,
+                                {
+                                  id: commandId('watch-shot'),
+                                  actor: w.watcher,
+                                  target: w.actor,
+                                  weapon: ov.weaponId,
+                                  mode: ov.mode,
+                                  overwatch: true,
+                                  targetActivity: w.kind === 'move' ? 'PHYSICAL_ACTION' : 'REST',
+                                },
+                                source(),
+                              ),
+                            );
+                          }}
+                        >
+                          Выстрел из дозора
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => run((b) => skipOverwatch(b, { watcher: w.watcher }))}
+                        >
+                          Не стрелять
+                        </button>
+                      </div>
+                    </>
+                  ) : w.kind === 'move' ? (
+                    <>
+                      <p>
+                        {who}: выстрел из дозора сделан. Продолжить движение к цели или остановиться
+                        здесь?
+                      </p>
+                      <div className="row">
+                        <button
+                          type="button"
+                          className="primary"
+                          onClick={() => run((b) => continueAfterWatch(b, { actor: w.actor }))}
+                        >
+                          Продолжить движение
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            run((b) => continueAfterWatch(b, { actor: w.actor, stop: true }))
+                          }
+                        >
+                          Остановиться здесь
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p>
+                        {who}: {w.kind === 'palisade' ? 'частокол' : 'дозор'} отработал —{' '}
+                        {w.kind === 'palisade' ? 'натиск продолжается' : 'атака продолжается'}.
+                      </p>
+                      <button
+                        type="button"
+                        className="primary"
+                        onClick={() => run((b) => attack(b, w.command!, source()))}
+                      >
+                        {w.kind === 'palisade' ? 'Продолжить натиск' : 'Продолжить атаку'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
             {!info.started && (
               <RosterPanel
                 battle={battle}
@@ -884,24 +1025,51 @@ export function App() {
               loose={looseWeapons(battle)}
               trails={activeTrails(battle)}
               smokes={activeSmokes(battle)}
+              watchSectors={mode === 'combat' ? watchSectors(battle) : []}
               placingLoose={
                 mode !== 'combat'
                   ? null
-                  : throwPick
+                  : watchPick
                     ? {
                         from: posOf(battle, info.active),
-                        max: throwRange(battle, form.weapon) ?? 0,
+                        max: Math.hypot(battle.map.cols, battle.map.rows),
                       }
-                    : pendingLoose(battle)
-                      ? { from: pendingLoose(battle)!.from, max: pendingLoose(battle)!.maxDistance }
-                      : pendingPush(battle)
+                    : throwPick
+                      ? {
+                          from: posOf(battle, info.active),
+                          max: throwRange(battle, form.weapon) ?? 0,
+                        }
+                      : pendingLoose(battle)
                         ? {
-                            from: posOf(battle, pendingPush(battle)!.controller),
-                            max: pendingPush(battle)!.maxDistance,
+                            from: pendingLoose(battle)!.from,
+                            max: pendingLoose(battle)!.maxDistance,
                           }
-                        : null
+                        : pendingPush(battle)
+                          ? {
+                              from: posOf(battle, pendingPush(battle)!.controller),
+                              max: pendingPush(battle)!.maxDistance,
+                            }
+                          : null
               }
               onPlaceLoose={(p) => {
+                if (watchPick) {
+                  const triggers = watchPick;
+                  setWatchPick(null);
+                  const from = posOf(battle, info.active);
+                  const heading = (Math.atan2(p.y - from.y, p.x - from.x) * 180) / Math.PI;
+                  run((b) => {
+                    declareOverwatch(b, {
+                      id: commandId('watch'),
+                      actor: info.active,
+                      weapon: form.weapon,
+                      mode: form.mode,
+                      heading,
+                      triggers,
+                    });
+                    return nextTurn(b, source());
+                  });
+                  return;
+                }
                 if (throwPick) {
                   setThrowPick(false);
                   run((b) =>
@@ -1226,6 +1394,11 @@ export function App() {
                     onStand={() =>
                       run((b) => standUp(b, { id: commandId('stand'), actor: selected }))
                     }
+                    onPosture={(to) =>
+                      run((b) =>
+                        changePosture(b, { id: commandId('posture'), actor: selected, to }),
+                      )
+                    }
                   />
                 ) : tab === 'actions' ? (
                   <ActionsPanel
@@ -1314,6 +1487,16 @@ export function App() {
                   />
                 ) : (
                   <AttackPanel
+                    onStanceGrip={(change) =>
+                      run((b) =>
+                        changeStanceGrip(b, {
+                          id: commandId('stance'),
+                          actor: info.active,
+                          weapon: form.weapon,
+                          ...change,
+                        }),
+                      )
+                    }
                     attacker={info.active}
                     preview={attackPreview}
                     form={form}
@@ -1335,6 +1518,8 @@ export function App() {
                       )
                     }
                     fromHands={heavyFromHands(battle, info.active)}
+                    onWatch={(triggers) => setWatchPick((v) => (v ? null : triggers))}
+                    watchPicking={!!watchPick}
                     onThrowPick={() => setThrowPick((v) => !v)}
                     throwPicking={throwPick}
                     onCharge={(at) =>

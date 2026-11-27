@@ -2,6 +2,7 @@ import type {
   BleedingActivity,
   CalledLocation,
   ConditionInstance,
+  MeleeGrip,
   CombatActionState,
   CombatSession,
   DamageInput,
@@ -78,6 +79,8 @@ import {
   resolveWoundCheck,
   resolveDamageRoll,
   resolveMeleeAttack,
+  activateOverwatch,
+  changeMeleeStanceGrip,
   prepareMeleeAttack,
   prepareRangedAttack,
   checkTarget,
@@ -146,6 +149,7 @@ import {
   cellsOf,
   footprintForSize,
   placementProblem,
+  snapCenter,
   validateFootprint,
   type Footprint,
 } from './grid';
@@ -184,8 +188,33 @@ export interface EngineState {
   pendingTurn?: { prefix: DiceRoll[]; reason: string; kind?: 'start' };
   /** Committed movement actions; used only to detect a repeated free move in one turn. */
   moves: { turn: number; actor: ActorId; mode: MoveMode }[];
+  /** `turnsStarted` of each actor's latest own turn (ruling 175: «бежит» until the next one). */
+  turnStarts?: Record<string, number>;
   /** A runner failed the ЛВ test on difficult terrain: the GM picks where they fall (ruling 42). */
   pendingFall?: { actor: ActorId; commandId: string; zone: string };
+  /** The own turn was ended by an action (overwatch); «Передать ход» starts the next one. */
+  turnEnded?: boolean;
+  /** Overwatch triggers chosen by each watcher when declaring (ruling 177). */
+  watch?: Record<string, { triggers: WatchTrigger[] }>;
+  /**
+   * An overwatch shot owed before the enemy's action goes on (rulings 177–178): the mover stops
+   * at the sector entry point (`at`) and may continue to `to` afterwards; an attacker re-issues
+   * the attack. `fired` — the watcher shot or passed; `done` — watchers already handled.
+   */
+  pendingWatch?: {
+    kind: 'move' | 'attack' | 'palisade';
+    /** «Частокол»: where the charger started; it waits at the end of its run meanwhile. */
+    from?: { x: number; y: number };
+    watcher: ActorId;
+    actor: ActorId;
+    actionId: string;
+    at?: { x: number; y: number };
+    to?: { x: number; y: number };
+    rest?: { x: number; y: number }[];
+    command?: AttackCommand;
+    fired: boolean;
+    done: ActorId[];
+  };
   /** A knocked-out weapon waits to be placed on the map (ruling 108). */
   pendingLoose?: {
     weapon: WeaponId;
@@ -247,6 +276,10 @@ export interface EngineState {
 export interface AttackCommand {
   id: string;
   actor: ActorId;
+  /** Shot from overwatch at the triggering enemy (rulings 177–178): the reaction, no ОД. */
+  overwatch?: boolean;
+  /** «Частокол» (Core palisade trigger): the free blow at a charging enemy, before its charge. */
+  palisade?: boolean;
   target: ActorId;
   weapon: WeaponId;
   /** Ranged fire mode and declared shots; single shot by default. */
@@ -463,6 +496,7 @@ function begin(state: EngineState, rng: DiceSource, logs: unknown[], b?: Battle)
   logs.push(...started.logs);
   state.wounds = { ...state.wounds, combat: started.state };
   const id = started.state.session.activeActor!.actorId;
+  state.turnStarts = { ...state.turnStarts, [id]: started.state.session.turnsStarted };
   // No movement occurs during this hook: REST is explicit, later physical actions
   // have their own supplied activity and checks. This does not move tokens.
   const hooked = resolveWoundTurnStart(
@@ -601,6 +635,18 @@ function postDamage(
       },
     };
   }
+  // Eye count before the injury: a fact the GM states when the consequence needs it (the core
+  // asks for it — «Canonical blindness depends on eye count»). Peeked here, asked below.
+  const eyesQuestion: GmQuestion = {
+    key: `eyes:${command.target}`,
+    text: 'Ранение глаз: сколько глаз было у цели до этого ранения? От этого зависит слепота (решает ведущий).',
+    options: [
+      { label: 'Два', value: 2 },
+      { label: 'Один', value: 1 },
+    ],
+  };
+  const eyesKey = askScope ? askScope + eyesQuestion.key : eyesQuestion.key;
+  const eyesBefore = command.answers?.[eyesKey];
   const result = resolvePostDamage(
     {
       state: state.wounds,
@@ -609,6 +655,7 @@ function postDamage(
       facts: {
         provenance,
         activity: command.targetActivity,
+        ...(eyesBefore !== undefined ? { eyeCountBefore: eyesBefore } : {}),
         ...(critical ? { criticalBonus: critical } : {}),
         ...(zoneOf(damage.input.location)
           ? {}
@@ -631,6 +678,12 @@ function postDamage(
     source,
   );
   logs.push(...result.logs);
+  if (
+    result.result.status !== 'RESOLVED' &&
+    eyesBefore === undefined &&
+    result.result.pendingIntents.some((i) => /eye count/i.test(i.reason ?? ''))
+  )
+    ask(command, eyesQuestion);
   if (result.result.status !== 'RESOLVED')
     throw new ContextRequired(intentText(result.result.pendingIntents));
   state.wounds = result.result.status === 'RESOLVED' ? result.state : state.wounds;
@@ -3416,6 +3469,22 @@ function resolveAttack(
       throw new Error('Права на контратаку нет (контратака — сразу после парирования)');
     if (opportunity.target.actorId !== command.target)
       throw new Error('Контратака — только по тому, кто атаковал');
+  } else if (command.palisade) {
+    const w = state.pendingWatch;
+    if (
+      !w ||
+      w.kind !== 'palisade' ||
+      w.fired ||
+      w.watcher !== command.actor ||
+      w.actor !== command.target
+    )
+      throw new Error('Удар частоколом — только по врагу, который бежит на вас натиском');
+    state.pendingWatch = { ...w, fired: true };
+  } else if (command.overwatch) {
+    const w = state.pendingWatch;
+    if (!w || w.fired || w.watcher !== command.actor || w.actor !== command.target)
+      throw new Error('Выстрел из дозора — только когда враг в секторе начинает действие');
+    state.pendingWatch = { ...w, fired: true };
   } else if (state.wounds.combat.session.activeActor?.actorId !== command.actor)
     throw new Error('Сейчас ход другого персонажа');
   // «Неистовый натиск» (ruling 157): the extra attack spends the reaction, not ОД, and is not
@@ -3662,6 +3731,23 @@ function resolveAttack(
       ],
     };
   }
+  // Rulings 174–176: shooting at a target that runs, lies or is in close combat — −20 each.
+  if (kind === 'ranged' && !command.at)
+    for (const t of rangedTargetPenalties(b, state, command.actor, command.target)) {
+      const src = { kind: 'author-ruling', id: `Решение ${t.ruling}: ${t.reason}` };
+      ctx = {
+        ...ctx,
+        modifiers: [
+          ...ctx.modifiers,
+          {
+            id: `${command.id}:${t.key}`,
+            value: -20,
+            source: src,
+            provenance: { source: src, reason: t.reason },
+          },
+        ],
+      };
+    }
   // Ruling 84: without «Владение оружием» of this kind −30 (the GM decides unclear kinds).
   const weaponKindLabel = weaponKindName(arsenalWeapon);
   const attackerTalents = combatant(b, command.actor).character.talents;
@@ -4073,7 +4159,19 @@ function resolveAttack(
         };
         // ADR 0007: the attack preview stops here, at the attack's own check, before any roll.
         attackProbe?.('НС', () => prepareRangedAttack(combat, request));
-        return resolveRangedAttack(combat, request, src);
+        return resolveRangedAttack(
+          combat,
+          request,
+          src,
+          command.overwatch && state.pendingWatch
+            ? {
+                actionId: `${state.pendingWatch.actionId}:watch`,
+                actor: { actorId: command.target },
+                tags: [],
+                sectorIds: [combat.actors[command.actor]!.overwatch!.sector.id],
+              }
+            : undefined,
+        );
       });
     const trialRun =
       command.defense && !(lasExpert && command.defense === 'DODGE')
@@ -4217,10 +4315,22 @@ function resolveAttack(
           actor: ref(command.actor),
           ...(command.counter
             ? { origin: 'COUNTERATTACK' as const, opportunityId: command.counter }
-            : { origin: 'NORMAL' as const }),
+            : command.palisade && state.pendingWatch?.command
+              ? {
+                  origin: 'PALISADE_TRIGGER' as const,
+                  trigger: {
+                    id: `${state.pendingWatch.actionId}:palisade`,
+                    type: 'palisade' as const,
+                    attacker: ref(command.target),
+                    target: ref(state.pendingWatch.command.target),
+                    allyInBaseContact: state.pendingWatch.command.target !== command.actor,
+                    incomingReach: weaponReach(b, state.pendingWatch.command.weapon),
+                  },
+                }
+              : { origin: 'NORMAL' as const }),
           base: command.calledLocation
             ? 'called'
-            : command.counter
+            : command.counter || command.palisade
               ? 'free'
               : command.charge
                 ? 'charge'
@@ -4439,6 +4549,314 @@ function resolveAttack(
  * An attack whose straight line from centre to centre crosses a wall, a closed door or a
  * vision-blocking obstacle is impossible (ruling 142); a line grazing a wall corner is cover.
  */
+const RUNNING_TARGET_MODES: readonly MoveMode[] = ['full-move', 'run', 'sprint'];
+/**
+ * Ranged attack penalties for the target's situation (author rulings 174–176), −20 each and
+ * they add up: it ran (full move, charge, run or sprint in its latest own turn — until its
+ * next turn starts), it lies, it stands right next to any other living participant (not the
+ * shooter).
+ */
+export function rangedTargetPenalties(
+  b: Battle,
+  state: EngineState,
+  shooter: ActorId,
+  target: ActorId,
+): { key: string; reason: string; ruling: number }[] {
+  const out: { key: string; reason: string; ruling: number }[] = [];
+  const lastTurn = state.turnStarts?.[target];
+  if (
+    lastTurn !== undefined &&
+    state.moves.some(
+      (m) => m.actor === target && m.turn === lastTurn && RUNNING_TARGET_MODES.includes(m.mode),
+    )
+  )
+    out.push({ key: 'target-running', reason: 'Цель бежит', ruling: 175 });
+  if (state.wounds.combat.actors[target]?.posture === 'prone')
+    out.push({ key: 'target-prone', reason: 'Цель лежит', ruling: 174 });
+  const box = (id: ActorId) => {
+    const p = b.positions[id]!,
+      f = fpOf(b, id);
+    return {
+      l: p.x - f.width / 2,
+      r: p.x + f.width / 2,
+      t: p.y - f.height / 2,
+      d: p.y + f.height / 2,
+    };
+  };
+  const tb = b.positions[target] ? box(target) : null;
+  const engaged =
+    tb &&
+    actorIds(b).some((id) => {
+      if (id === target || id === shooter || !b.positions[id]) return false;
+      if (state.wounds.actors[id]?.life.status === 'DEAD') return false;
+      const o = box(id);
+      const gapX = Math.max(o.l - tb.r, tb.l - o.r);
+      const gapY = Math.max(o.t - tb.d, tb.t - o.d);
+      return gapX <= 1e-6 && gapY <= 1e-6;
+    });
+  if (engaged)
+    out.push({ key: 'target-engaged', reason: 'Цель в ближнем бою с другими', ruling: 176 });
+  return out;
+}
+
+/** Active overwatch sectors for the map: watcher, its position and heading (ruling 178). */
+export function watchSectors(b: Battle) {
+  const state = getEngine(b);
+  return actorIds(b).flatMap((id) => {
+    const ov = state.wounds.combat.actors[id]?.overwatch;
+    if (!ov || !b.positions[id]) return [];
+    const p = posOf(b, id);
+    return [{ actor: id, x: p.x, y: p.y, heading: ov.sector.headingDegrees }];
+  });
+}
+/** Melee reach of a weapon in metres (fists — 1 m). */
+function weaponReach(b: Battle, weapon: WeaponId): number {
+  if (isFists(weapon)) return 1;
+  return weaponOf(b, weapon)?.arsenal?.range.meters ?? 1;
+}
+/**
+ * «Частокол» (Core palisade trigger): who may strike the charger first — in the palisade stance,
+ * not spent this turn, with a spear, glaive or bayonet in hand that reaches farther than the
+ * charger's weapon and reaches its run's end; charged themselves or an ally right next to the
+ * charged one.
+ */
+export function palisadeHolders(
+  b: Battle,
+  state: EngineState,
+  command: AttackCommand,
+  exclude: readonly ActorId[] = [],
+): ActorId[] {
+  const melee = state.wounds.combat.melee;
+  if (!melee || !command.charge) return [];
+  const targetSide = b.roster[command.target]?.side;
+  const end = command.charge;
+  const incoming = weaponReach(b, command.weapon);
+  return actorIds(b).filter((h) => {
+    if (h === command.actor || exclude.includes(h)) return false;
+    if (b.roster[h]?.side !== targetSide || state.wounds.actors[h]?.life.status !== 'ALIVE')
+      return false;
+    const a = melee.actors[h];
+    if (!a || a.stance !== 'palisade' || a.palisadeSpent) return false;
+    const w = melee.weapons[a.weaponId];
+    if (!w || !weaponInHandState(state, w.id)) return false;
+    if (!['glaive', 'spear', 'bayonet'].includes(w.template.profile.family)) return false;
+    const reach = weaponReach(b, w.id);
+    if (reach <= incoming) return false;
+    if (h !== command.target) {
+      const p = posOf(b, h),
+        t = posOf(b, command.target);
+      if (Math.max(Math.abs(p.x - t.x), Math.abs(p.y - t.y)) > 1 + 1e-6) return false;
+    }
+    const p = posOf(b, h);
+    return Math.hypot(p.x - end.x, p.y - end.y) <= reach + 1e-6;
+  });
+}
+/** The current melee weapon of an actor (its stance and grip belong to it). */
+export function meleeStanceWeapon(b: Battle, id: ActorId): WeaponId {
+  return getEngine(b).wounds.combat.melee?.actors[id]?.weaponId ?? `${id}:hands`;
+}
+/** The stored overwatch of a watcher: weapon, mode, sector (Core state). */
+export function getEngineOverwatch(b: Battle, id: ActorId) {
+  return getEngine(b).wounds.combat.actors[id]?.overwatch ?? null;
+}
+/** The overwatch shot owed now, if any (rulings 177–178). */
+export function pendingWatch(b: Battle) {
+  return getEngine(b).pendingWatch ?? null;
+}
+export type WatchTrigger = 'move' | 'attack';
+export const watchTriggerLabel: Record<WatchTrigger, string> = {
+  move: 'Враг двигается в секторе',
+  attack: 'Враг атакует из сектора',
+};
+/** The 90° overwatch sector of a watcher (ruling 178: no range limit; walls close it). */
+export function inWatchSector(
+  b: Battle,
+  state: EngineState,
+  watcher: ActorId,
+  p: { x: number; y: number },
+): boolean {
+  const ov = state.wounds.combat.actors[watcher]?.overwatch;
+  if (!ov) return false;
+  const from = posOf(b, watcher);
+  if (Math.hypot(p.x - from.x, p.y - from.y) < 1e-6) return false;
+  const angle = (Math.atan2(p.y - from.y, p.x - from.x) * 180) / Math.PI;
+  const diff = Math.abs(((angle - ov.sector.headingDegrees + 540) % 360) - 180);
+  if (diff > ov.sector.widthDegrees / 2 + 1e-9) return false;
+  return !sightLine(from, p, sceneGeometry(b)).blocker;
+}
+/**
+ * Watchers whose overwatch fires on `actor` doing `trigger` along `path` (rulings 177–178):
+ * an enemy (other side) with an active overwatch on this trigger and a reaction left; the
+ * earliest point of the path inside the sector, in path order.
+ */
+export function watchersFor(
+  b: Battle,
+  state: EngineState,
+  actor: ActorId,
+  trigger: WatchTrigger,
+  path: { x: number; y: number }[],
+  exclude: readonly ActorId[] = [],
+): { watcher: ActorId; at: { x: number; y: number }; index: number; along: number }[] {
+  const side = b.roster[actor]?.side;
+  const hits: { watcher: ActorId; at: { x: number; y: number }; index: number; along: number }[] =
+    [];
+  for (const w of actorIds(b)) {
+    if (w === actor || exclude.includes(w) || b.roster[w]?.side === side) continue;
+    if (!state.wounds.combat.actors[w]?.overwatch) continue;
+    if (!(state.watch?.[w]?.triggers ?? []).includes(trigger)) continue;
+    if (state.wounds.actors[w]?.life.status !== 'ALIVE') continue;
+    const entry = state.wounds.combat.session.initiativeOrder.find((e) => e.actor.actorId === w);
+    if (!entry || entry.reactions.remaining < 1) continue;
+    let along = 0;
+    let found: { at: { x: number; y: number }; index: number; along: number } | null = null;
+    if (inWatchSector(b, state, w, path[0]!)) found = { at: path[0]!, index: 0, along: 0 };
+    for (let i = 1; !found && i < path.length; i++) {
+      const a = path[i - 1]!,
+        c = path[i]!;
+      const len = Math.hypot(c.x - a.x, c.y - a.y);
+      const steps = Math.max(1, Math.ceil(len / 0.05));
+      for (let k = 1; k <= steps; k++) {
+        const p = { x: a.x + ((c.x - a.x) * k) / steps, y: a.y + ((c.y - a.y) * k) / steps };
+        if (inWatchSector(b, state, w, p)) {
+          // The token stops on the cell of the entry point (ruling 7: tokens end on cells).
+          found = {
+            at: snapCenter(p, fpOf(b, actor), b.map),
+            index: i,
+            along: along + (len * k) / steps,
+          };
+          break;
+        }
+      }
+      along += len;
+    }
+    if (found) hits.push({ watcher: w, ...found });
+  }
+  return hits.sort((x, y) => x.along - y.along);
+}
+/**
+ * «Дозор» («Бой» A63; rulings 177–178): 1 ОД, ends the own turn; a 90° sector by heading
+ * (degrees, map axes), the weapon in hand and its fire mode, triggers chosen by the player.
+ * The UI passes the turn right after (`nextTurn`).
+ */
+export function declareOverwatch(
+  b: Battle,
+  command: {
+    id: string;
+    actor: ActorId;
+    weapon: WeaponId;
+    mode: FireMode;
+    heading: number;
+    triggers: WatchTrigger[];
+  },
+) {
+  const state = getEngine(b);
+  try {
+    combatant(b, command.actor);
+    if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
+    movementGate(state, command.actor);
+    if (!command.triggers.length) throw new Error('Выберите, на что срабатывает дозор');
+    const w = weaponOf(b, command.weapon)?.arsenal ?? null;
+    if (!w || weaponProblem(w) || weaponKind(w) !== 'ranged' || isThrown(w))
+      throw new Error('Дозор — только стрелковым оружием');
+    if (!weaponInHandState(state, command.weapon)) throw new Error('Оружие не в руках');
+    const rate = fireModes(w).find((m) => m.mode === command.mode);
+    if (!rate) throw new Error(`Нет режима «${command.mode}»`);
+    const heading = ((command.heading % 360) + 360) % 360;
+    const activated = activateOverwatch(state.wounds.combat, {
+      id: command.id,
+      type: 'overwatch',
+      actor: ref(command.actor),
+      sector: { id: `${command.id}:sector`, widthDegrees: 90, headingDegrees: heading },
+      trigger: { id: `${command.id}:trigger`, requiresTags: [] },
+      selectedAttackType: 'ranged-attack',
+      weaponId: command.weapon,
+      mode: command.mode,
+      shotsRequested: rate.maxShots,
+      context: context(state.wounds.combat, command.actor),
+    });
+    const next = structuredClone(state);
+    next.wounds = { ...next.wounds, combat: activated.state };
+    next.watch = { ...next.watch, [command.actor]: { triggers: [...command.triggers] } };
+    next.committed.push(command.id);
+    next.turnEnded = true;
+    sync(b, next);
+    append(b, 'overwatch', {
+      command,
+      weaponName: weaponOf(b, command.weapon)?.name ?? command.weapon,
+      coreLogs: activated.logs,
+      committed: true,
+    });
+    return { status: 'RESOLVED' as const };
+  } catch (error) {
+    append(b, 'overwatch-rejected', { command, ...engineReason(error), committed: false });
+    throw error;
+  }
+}
+/** The watcher passes the shot (rulings 177–178): the enemy's action goes on. */
+export function skipOverwatch(b: Battle, command: { watcher: ActorId }) {
+  const state = getEngine(b);
+  const w = state.pendingWatch;
+  if (!w || w.fired || w.watcher !== command.watcher) throw new Error('Дозор не ждёт выстрела');
+  const next = structuredClone(state);
+  next.pendingWatch = { ...w, fired: true };
+  engines.set(b, next);
+  append(b, 'watch-skip', { watcher: command.watcher, actor: w.actor, kind: w.kind });
+  return { status: 'RESOLVED' as const };
+}
+/**
+ * After the overwatch shot the mover goes on from the entry point to the destination if it can
+ * (alive, not stunned, not unconscious, still on its feet); another watcher may fire on the
+ * rest of the path. `stop` ends the move at the entry point.
+ */
+export function continueAfterWatch(b: Battle, command: { actor: ActorId; stop?: boolean }) {
+  const state = getEngine(b);
+  const w = state.pendingWatch;
+  if (!w || w.kind !== 'move' || !w.fired || w.actor !== command.actor)
+    throw new Error('Продолжать нечего');
+  const next = structuredClone(state);
+  const why = incapacity(b, command.actor);
+  const prone = state.wounds.combat.actors[command.actor]?.posture === 'prone';
+  const alive = state.wounds.actors[command.actor]?.life.status === 'ALIVE';
+  if (command.stop || why || prone || !alive || !w.to) {
+    delete next.pendingWatch;
+    engines.set(b, next);
+    append(b, 'watch-continue', {
+      actor: command.actor,
+      stopped: true,
+      requested: !!command.stop,
+      at: w.at,
+    });
+    return { status: 'STOPPED' as const };
+  }
+  const path = [w.at!, ...(w.rest ?? [w.to])];
+  const more = watchersFor(b, state, command.actor, 'move', path, w.done)[0];
+  if (more) {
+    b.positions[command.actor] = more.at;
+    next.pendingWatch = {
+      ...w,
+      watcher: more.watcher,
+      at: more.at,
+      rest: path.slice(more.index),
+      fired: false,
+      done: [...w.done, more.watcher],
+    };
+    engines.set(b, next);
+    append(b, 'watch-continue', {
+      actor: command.actor,
+      stopped: false,
+      requested: false,
+      at: more.at,
+    });
+    append(b, 'watch-trigger', { watcher: more.watcher, kind: 'move', actor: command.actor });
+    return { status: 'WATCHED' as const, watcher: more.watcher };
+  }
+  b.positions[command.actor] = { ...w.to };
+  delete next.pendingWatch;
+  engines.set(b, next);
+  append(b, 'watch-continue', { actor: command.actor, stopped: false, requested: false, at: w.to });
+  return { status: 'RESOLVED' as const };
+}
+
 export function attackLineProblem(
   b: Battle,
   attacker: ActorId,
@@ -4491,6 +4909,8 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
           'modifier',
           'defense',
           'counter',
+          'overwatch',
+          'palisade',
           'second',
           'meleeBase',
           'technique',
@@ -4516,6 +4936,63 @@ export function attack(b: Battle, command: AttackCommand, source: DiceSource, re
       });
       throw new RuleDecisionRequired(line);
     }
+  }
+  // Overwatch on «the enemy attacks from the sector» (ruling 177): the watcher shoots first.
+  if (!resume && !command.overwatch && !command.palisade && !command.counter) {
+    const pw = current.pendingWatch;
+    if (pw && !pw.fired) throw new Error('Сначала дозорный стреляет или пропускает выстрел');
+    const done = pw && pw.kind !== 'move' && pw.actionId === command.id ? pw.done : [];
+    // A charger waiting at the end of its run goes back to the start before the charge.
+    if (pw?.kind === 'palisade' && pw.actionId === command.id && pw.from)
+      b.positions[command.actor] = { ...pw.from };
+    const watcher = watchersFor(
+      b,
+      current,
+      command.actor,
+      'attack',
+      [posOf(b, command.actor)],
+      done,
+    )[0];
+    const holder =
+      !watcher && command.charge && !command.fireCharge
+        ? palisadeHolders(b, current, command, done)[0]
+        : undefined;
+    if (holder) {
+      const next = structuredClone(current);
+      const from = posOf(b, command.actor);
+      next.pendingWatch = {
+        kind: 'palisade',
+        watcher: holder,
+        actor: command.actor,
+        actionId: command.id,
+        command,
+        from: { ...from },
+        at: { ...command.charge! },
+        fired: false,
+        done: [...done, holder],
+      };
+      b.positions[command.actor] = { ...command.charge! };
+      engines.set(b, next);
+      append(b, 'watch-trigger', { command, watcher: holder, kind: 'palisade' });
+      return { status: 'WATCHED' as const, watcher: holder };
+    }
+    if (watcher) {
+      const next = structuredClone(current);
+      next.pendingWatch = {
+        kind: 'attack',
+        watcher: watcher.watcher,
+        actor: command.actor,
+        actionId: command.id,
+        command,
+        fired: false,
+        done: [...done, watcher.watcher],
+      };
+      engines.set(b, next);
+      append(b, 'watch-trigger', { command, watcher: watcher.watcher, kind: 'attack' });
+      return { status: 'WATCHED' as const, watcher: watcher.watcher };
+    }
+    // The watch for this attack is over: the attack goes on (the state object is the current one).
+    if (pw && pw.kind !== 'move' && pw.actionId === command.id) delete current.pendingWatch;
   }
   const prefix = resume ? (current.pending?.prefix ?? []) : [],
     used: DiceRoll[] = [];
@@ -4776,11 +5253,19 @@ export function nextTurn(b: Battle, source: DiceSource) {
   const state = structuredClone(current),
     logs: unknown[] = [];
   delete state.pendingTurn;
+  // A watch still waiting ends with the turn: the mover stays at the entry point; a charger
+  // waiting for «Частокол» goes back to where it started (its charge never happened).
+  if (state.pendingWatch?.kind === 'palisade' && state.pendingWatch.from)
+    b.positions[state.pendingWatch.actor] = { ...state.pendingWatch.from };
+  delete state.pendingWatch;
   try {
-    begin(state, tape, logs, b);
-    const finished = finishActionTurn(state.wounds.combat);
-    state.wounds = { ...state.wounds, combat: finished.state };
-    logs.push(...finished.logs);
+    if (state.turnEnded) delete state.turnEnded;
+    else {
+      begin(state, tape, logs, b);
+      const finished = finishActionTurn(state.wounds.combat);
+      state.wounds = { ...state.wounds, combat: finished.state };
+      logs.push(...finished.logs);
+    }
     if (state.wounds.combat.session.phase === 'round-ended') {
       const ended = resolveWoundRoundEnd(state.wounds);
       state.wounds = ended.state;
@@ -4984,6 +5469,12 @@ function movementGate(state: EngineState, actorId: ActorId) {
   if (state.pendingFall) throw new Error('Сначала укажите на карте, где упал персонаж');
   if (state.pendingLoose) throw new Error('Сначала укажите на карте, куда упало выбитое оружие');
   if (state.pendingPush) throw new Error('Сначала укажите на карте, куда толкнуть');
+  if (state.pendingWatch)
+    throw new Error(
+      state.pendingWatch.fired
+        ? 'Сначала продолжите движение или атаку после дозора'
+        : 'Сначала дозорный стреляет или пропускает выстрел',
+    );
   const session = state.wounds.combat.session;
   if (session.phase === 'ready') throw new Error('Бой ещё не начат: нажмите «Начать бой»');
   if (session.phase !== 'turn-active' || session.activeActor?.actorId !== actorId)
@@ -5115,14 +5606,33 @@ export function moveActor(b: Battle, command: MoveCommand, source: DiceSource = 
       actor: command.actor,
       mode: command.mode,
     });
+    // Overwatch on movement (rulings 177–178): the mover stops at the sector entry point.
+    const watched = fell
+      ? null
+      : (watchersFor(b, state, command.actor, 'move', [from, ...points])[0] ?? null);
     if (fell) next.pendingFall = { actor: command.actor, commandId: command.id, zone: fell.id };
-    else b.positions[command.actor] = { x, y };
+    else if (watched) {
+      b.positions[command.actor] = watched.at;
+      next.pendingWatch = {
+        kind: 'move',
+        watcher: watched.watcher,
+        actor: command.actor,
+        actionId: command.id,
+        at: watched.at,
+        to: { x, y },
+        rest: [from, ...points].slice(Math.max(1, watched.index)),
+        fired: false,
+        done: [watched.watcher],
+      };
+    } else b.positions[command.actor] = { x, y };
     // «След» (ruling 149): entering a burning zone hurts at once.
     const trailLogs: unknown[] = [];
     // Passing through a burning zone hurts as well as ending in it (ruling 152).
     if (!fell) {
       const round = next.wounds.combat.session.roundNumber;
-      const path = [from, ...points];
+      const path = watched
+        ? [from, ...points.slice(0, Math.max(0, watched.index - 1)), watched.at]
+        : [from, ...points];
       const crossed = (next.trails ?? []).filter((t) => {
         if (round < t.fromRound || round > t.untilRound || insideTrail(t, from)) return false;
         for (let i = 1; i < path.length; i++) {
@@ -5149,9 +5659,10 @@ export function moveActor(b: Battle, command: MoveCommand, source: DiceSource = 
         : {}),
       command,
       from,
-      to: fell ? null : { x, y },
+      to: fell ? null : watched ? watched.at : { x, y },
+      ...(watched ? { watched: { watcher: watched.watcher, at: watched.at } } : {}),
       route: points,
-      cells: fell ? [] : cellsOf({ x, y }, fpOf(b, command.actor)),
+      cells: fell ? [] : cellsOf(watched ? watched.at : { x, y }, fpOf(b, command.actor)),
       distance: plan.meters,
       difficult: plan.difficult,
       cost: plan.cost,
@@ -6396,6 +6907,132 @@ export function braceWeapon(b: Battle, command: { id: string; actor: ActorId; we
     return { status: 'RESOLVED' as const };
   } catch (error) {
     append(b, 'brace-rejected', { command, ...engineReason(error), committed: false });
+    throw error;
+  }
+}
+
+export type MeleeStanceName = 'standard' | 'defensive' | 'palisade';
+export const stanceLabel: Record<MeleeStanceName, string> = {
+  standard: 'Обычная',
+  defensive: 'Защитная',
+  palisade: 'Частокол',
+};
+export const gripLabel: Record<MeleeGrip, string> = {
+  'one-handed': 'Одной рукой',
+  'two-handed': 'Двумя руками',
+  close: 'Ближний хват',
+  fist: 'Кулак (обух)',
+  mordhau: 'Мордхау',
+};
+/** Current melee stance, grip and the grips of a melee weapon (ruling 177, Core limits). */
+export function meleeStance(b: Battle, actor: ActorId, weapon?: WeaponId) {
+  const melee = getEngine(b).wounds.combat.melee;
+  const a = melee?.actors[actor];
+  const w = weapon ? melee?.weapons[weapon] : undefined;
+  return {
+    stance: (a?.stance ?? 'standard') as MeleeStanceName,
+    grip: a?.grip ?? 'one-handed',
+    grips: (w?.template.profile.validGrips ?? []) as MeleeGrip[],
+    family: w?.template.profile.family ?? null,
+  };
+}
+/**
+ * «Сменить стойку или хват» — the turn's Free Action (СД, ruling 21) through the Core
+ * `changeMeleeStanceGrip`; the grip belongs to the melee weapon given (it becomes current).
+ */
+export function changeStanceGrip(
+  b: Battle,
+  command: {
+    id: string;
+    actor: ActorId;
+    weapon: WeaponId;
+    stance?: MeleeStanceName;
+    grip?: MeleeGrip;
+  },
+) {
+  const state = getEngine(b);
+  try {
+    combatant(b, command.actor);
+    if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
+    movementGate(state, command.actor);
+    const melee = state.wounds.combat.melee;
+    if (!melee?.weapons[command.weapon]) throw new Error('Это не оружие ближнего боя');
+    if (!weaponInHandState(state, command.weapon)) throw new Error('Это оружие не в руках');
+    const before = melee.actors[command.actor]!;
+    const combat: CombatActionState = {
+      ...state.wounds.combat,
+      melee: {
+        ...melee,
+        actors: { ...melee.actors, [command.actor]: { ...before, weaponId: command.weapon } },
+      },
+    };
+    const resolved = changeMeleeStanceGrip(combat, {
+      id: command.id,
+      type: 'change-stance-grip',
+      actor: ref(command.actor),
+      ...(command.stance ? { stance: command.stance } : {}),
+      ...(command.grip ? { grip: command.grip } : {}),
+      context: context(combat, command.actor),
+    });
+    const next = structuredClone(state);
+    next.wounds = { ...next.wounds, combat: resolved.state };
+    next.committed.push(command.id);
+    sync(b, next);
+    append(b, 'stance', {
+      command,
+      from: { stance: before.stance, grip: before.grip },
+      to: resolved.result,
+      committed: true,
+    });
+    return { status: 'RESOLVED' as const };
+  } catch (error) {
+    append(b, 'stance-rejected', { command, ...engineReason(error), committed: false });
+    throw error;
+  }
+}
+
+/**
+ * «Лечь» / «Присесть» — the turn's Free Action (СД, ruling 21; Core «prone» / «kneel»).
+ */
+export function changePosture(
+  b: Battle,
+  command: { id: string; actor: ActorId; to: 'prone' | 'kneeling' },
+) {
+  const state = getEngine(b);
+  try {
+    combatant(b, command.actor);
+    if (state.committed.includes(command.id)) throw new Error('Команда уже исполнена');
+    movementGate(state, command.actor);
+    const runtime = state.wounds.combat.actors[command.actor]!;
+    if (runtime.posture === command.to)
+      throw new Error(command.to === 'prone' ? 'Персонаж уже лежит' : 'Персонаж уже на колене');
+    const combat = state.wounds.combat;
+    const resolved = resolveCombatAction(
+      combat,
+      {
+        id: command.id,
+        type: command.to === 'prone' ? 'prone' : 'kneel',
+        actor: ref(command.actor),
+        context: context(combat, command.actor),
+      },
+      noDice,
+    );
+    const next = structuredClone(state);
+    next.wounds = { ...next.wounds, combat: resolved.state };
+    next.committed.push(command.id);
+    sync(b, next);
+    append(b, 'posture', {
+      command,
+      from: runtime.posture,
+      to: resolved.state.actors[command.actor]!.posture,
+      odBefore: resolved.execution.odBefore,
+      odAfter: resolved.execution.odAfter,
+      coreLogs: resolved.logs,
+      committed: true,
+    });
+    return { status: 'RESOLVED' as const };
+  } catch (error) {
+    append(b, 'posture-rejected', { command, ...engineReason(error), committed: false });
     throw error;
   }
 }

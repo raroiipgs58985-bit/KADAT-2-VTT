@@ -19,6 +19,11 @@ import {
   setDoorLocked,
   setFootprint,
   standUp,
+  changePosture,
+  changeStanceGrip,
+  declareOverwatch,
+  skipOverwatch,
+  continueAfterWatch,
   braceWeapon,
   turnAction,
   takeWeapon,
@@ -53,8 +58,13 @@ type Step =
   | { type: 'start-combat'; rolls: DiceRoll[] }
   | { type: 'move'; command: MoveCommand; rolls?: DiceRoll[] }
   | { type: 'fall'; actor: ActorId; x: number; y: number }
-  | { type: 'stand'; command: { id: string; actor: ActorId } }
+  | { type: 'stand'; command: { id: string; actor: ActorId; to?: 'prone' | 'kneeling' } }
   | { type: 'brace'; command: { id: string; actor: ActorId; weapon: string } }
+  | { type: 'stance'; command: Parameters<typeof changeStanceGrip>[1] }
+  | { type: 'overwatch'; command: Parameters<typeof declareOverwatch>[1] }
+  | { type: 'attack-watch'; command: AttackCommand }
+  | { type: 'watch-skip'; watcher: ActorId }
+  | { type: 'watch-continue'; actor: ActorId; stop: boolean }
   | { type: 'turn-action'; command: TurnActionCommand; rolls: DiceRoll[] }
   | {
       type: 'take-weapon' | 'drop-weapon' | 'pick-up-weapon';
@@ -194,7 +204,9 @@ export function exportReplay(b: Battle): Replay {
     if (entry.type === 'posture')
       steps.push({
         type: 'stand',
-        command: (entry.detail as { command: { id: string; actor: ActorId } }).command,
+        command: (
+          entry.detail as { command: { id: string; actor: ActorId; to?: 'prone' | 'kneeling' } }
+        ).command,
       });
     if (entry.type === 'move') {
       const m = entry.detail as { command: MoveCommand; rolls?: DiceRoll[] };
@@ -257,6 +269,27 @@ export function exportReplay(b: Battle): Replay {
       const r = entry.detail as { at: Point };
       steps.push({ type: 'loose', x: r.at.x, y: r.at.y });
     }
+    if (entry.type === 'overwatch')
+      steps.push({
+        type: 'overwatch',
+        command: (entry.detail as { command: Parameters<typeof declareOverwatch>[1] }).command,
+      });
+    if (entry.type === 'watch-trigger') {
+      const d = entry.detail as { kind: string; command?: AttackCommand };
+      if (d.kind === 'attack' && d.command)
+        steps.push({ type: 'attack-watch', command: d.command });
+    }
+    if (entry.type === 'watch-skip')
+      steps.push({ type: 'watch-skip', watcher: (entry.detail as { watcher: ActorId }).watcher });
+    if (entry.type === 'watch-continue') {
+      const d = entry.detail as { actor: ActorId; stopped: boolean; requested?: boolean };
+      steps.push({ type: 'watch-continue', actor: d.actor, stop: d.requested === true });
+    }
+    if (entry.type === 'stance')
+      steps.push({
+        type: 'stance',
+        command: (entry.detail as { command: Parameters<typeof changeStanceGrip>[1] }).command,
+      });
     if (entry.type === 'brace') {
       const r = entry.detail as { command: { id: string; actor: ActorId; weapon: string } };
       steps.push({ type: 'brace', command: r.command });
@@ -343,8 +376,16 @@ export function importReplay(value: unknown): Battle {
     else if (step.type === 'cancel-unstarted') cancelUnstarted(b);
     else if (step.type === 'move') moveActor(b, step.command, dice(step.rolls ?? []));
     else if (step.type === 'fall') placeFallen(b, step.actor, { x: step.x, y: step.y });
-    else if (step.type === 'stand') standUp(b, step.command);
+    else if (step.type === 'stand')
+      if (step.command.to) changePosture(b, { ...step.command, to: step.command.to });
+      else standUp(b, step.command);
     else if (step.type === 'brace') braceWeapon(b, step.command);
+    else if (step.type === 'stance') changeStanceGrip(b, step.command);
+    else if (step.type === 'overwatch') declareOverwatch(b, step.command);
+    else if (step.type === 'attack-watch') attack(b, step.command, dice([]));
+    else if (step.type === 'watch-skip') skipOverwatch(b, { watcher: step.watcher });
+    else if (step.type === 'watch-continue')
+      continueAfterWatch(b, { actor: step.actor, ...(step.stop ? { stop: true } : {}) });
     else if (step.type === 'take-weapon') takeWeapon(b, step.command);
     else if (step.type === 'drop-weapon') dropWeapon(b, step.command);
     else if (step.type === 'pick-up-weapon') pickUpWeapon(b, step.command);

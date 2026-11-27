@@ -1207,7 +1207,8 @@ await page.getByRole('button', { name: 'Вид: игрок' }).click();
   const question = page.getByRole('alertdialog', { name: 'Вопрос ведущему' });
   check(await question.isVisible(), 'the GM is asked for the ОБ of the eyes (ruling 75)');
   await page.screenshot({ path: `${out}/08-gm-question.png` });
-  await page.locator('.dice select').selectOption('random');
+  // A reproducible seed after the answers: the step must not depend on chance.
+  await page.locator('.dice select').selectOption('seed');
   await question.getByLabel('Ответ').fill('2');
   await question.getByRole('button', { name: 'Ответить' }).click();
   check(
@@ -1215,7 +1216,11 @@ await page.getByRole('button', { name: 'Вид: игрок' }).click();
     'then the GM picks the wound table for the eyes',
   );
   await question.getByRole('button', { name: 'Голова' }).click();
+  // An eye wound may need the eye count before the injury: the GM answers it too.
+  if ((await question.isVisible()) && (await question.textContent()).includes('сколько глаз'))
+    await question.getByRole('button', { name: 'Два' }).click();
   check(!(await question.isVisible()), 'the answers resume the strike with the saved dice');
+  await page.locator('.dice select').selectOption('random');
   await page.getByRole('tab', { name: 'Действия' }).click();
   await page.getByRole('button', { name: /Быстрое прицеливание/ }).click();
   check((await od()) === 0, 'quick aim spends the last OD');
