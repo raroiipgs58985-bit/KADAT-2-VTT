@@ -122,7 +122,8 @@ import {
 } from './game/map-editor';
 import { parseReplayText, REPLAY_MAX_BYTES, serializeReplay } from './game/replay';
 import { EditorPanel, toolList } from './ui/EditorPanel';
-import { ActorCard } from './ui/ActorCard';
+import { ActorCard, FighterHud } from './ui/ActorCard';
+import { Lamp, Nixie } from './ui/kit/Kit';
 import {
   DoorsPanel,
   ActionsPanel,
@@ -217,6 +218,15 @@ export function App() {
   const info = useMemo(() => turnInfo(battle), [battle, version]);
   const [selected, setSelected] = useState<ActorId>(info.active);
   const [tab, setTab] = useState<'move' | 'attack' | 'actions'>('move');
+  // Phone shell («Планшет», ≤ 760 px): the map stays on top; one section at a time slides out
+  // under it (the map shrinks but stays visible and usable); the menu drops from the top bar.
+  type Section = 'move' | 'attack' | 'actions' | 'turn' | 'log' | 'editor';
+  const [section, setSection] = useState<Section | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const toggleSection = (s: Section) => {
+    if (s === 'move' || s === 'attack' || s === 'actions') setTab(s);
+    setSection((v) => (v === s ? null : s));
+  };
   // Desktop docks («Планшет»): side panels fold into rails; remembered in the browser.
   const [docks, setDocks] = useState<{ left: boolean; right: boolean }>(() => {
     try {
@@ -260,6 +270,13 @@ export function App() {
   const [toast, setToast] = useState<{ text: string; tone: JournalTone; full?: boolean } | null>(
     null,
   );
+  // Phone: short notices fold away by themselves so they never sit on the map (errors stay).
+  useEffect(() => {
+    if (!toast || toast.tone === 'error') return;
+    if (typeof matchMedia === 'undefined' || !matchMedia('(max-width: 760px)').matches) return;
+    const timer = setTimeout(() => setToast(null), 3500);
+    return () => clearTimeout(timer);
+  }, [toast]);
   const [setupMode, setSetupMode] = useState<'editor' | 'placement'>('placement');
   const [history, setHistory] = useState<EditorHistory | null>(null);
   const [tool, setTool] = useState<EditorTool>('brush');
@@ -537,7 +554,11 @@ export function App() {
 
   // Scene mode tabs: above the map on the phone, inside the map toolbar in the desktop shell.
   const modeSwitch = (
-    <div className="mode-switch" role="tablist" aria-label="Режим сцены">
+    <div
+      className={`mode-switch${info.started ? ' in-combat' : ''}`}
+      role="tablist"
+      aria-label="Режим сцены"
+    >
       <button
         type="button"
         role="tab"
@@ -577,7 +598,18 @@ export function App() {
 
   return (
     <div className={`app view-${view}${details ? ' show-details' : ''}`}>
-      <header className="app-header">
+      <header className={`app-header${menuOpen ? ' menu-open' : ''}`}>
+        <div className="mobile-keys">
+          {info.started && <Nixie value={String(info.round).padStart(2, '0')} label="Раунд" />}
+          <button
+            type="button"
+            aria-pressed={menuOpen}
+            className={menuOpen ? 'chosen' : ''}
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            Меню
+          </button>
+        </div>
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
             K
@@ -716,7 +748,7 @@ export function App() {
         />
       ) : (
         <main
-          className={`layout${docks.left ? '' : ' left-closed'}${docks.right ? '' : ' right-closed'}`}
+          className={`layout${docks.left ? '' : ' left-closed'}${docks.right ? '' : ' right-closed'}${section ? ` section-open section-${section}` : ''}`}
         >
           <aside className="column left" id="dock-left">
             <button
@@ -816,6 +848,9 @@ export function App() {
 
           <section className="column center">
             {modeSwitch}
+            {mode !== 'editor' && actorIds(battle).includes(selected) && (
+              <FighterHud battle={battle} id={selected} onOpen={() => toggleSection('turn')} />
+            )}
             <TacticalMap
               toolbarEnd={modeSwitch}
               battle={battle}
@@ -1394,6 +1429,105 @@ export function App() {
             {!editing && details && <DicePanel dice={dice} onChange={setDice} />}
             <CombatLog battle={battle} />
           </aside>
+          <div className="mobile-strip">
+            <div className="strip-row">
+              {info.started ? (
+                <>
+                  <span className="strip-turn">
+                    Ход: <strong>{actorName(battle, info.active)}</strong>
+                  </span>
+                  {info.turnActive && info.od !== null && (
+                    <span className="strip-od" aria-label={`Очки действий: ${info.od}`}>
+                      {Array.from({ length: Math.max(2, info.od) }, (_, i) => (
+                        <Lamp
+                          key={i}
+                          className="pip"
+                          on={i < info.od!}
+                          color="amber"
+                          label={`ОД ${i + 1}`}
+                        />
+                      ))}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="kit-confirm"
+                    onClick={() => run((b) => nextTurn(b, source()))}
+                    disabled={!!info.pending || (!info.turnActive && !info.pendingTurn)}
+                  >
+                    {info.pendingTurn ? 'Продолжить начало хода' : 'Передать ход'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="strip-turn">
+                    {mode === 'editor' ? 'Редактор карты' : 'Расстановка'}
+                  </span>
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => run((b) => startCombat(b, source()))}
+                    disabled={mode === 'editor'}
+                  >
+                    Начать бой
+                  </button>
+                </>
+              )}
+            </div>
+            <div className="strip-keys" role="toolbar" aria-label="Разделы">
+              {(info.started
+                ? ([
+                    ['move', 'Движение'],
+                    ['attack', 'Атака'],
+                    ['actions', 'Действия'],
+                    ['turn', 'Очередь'],
+                    ['log', 'Журнал'],
+                  ] as const)
+                : mode === 'editor'
+                  ? ([
+                      ['editor', 'Редактор'],
+                      ['turn', 'Участники'],
+                      ['log', 'Журнал'],
+                    ] as const)
+                  : ([
+                      ['turn', 'Участники'],
+                      ['log', 'Журнал'],
+                    ] as const)
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={section === key}
+                  className={section === key ? 'chosen' : ''}
+                  onClick={() => toggleSection(key)}
+                >
+                  {label}
+                </button>
+              ))}
+              {!info.started &&
+                (mode === 'editor' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSetupMode('placement');
+                      setSection(null);
+                    }}
+                  >
+                    К расстановке
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      enterEditor();
+                      setSection('editor');
+                    }}
+                  >
+                    Редактор карты
+                  </button>
+                ))}
+            </div>
+          </div>
         </main>
       )}
     </div>

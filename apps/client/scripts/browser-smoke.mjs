@@ -1281,6 +1281,63 @@ if (overflow)
 check(!overflow, 'no horizontal overflow at 390 px');
 await page.screenshot({ path: `${out}/05-phone.png` });
 
+// 9. Phone shell «Планшет»: the map on top, a short strip under it, one section at a time.
+const tapKey = (name) => page.getByRole('button', { name, exact: true }).click();
+const mapHeight = () => page.locator('.map').evaluate((e) => e.getBoundingClientRect().height);
+check(
+  await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1),
+  'phone: the page itself does not scroll (map and strip fit one screen)',
+);
+check(await page.locator('.mobile-strip').isVisible(), 'phone: short strip under the map');
+const fullMap = await mapHeight();
+check(fullMap > 844 * 0.45, `phone: the map takes most of the screen (${Math.round(fullMap)} px)`);
+check(!(await page.locator('.turn-bar').isVisible()), 'phone: sections are folded by default');
+await tapKey('Журнал');
+check(await page.locator('.panel.log').isVisible(), 'phone: «Журнал» opens under the map');
+check(await page.locator('.map').isVisible(), 'phone: the map stays visible with a section open');
+await tapKey('Журнал');
+check(!(await page.locator('.panel.log').isVisible()), 'phone: the same key folds it back');
+await tapKey('Меню');
+check(
+  await page.getByRole('button', { name: 'Новый бой' }).isVisible(),
+  'phone: «Меню» shows the session commands',
+);
+await page.getByRole('button', { name: 'Новый бой' }).click();
+await tapKey('Меню');
+check(
+  !(await page.getByRole('button', { name: 'Новый бой' }).isVisible()),
+  'phone: the menu closes',
+);
+await tapKey('Участники');
+check(
+  await page.locator('.panel.roster').isVisible(),
+  'phone: «Участники» opens the roster under the map',
+);
+await tapKey('Участники');
+await tapKey('Начать бой');
+check(
+  await page.getByRole('button', { name: 'Передать ход' }).isVisible(),
+  'phone: «Передать ход» in the strip without opening a section',
+);
+check(await page.locator('.fighter-hud .gauge').first().isVisible(), 'phone: fighter chip gauges');
+await tapKey('Атака');
+check(
+  await page.getByRole('button', { name: 'Атаковать' }).isVisible(),
+  'phone: «Атака» slides out the shooting controls with «Атаковать»',
+);
+const withSection = await mapHeight();
+check(
+  withSection > 120 && withSection < fullMap,
+  `phone: the map shrinks but stays (${Math.round(withSection)} px)`,
+);
+await page.screenshot({ path: `${out}/06-phone-combat.png` });
+await page.setViewportSize({ width: 1600, height: 1000 });
+check(
+  !(await page.locator('.mobile-keys').isVisible()) &&
+    (await page.locator('.turn-bar').isVisible()),
+  'desktop again: no phone keys, the left dock is back',
+);
+
 check(errors.length === 0, `no browser errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nALL PASSED');

@@ -64,4 +64,7 @@ export default defineConfig({
     },
   },
   server: { host: '127.0.0.1' },
+  // UI Kit graphics (WebP, ≤ 81 KiB each) go inline into the stylesheet, so panels and keys are
+  // drawn on the first paint instead of flashing the plain fallback look while images load.
+  build: { assetsInlineLimit: 96 * 1024 },
 });

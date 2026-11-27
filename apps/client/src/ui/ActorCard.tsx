@@ -333,3 +333,34 @@ export function ActorCard({
     </article>
   );
 }
+
+/**
+ * Phone shell: a small fighter plate over the map (name, state, wound and blood gauges).
+ * Tapping it opens the full card in the turn sheet.
+ */
+export function FighterHud(props: { battle: Battle; id: ActorId; onOpen: () => void }) {
+  const status = actorStatus(props.battle, props.id);
+  const name = combatant(props.battle, props.id).character.name;
+  return (
+    <button
+      type="button"
+      className="fighter-hud"
+      onClick={props.onOpen}
+      aria-label={`${name}: открыть карточку бойца`}
+    >
+      <span className="fighter-hud-name">
+        <strong>{name}</strong>
+        <span>{(lifeLabel[status.life] ?? status.life).toLowerCase()}</span>
+      </span>
+      <span className="fighter-hud-gauges">
+        <Gauge label="Раны" value={status.wounds} max={status.maxWounds} tone="wounds" />
+        <Gauge
+          label="Кровь"
+          value={status.blood.currentBlood}
+          max={status.blood.maxBlood}
+          tone="blood"
+        />
+      </span>
+    </button>
+  );
+}
