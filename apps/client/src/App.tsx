@@ -39,6 +39,7 @@ import {
   skipOverwatch,
   continueAfterWatch,
   watchSectors,
+  activeEmis,
   pendingWatch,
   getEngineOverwatch,
   meleeStanceWeapon,
@@ -1025,6 +1026,7 @@ export function App() {
               loose={looseWeapons(battle)}
               trails={activeTrails(battle)}
               smokes={activeSmokes(battle)}
+              emis={mode === 'combat' ? activeEmis(battle) : []}
               watchSectors={mode === 'combat' ? watchSectors(battle) : []}
               placingLoose={
                 mode !== 'combat'

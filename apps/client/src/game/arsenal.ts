@@ -264,7 +264,7 @@ export function radProtectedArmour(items: readonly { ref: string | null }[]): bo
 /** Properties whose rating may be dice with a duration: «Огненное (2к10/3)». */
 const DICE_RATED = new Set(['Огненное', 'След']);
 /** Radii in metres may be fractional: «Взрыв (0.5)» — half a cell (ruling 151). */
-const DECIMAL_RATED = new Set(['Взрыв', 'Локальный взрыв']);
+const DECIMAL_RATED = new Set(['Взрыв', 'Локальный взрыв', 'ЭМИ']);
 /**
  * Properties of an Arsenal weapon for the rules engine. A rating that is a whole number
  * becomes `value`; anything else («3+», «2к10/3», «см прим») is not read and is listed for the

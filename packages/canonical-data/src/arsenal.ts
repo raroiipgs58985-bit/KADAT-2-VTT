@@ -472,13 +472,25 @@ export function importArsenal(original: ArsenalSnapshot): ArsenalDataset {
         .find(Boolean) ?? null;
     let cols: Columns | null = null,
       group: string | null = null,
-      skipped = 0;
+      skipped = 0,
+      inPatterns = false;
     rows.forEach((r, i) => {
       const src = { sheet: name, row: i + 1 };
       const header = headerColumns(r);
       if (header) {
         cols = header.class !== undefined ? header : null;
         group = null;
+        return;
+      }
+      // A «Паттерны …» table (ruling 183: patterns change a base weapon, they are not weapons):
+      // its rows, and the gun mounts beside them, are skipped up to the next empty row.
+      if (/^паттерн/i.test(str(r[0]))) {
+        inPatterns = true;
+        return;
+      }
+      if (inPatterns) {
+        if (r.every((c) => str(c) === '')) inPatterns = false;
+        else skipped++;
         return;
       }
       if (!cols || r.every((c) => str(c) === '')) return;

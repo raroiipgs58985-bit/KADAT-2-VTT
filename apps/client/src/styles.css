@@ -1644,3 +1644,17 @@ textarea {
   flex-wrap: wrap;
   gap: 6px;
 }
+
+/* «ЭМИ» fields (ruling 186): blue, stronger stages more opaque. */
+.emi-field {
+  fill: rgba(90, 160, 255, 0.1);
+  stroke: rgba(120, 180, 255, 0.8);
+  stroke-width: 0.05;
+  stroke-dasharray: 0.15 0.1;
+}
+.emi-field.emi-stage-2 {
+  fill: rgba(90, 160, 255, 0.18);
+}
+.emi-field.emi-stage-3 {
+  fill: rgba(90, 160, 255, 0.28);
+}

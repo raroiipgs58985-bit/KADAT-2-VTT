@@ -158,7 +158,7 @@ describe('Armour layers (decisions 56, 63)', () => {
 });
 
 describe('Arsenal properties for the rules engine', () => {
-  it('names and whole-number ratings are read (fractional only for «Взрыв», ruling 151); other ratings go to the GM', async () => {
+  it('names and whole-number ratings are read (fractional only for «Взрыв» and «ЭМИ», rulings 151, 186); other ratings go to the GM', async () => {
     const { arsenal, weaponTraits } = await import('./arsenal');
     const mace = arsenal.weapons.find((w) => w.name === 'Булава')!;
     expect(weaponTraits(mace).traits).toEqual([
@@ -174,7 +174,7 @@ describe('Arsenal properties for the rules engine', () => {
           (t) =>
             t.value === undefined ||
             Number.isInteger(t.value) ||
-            ['Взрыв', 'Локальный взрыв'].includes(t.name),
+            ['Взрыв', 'Локальный взрыв', 'ЭМИ'].includes(t.name),
         ),
     ).toBe(true);
     expect(all.some((x) => x.unread.length > 0)).toBe(true);

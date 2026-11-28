@@ -93,6 +93,8 @@ interface Props {
   }[];
   /** Smoke clouds still hanging (rulings 146, 154). */
   smokes?: { id: string; x: number; y: number; r: number }[];
+  /** «ЭМИ» fields with their stage this round (ruling 186). */
+  emis?: { id: string; x: number; y: number; r: number; stage: number }[];
   /** Overwatch sectors: 90° by heading, drawn to the map edge (ruling 178). */
   watchSectors?: { actor: string; x: number; y: number; heading: number }[];
   /** Weapons knocked out of the hand lying on the map (ruling 108). */
@@ -1117,6 +1119,17 @@ export function TacticalMap(props: Props) {
             ))}
           </g>
         )}
+        {(props.emis ?? []).map((f) => (
+          <circle
+            key={f.id}
+            className={`emi-field emi-stage-${Math.min(3, f.stage)}`}
+            data-testid="emi-field"
+            cx={f.x}
+            cy={f.y}
+            r={Math.max(0.5, f.r)}
+            pointerEvents="none"
+          />
+        ))}
         {(props.watchSectors ?? []).map((w) => {
           const r = Math.hypot(map.cols, map.rows);
           const ray = (deg: number) => {

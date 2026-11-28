@@ -253,6 +253,8 @@ export interface EngineState {
   >;
   /** Smoke clouds (ruling 146): −20 to НС in, from or through them. */
   smokes?: { id: string; x: number; y: number; r: number; untilRound: number }[];
+  /** «ЭМИ (Х)» fields (ruling 186): centre, radius, the к10 roll and the round it was made. */
+  emis?: { id: string; x: number; y: number; r: number; roll: number; fromRound: number }[];
   /** «Частичное опутывание» (ruling 161): the caught body part and the СКР before it. */
   partial?: Record<string, { zone: 'arm' | 'torso' | 'head'; skr?: number }>;
   /** «Пена / Пенокрит (Х ОБ)» (ruling 162): +Х ОБ while the entanglement holds. */
@@ -1672,6 +1674,25 @@ function resolveHit(
     rng,
     logs,
   );
+  // «ЭМИ (Х)» (ruling 186): an impulse of radius Х around the target; к10 for its effect.
+  const emi = traits.find((t) => t.name === 'ЭМИ');
+  if (emi?.value !== undefined) {
+    setPhase('property');
+    const roll = rollDie(10, rng).value;
+    const at = posOf(b, command.target);
+    state.emis = [
+      ...(state.emis ?? []),
+      {
+        id: `${command.id}:emi:${(state.emis ?? []).length}`,
+        x: at.x,
+        y: at.y,
+        r: emi.value,
+        roll,
+        fromRound: state.wounds.combat.session.roundNumber,
+      },
+    ];
+    logs.push({ type: 'emi', roll, radius: emi.value, stage: emiStage(roll) });
+  }
   // «Галлюциногенное (Х)» (ruling 170): ВН test −10 × Х; a failure — effect к10 by the GM's
   // table, for 1 + degrees of failure rounds.
   const hallucinogen = traits.find((t) => t.name === 'Галлюциногенное');
@@ -3041,6 +3062,48 @@ export function furiousOpen(b: Battle, id: ActorId) {
   const entry = session.initiativeOrder.find((e) => e.actor.actorId === id);
   return open && open.turn === session.turnsStarted && entry?.reactions.remaining ? open : null;
 }
+/**
+ * «ЭМИ» stage from the к10 (ruling 186): 1–2 nothing (0), 3–4 weak (1), 5–6 serious (2),
+ * 7–8 dead zone (3), 9–10 long dead zone (4, acts as 3 and lasts a round longer).
+ */
+export const emiStage = (roll: number) =>
+  roll <= 2 ? 0 : roll <= 4 ? 1 : roll <= 6 ? 2 : roll <= 8 ? 3 : 4;
+export const emiStageName = [
+  'незначительное',
+  'слабый сбой',
+  'серьёзный сбой',
+  'мёртвая зона',
+  'длительная мёртвая зона',
+];
+/** EMI fields still acting, with the stage of this round: one stage less every round. */
+export function activeEmis(b: Battle, state = getEngine(b)) {
+  const round = state.wounds.combat.session.roundNumber;
+  return (state.emis ?? [])
+    .map((f) => ({ ...f, stage: emiStage(f.roll) - (round - f.fromRound) }))
+    .filter((f) => f.stage >= 1);
+}
+/** The strongest EMI effect at a point (several fields do not add up, the highest acts). */
+export function emiLevelAt(b: Battle, state: EngineState, p: { x: number; y: number }): number {
+  return Math.min(
+    3,
+    Math.max(
+      0,
+      ...activeEmis(b, state)
+        .filter((f) => Math.hypot(p.x - f.x, p.y - f.y) <= f.r + 1e-9)
+        .map((f) => f.stage),
+    ),
+  );
+}
+/**
+ * A weapon EMI disturbs (ruling 186): ranged, not «Примитивное» and not mechanical — mechanical
+ * are the firearms of the «Стаб и РПУ» sheet, bows and crossbows.
+ */
+export function emiSensitive(w: ArsenalWeapon, traits: readonly WeaponTraitReference[]) {
+  if (hasTrait(traits, 'Примитивное') || isBow(w)) return false;
+  if (w.sheet === 'Стаб и РПУ' || w.sheet === 'ХТХ и примитив' || w.sheet === 'Взрывчатка')
+    return false;
+  return weaponKind(w) === 'ranged';
+}
 /** Smoke clouds still hanging (ruling 146). */
 export function activeSmokes(b: Battle, state = getEngine(b)) {
   const round = state.wounds.combat.session.roundNumber;
@@ -3781,6 +3844,27 @@ function resolveAttack(
         },
       ],
     };
+  }
+  // «ЭМИ» (ruling 186): a technological weapon in a field — −10 / −20; a dead zone — no shot.
+  if (kind === 'ranged' && emiSensitive(arsenalWeapon, traits)) {
+    const level = emiLevelAt(b, state, posOf(b, command.actor));
+    if (level >= 3)
+      throw new Error('Мёртвая зона ЭМИ: технологическое оружие не работает (решение 186)');
+    if (level >= 1) {
+      const src = { kind: 'weapon-property', id: 'Свойства оружия: ЭМИ' };
+      ctx = {
+        ...ctx,
+        modifiers: [
+          ...ctx.modifiers,
+          {
+            id: `${command.id}:emi`,
+            value: level === 1 ? -10 : -20,
+            source: src,
+            provenance: { source: src, reason: `ЭМИ: ${emiStageName[level]}` },
+          },
+        ],
+      };
+    }
   }
   // Rulings 174–176: shooting at a target that runs, lies or is in close combat — −20 each.
   if (kind === 'ranged' && !command.at)

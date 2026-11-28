@@ -51,6 +51,12 @@ describe('Arsenal dataset', () => {
   it('is reproducible: rebuilding from the snapshot gives the committed dataset', () => {
     expect(JSON.parse(JSON.stringify(data))).toEqual(committed);
   });
+  it('pattern tables are not weapons (ruling 183): «Агриппина», «Хакс-Ортлак» are skipped', () => {
+    const names = data.weapons.map((w) => w.name);
+    expect(names).not.toContain('Агриппина');
+    expect(names).not.toContain('Хакс-Ортлак');
+    expect(names).toContain('Крак (90 мм)');
+  });
   it('the hot-shot lasgun matches «Лаз» row 11', () => {
     const w = data.weapons.find((x) => x.name === 'Хот-шот лазган')!;
     expect(w).toMatchObject({
