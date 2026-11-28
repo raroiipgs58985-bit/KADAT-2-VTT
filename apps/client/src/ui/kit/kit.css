@@ -1,0 +1,1467 @@
+/*
+ * KADAT 2 UI Kit v0.2 — оформление «Имперский тактический когитатор» поверх styles.css.
+ * Графика — отдельные ресурсы (./assets): 9-slice через border-image, лампы и газоразрядный
+ * индикатор — картинки и живые цифры. Логика компонентов и данные не меняются.
+ * border-image-width больше border-width: рамка рисуется поверх, отступы содержимого прежние.
+ */
+:root {
+  --kit-ink: #ece4cf;
+  --kit-ink-dim: #a8b2ab;
+  --kit-screen: #0b1013;
+  --kit-screen-ink: #e1eaed;
+  --kit-amber: #ffc46b;
+  --kit-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --kit-cond: 'IBM Plex Sans Condensed', 'Roboto Condensed', 'Arial Narrow', system-ui, sans-serif;
+}
+/* ===== Компоненты (работают на любой ширине) ===== */
+/* ---------- экран-компонент (предпросмотр атаки) ---------- */
+.kit-screen {
+  position: relative;
+  border: 12px solid transparent;
+  border-radius: 0;
+  border-image: url('./assets/frame-display.webp') 102 fill / 34px / 8px stretch;
+  background: transparent;
+}
+.kit-screen > * {
+  position: relative;
+}
+.kit-screen::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  background: var(--kit-screen);
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.6);
+}
+/* Блок «ПОРОГ d100» */
+.kit-readout {
+  position: relative;
+  padding: 8px 10px 10px;
+  color: var(--kit-screen-ink);
+  font-family: var(--kit-mono);
+}
+.kit-readout-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.kit-caption {
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  color: var(--kit-ink-dim);
+}
+.kit-readout-base {
+  font-size: 0.95rem;
+  margin-top: 2px;
+}
+.kit-readout-mods {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px solid rgba(220, 230, 232, 0.2);
+  display: grid;
+  gap: 2px;
+  font-size: 0.85rem;
+}
+.kit-readout-mods li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.kit-readout-mods li > span:first-child {
+  color: #b9c6ca;
+}
+.kit-readout-mods li.off {
+  opacity: 0.55;
+}
+.kit-readout-mods .plus {
+  color: #a6e590;
+}
+.kit-readout-mods .minus {
+  color: #ff917a;
+}
+.kit-readout-reason,
+.kit-readout-note {
+  margin-top: 8px;
+  font-size: 0.82rem;
+  color: #ffd27a;
+  line-height: 1.35;
+}
+
+/* ---------- газоразрядный индикатор ---------- */
+.kit-nixie {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 10px solid transparent;
+  border-image: url('./assets/frame-nixie.webp') 78 / 26px / 8px stretch;
+  background: radial-gradient(#1c0d05, #0b0503);
+  background-clip: padding-box;
+  min-width: 72px;
+  height: 48px;
+  flex: none;
+}
+.kit-nixie-digits {
+  font-family: var(--kit-mono);
+  font-weight: 700;
+  font-size: 1.45rem;
+  line-height: 1;
+  color: #ffa04a;
+  text-shadow:
+    0 0 10px #ff6a10,
+    0 0 2px #ffdcae;
+  letter-spacing: 0.04em;
+}
+.kit-nixie-lg {
+  min-width: 108px;
+  height: 64px;
+}
+.kit-nixie-lg .kit-nixie-digits {
+  font-size: 2.2rem;
+}
+
+/* ---------- лампы ОД и реакции ---------- */
+.kit-lamp {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  background: url('./assets/lamp-amber-off.webp') center / 100% 100% no-repeat;
+  vertical-align: middle;
+}
+.kit-lamp-amber.on {
+  background-image: url('./assets/lamp-amber-on.webp');
+  filter: drop-shadow(0 0 5px rgba(255, 170, 60, 0.55));
+}
+.kit-lamp-green {
+  width: 18px;
+  height: 18px;
+  margin-right: 4px;
+  background-image: url('./assets/lamp-green-off.webp');
+}
+.kit-lamp-green.on {
+  background-image: url('./assets/lamp-green-on.webp');
+  filter: drop-shadow(0 0 4px rgba(90, 240, 70, 0.5));
+}
+.turn-head {
+  justify-content: flex-start;
+}
+.turn-head .turn-title {
+  flex: 1;
+  min-width: 0;
+}
+.turn-bar .od {
+  gap: 2px;
+}
+.kit-lamp.pip,
+.kit-lamp.pip.on {
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+.initiative .reaction {
+  display: inline-flex;
+  align-items: center;
+}
+.initiative .reaction .kit-lamp {
+  flex: none;
+  min-width: 16px;
+  width: 16px;
+  height: 16px;
+}
+
+/* Рельсы доков и переключатель фактур карты — только на desktop */
+.dock-toggle,
+.map-style-toggle {
+  display: none;
+}
+
+/* ===== Оболочка desktop (телефон — после утверждения desktop) ===== */
+
+/* ===== Desktop shell layout (≥ 761 px): «Планшет» с доками ===== */
+@media (min-width: 761px) {
+  body {
+    background: #090a0a;
+  }
+
+  /* ---------- «Планшет»: экран на всю высоту, карта в центре, доки по краям ---------- */
+  .app {
+    max-width: none;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 6px 8px 8px;
+    overflow: hidden;
+  }
+  .app.view-characters {
+    height: auto;
+    overflow: visible;
+  }
+  .app > .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%);
+    z-index: 40;
+    width: min(640px, calc(100vw - 32px));
+    margin: 0;
+    box-shadow: 0 12px 30px #000c;
+  }
+  .layout {
+    --dock-l: clamp(268px, 19vw, 330px);
+    --dock-r: clamp(332px, 24vw, 440px);
+    flex: 1;
+    min-height: 0;
+    grid-template-columns: var(--dock-l) minmax(0, 1fr) var(--dock-r);
+    gap: 8px;
+    align-items: stretch;
+  }
+  .layout.left-closed {
+    --dock-l: 42px;
+  }
+  .layout.right-closed {
+    --dock-r: 42px;
+  }
+
+  /* Доки — одна фигурная металлическая панель на сторону; внутри — плоские секции. */
+  .layout > .column.left,
+  .layout > .column.right {
+    position: relative;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    align-content: start;
+    gap: 8px;
+    border: 14px solid transparent;
+    border-image: url('./assets/panel-olive-cut.webp') 162 fill / 54px / 10px round;
+    scrollbar-width: thin;
+    scrollbar-color: #5a5f58 transparent;
+  }
+  .layout > .column.right {
+    border-image-source: url('./assets/panel-navy-cut.webp');
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .layout > .column > .panel,
+  .layout > .column .panel.pending-banner {
+    position: relative;
+    border: 1px solid rgba(232, 236, 226, 0.07);
+    border-radius: 2px;
+    border-image: none;
+    background: rgba(6, 8, 9, 0.62);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    padding: 10px;
+  }
+  /* Правый док: блок действий прокручивается сам, журнал всегда виден под ним. */
+  .layout > .column.right > .panel.actions,
+  .layout > .column.right > .panel:not(.log):not(.actions) {
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+  .layout > .column.right > .panel.log {
+    flex: 1 1 240px;
+    min-height: 200px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+  /* Сворачивание доков в рельсы */
+  .dock-toggle {
+    display: flex;
+  }
+  .layout .dock-toggle {
+    flex: none;
+    align-self: stretch;
+    justify-content: center;
+    gap: 6px;
+    min-height: 28px;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+  }
+  .layout.left-closed > .column.left > :not(.dock-toggle),
+  .layout.right-closed > .column.right > :not(.dock-toggle) {
+    display: none;
+  }
+  .layout.left-closed > .column.left,
+  .layout.right-closed > .column.right {
+    border-width: 8px;
+    border-image-width: 30px;
+    overflow: hidden;
+  }
+  .layout.left-closed .dock-toggle,
+  .layout.right-closed .dock-toggle {
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    padding: 10px 0;
+    justify-content: flex-start;
+  }
+  .layout.left-closed .dock-label,
+  .layout.right-closed .dock-label {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+  }
+  .layout.right-closed .dock-label {
+    transform: none;
+  }
+
+  /* Центр: карта занимает всю оставшуюся высоту */
+  .layout > .column.center {
+    position: static;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    gap: 6px;
+  }
+  .layout > .column.center > .mode-switch {
+    flex: none;
+    padding: 2px 4px;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+  }
+  .layout > .column.center > .map-shell {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .layout .map-shell > .map {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+    max-height: none;
+    aspect-ratio: auto !important;
+  }
+}
+
+/* ===== KADAT 2 UI Kit skin: one look on every width (desktop and phone) ===== */
+.app-header {
+  position: relative;
+  flex: none;
+  border: 10px solid transparent;
+  border-radius: 0;
+  border-image: url('./assets/panel-olive-cut.webp') 162 fill / 54px / 10px round;
+  background: transparent;
+  box-shadow: none;
+  margin: 0 0 8px;
+  padding: 2px 6px;
+  /* Меню шапки (Сценарии) — поверх раскладки. */
+  z-index: 20;
+}
+.brand-mark {
+  border: 8px solid transparent;
+  border-image: url('./assets/plate-brass.webp') 66 fill / 22px / 8px stretch;
+  background: none;
+  color: #1e1911;
+  text-shadow: 0 1px 0 rgba(255, 245, 220, 0.35);
+  border-radius: 0;
+}
+
+/* ---------- клавиши (key-sm, 9-slice, состояния — отдельные файлы) ---------- */
+.layout button,
+.app-header button,
+.app-header .file-button,
+.app-header .menu > summary {
+  border: 6px solid transparent;
+  border-radius: 0;
+  border-image: url('./assets/key-sm-normal.webp') 42 fill / 14px / 6px stretch;
+  background: transparent;
+  color: var(--kit-ink);
+  text-shadow: 0 1px 1px #000;
+  font-weight: 600;
+  min-height: 32px;
+  padding: 1px 10px 0;
+  box-shadow: none;
+}
+.layout button:hover:not(:disabled),
+.app-header button:hover:not(:disabled),
+.app-header .file-button:hover {
+  filter: brightness(1.12);
+  background: transparent;
+}
+.layout button:active:not(:disabled),
+.app-header button:active:not(:disabled) {
+  border-image-source: url('./assets/key-sm-pressed.webp');
+}
+.layout button.chosen,
+.layout button[aria-pressed='true'],
+.layout button[aria-selected='true'],
+.app-header button.chosen {
+  border-image-source: url('./assets/key-sm-active.webp');
+  color: #ffd690;
+  text-shadow:
+    0 0 6px rgba(255, 170, 60, 0.6),
+    0 1px 1px #000;
+  background: transparent;
+}
+.layout button:disabled,
+.app-header button:disabled {
+  border-image-source: url('./assets/key-sm-disabled.webp');
+  color: #8f8c84;
+  text-shadow: none;
+  opacity: 1;
+}
+.layout button.primary {
+  border-image-source: url('./assets/key-sm-active.webp');
+  color: #ffd690;
+}
+/* Главные действия хода — крупные клавиши */
+.layout button.kit-attack-go {
+  border: 8px solid transparent;
+  border-image: url('./assets/key-danger.webp') 78 fill / 26px / 8px stretch;
+  min-height: 56px;
+  font-family: var(--kit-cond);
+  font-size: 1.05rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fff0ea;
+  padding-top: 8px;
+}
+.layout button.kit-attack-go:active:not(:disabled) {
+  border-image-source: url('./assets/key-danger-pressed.webp');
+}
+.layout button.kit-attack-go:disabled,
+.layout button.kit-confirm:disabled {
+  border-image-source: url('./assets/key-disabled.webp');
+  color: #8f8c84;
+}
+.layout button.kit-confirm {
+  border: 8px solid transparent;
+  border-image: url('./assets/key-confirm.webp') 78 fill / 26px / 8px stretch;
+  min-height: 52px;
+  font-family: var(--kit-cond);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #e4fbd8;
+  padding-top: 8px;
+}
+.layout .tabs button,
+.layout .actor-tabs button {
+  padding: 1px 6px 0;
+  font-size: 0.86rem;
+  min-width: 0;
+}
+/* Мелкие кнопки панели карты — компактнее */
+.layout .map-toolbar button {
+  min-height: 30px;
+  padding: 0 8px;
+}
+
+/* ---------- поля ввода (field-inset) ---------- */
+.layout select,
+.layout input:not([type='checkbox']):not([type='file']),
+.layout textarea {
+  border: 6px solid transparent;
+  border-radius: 0;
+  border-image: url('./assets/field-inset.webp') 36 / 12px / 6px stretch;
+  background: #191b1a;
+  background-clip: padding-box;
+  color: var(--kit-screen-ink);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+/* Выпадающий список — явная стрелка (своя, светлая, на тёмном поле). */
+.layout select {
+  appearance: none;
+  padding-right: 30px;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23ffc46b' stroke-width='2'/%3E%3C/svg%3E"),
+    linear-gradient(
+      90deg,
+      transparent calc(100% - 26px),
+      rgba(255, 255, 255, 0.06) calc(100% - 26px)
+    );
+  background-repeat: no-repeat;
+  background-position:
+    right 8px center,
+    0 0;
+  background-size:
+    12px 8px,
+    100% 100%;
+  cursor: pointer;
+}
+.layout select option {
+  background: #15191a;
+  color: var(--kit-screen-ink);
+}
+.layout input[type='checkbox'] {
+  appearance: none;
+  width: 24px;
+  height: 24px;
+  margin: 0 6px 0 0;
+  border: 0;
+  background: url('./assets/check-off.webp') center / 100% 100% no-repeat;
+  vertical-align: middle;
+  cursor: pointer;
+}
+.layout input[type='checkbox']:checked {
+  background-image: url('./assets/check-on.webp');
+}
+
+/* ---------- компактная форма атаки: списки в две колонки ---------- */
+.attack-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 8px;
+}
+.attack-form > * {
+  grid-column: 1 / -1;
+}
+.attack-form > label:has(> select),
+.attack-form > label:has(> input[type='number']) {
+  grid-column: auto;
+  font-size: 0.8rem;
+  color: var(--kit-ink-dim);
+}
+.attack-form select,
+.attack-form input[type='number'] {
+  font-size: 0.86rem;
+  min-height: 34px;
+}
+
+/* ---------- карта: фактуры пола, стен, дверей и препятствий (переключаемые) ---------- */
+.map-style-toggle {
+  display: inline-flex;
+  align-items: center;
+}
+.map.textured .map-floor {
+  fill: url(#kt-floor);
+}
+.map.textured [data-testid='floor'] rect {
+  /* The colour tints the steel; the texture stays visible underneath. */
+  mix-blend-mode: color;
+  opacity: 0.85;
+}
+.map.textured .grid-minor {
+  stroke: rgba(205, 220, 212, 0.11);
+}
+.map.textured .grid-major {
+  stroke: rgba(225, 235, 228, 0.26);
+}
+.map.textured .map-border {
+  stroke: #79807a;
+  stroke-width: 0.1;
+}
+.map.textured .wall .line {
+  stroke: url(#kt-wall);
+  stroke-width: 0.28;
+  filter: drop-shadow(0.07px 0.11px 0.03px rgba(0, 0, 0, 0.85));
+}
+.map.textured .wall.selected .line {
+  stroke: var(--accent);
+}
+.map.textured .door .gap {
+  stroke: #0d1112;
+  stroke-width: 0.3;
+}
+.map.textured .door.closed .leaf {
+  stroke: url(#kt-hazard);
+  stroke-width: 0.22;
+}
+.map.textured .door.selected .leaf {
+  stroke: var(--accent);
+}
+.map.textured .obstacle.solid rect {
+  fill: url(#kt-crate);
+  stroke: #9a9d93;
+  filter: drop-shadow(0.06px 0.1px 0.03px rgba(0, 0, 0, 0.8));
+}
+.map.textured .obstacle.solid.transparent rect {
+  fill-opacity: 0.92;
+}
+.map.textured .obstacle.cover-low rect {
+  stroke: #c9b98c;
+  stroke-dasharray: 0.18 0.08;
+}
+.map.textured .obstacle.cover-medium rect {
+  stroke: #c9b98c;
+}
+.map.textured .obstacle text {
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.85);
+  stroke-width: 0.08;
+}
+
+/* ---------- токены: хромированный обод и выпуклое стекло ---------- */
+.token-rim,
+.token-dome {
+  display: inline;
+}
+.token-rim {
+  fill: url(#kt-chrome);
+  stroke: #101312;
+  stroke-width: 0.03;
+  filter: drop-shadow(0.05px 0.1px 0.05px rgba(0, 0, 0, 0.85));
+}
+.token-dome {
+  fill: url(#kt-dome);
+  pointer-events: none;
+}
+.token-body {
+  stroke: #121514;
+  stroke-width: 0.04;
+}
+.token.selected .token-rim {
+  stroke: #fff6d8;
+  stroke-width: 0.07;
+}
+.token.selected .token-body {
+  stroke: #121514;
+  stroke-width: 0.04;
+}
+.token-initials {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  fill: #0b0f0e;
+}
+.map.textured .obstacle.passable rect {
+  fill: rgba(150, 160, 150, 0.16);
+  stroke: #a8ada4;
+}
+
+/* ---------- главная рамка карты ---------- */
+.map-shell {
+  position: relative;
+  border: 10px solid transparent;
+  border-radius: 0;
+  border-image: url('./assets/frame-display-heavy.webp') 156 / 52px / 8px stretch;
+  background: #0d1112;
+}
+.map-shell > .map-toolbar {
+  background: rgba(10, 12, 13, 0.82);
+}
+
+/* ---------- экраны (журнал, предпросмотр атаки) ---------- */
+.kit-screen,
+.layout .panel.log {
+  border: 12px solid transparent;
+  border-radius: 0;
+  border-image: url('./assets/frame-display.webp') 102 fill / 34px / 8px stretch;
+  background: transparent;
+}
+.layout .panel.log {
+  border-image-source: url('./assets/frame-display-heavy.webp');
+  border-image-slice: 156 fill;
+  border-image-width: 52px;
+}
+.kit-screen > *,
+.layout .panel.log > * {
+  position: relative;
+}
+.kit-screen::before,
+.layout .panel.log::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  background: var(--kit-screen);
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.6);
+}
+.layout .panel.log h2 {
+  font-family: var(--kit-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--kit-ink-dim);
+}
+.layout .panel.log h2::before {
+  content: '+++ ';
+}
+.layout .panel.log h2::after {
+  content: ' +++';
+}
+.log-line {
+  background: transparent;
+  border: 0;
+  border-left: 3px solid #5d6c70;
+  border-radius: 0;
+  color: var(--kit-screen-ink);
+  font-family: var(--kit-mono);
+  font-size: 0.82rem;
+}
+.log-line.tone-success {
+  border-left-color: #a6e590;
+}
+.log-line.tone-warning {
+  border-left-color: #ffd27a;
+}
+.log-line.tone-error {
+  border-left-color: #ff917a;
+}
+.log-head strong {
+  font-family: var(--kit-cond);
+  font-size: 0.95rem;
+  color: #f0f5f6;
+}
+
+/* ---------- карточка бойца: шкалы в прорезях (bar-slot) ---------- */
+.actor-card .meter {
+  position: relative;
+  height: 16px;
+  border-radius: 0;
+  background: #050606;
+  overflow: visible;
+}
+.actor-card .meter > div {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  bottom: 3px;
+  max-width: calc(100% - 6px);
+  border-radius: 0;
+}
+.actor-card .meter::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 4px solid transparent;
+  border-image: url('./assets/bar-slot.webp') 30 / 10px / 6px stretch;
+  pointer-events: none;
+}
+.actor-card .vital-label strong {
+  font-family: var(--kit-mono);
+}
+.actor-card .avatar {
+  border-radius: 0;
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+}
+
+/* ---------- служебные подписи: не мельче 11 px ---------- */
+.muted.small,
+.small,
+.eyebrow,
+.od-label,
+.log-id,
+.log-tone {
+  font-size: max(0.74rem, 11px);
+}
+.eyebrow,
+.layout h3 {
+  font-family: var(--kit-mono);
+  letter-spacing: 0.16em;
+}
+
+/* ---------- финал: карта больше, действия без прокрутки ---------- */
+.layout > .column.center {
+  position: relative;
+  gap: 0;
+}
+/* Режимы сцены — в строке инструментов карты, а не отдельной строкой над ней. */
+.layout > .column.center > .mode-switch {
+  display: none;
+}
+.map-shell > .map-toolbar {
+  flex-wrap: wrap;
+}
+.map-toolbar > .toolbar-end {
+  display: flex;
+  margin-left: auto;
+  flex: none;
+}
+.map-toolbar .mode-switch {
+  display: flex;
+  gap: 4px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.map-toolbar .mode-switch .map-name {
+  display: none;
+}
+.map-toolbar .mode-switch button {
+  min-height: 30px;
+  padding: 2px 12px;
+  font-size: 0.82rem;
+}
+.map-shell .map-hint {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.layout > .column.left > .turn-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: rgba(8, 10, 10, 0.94);
+}
+.layout .panel.actions .kit-attack-go {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  box-shadow: 0 -12px 16px rgba(6, 8, 9, 0.92);
+}
+.layout .actor-tabs button {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ---------- диагностика бойца ---------- */
+.diag-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 10px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(232, 236, 226, 0.1);
+  font:
+    700 0.66rem/1 'IBM Plex Mono',
+    ui-monospace,
+    monospace;
+  letter-spacing: 0.18em;
+  color: #9fa89f;
+}
+.diag-strip > :first-child {
+  flex: 1;
+}
+.diag-lamp {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #3a3f3a;
+  box-shadow: inset 0 1px 2px #000;
+}
+.diag-lamp.diag-alive {
+  background: radial-gradient(circle at 35% 30%, #d9ffd9, #4fd16b 45%, #1d5a2a);
+  box-shadow: 0 0 8px #4fd16b88;
+}
+.diag-lamp.diag-agony,
+.diag-lamp.diag-stabilized {
+  background: radial-gradient(circle at 35% 30%, #fff1c9, #f2a531 45%, #6b3d07);
+  box-shadow: 0 0 8px #f2a53188;
+}
+.diag-lamp.diag-dead {
+  background: radial-gradient(circle at 35% 30%, #ffd1c9, #e0442f 45%, #5e140a);
+  box-shadow: 0 0 8px #e0442f88;
+}
+
+/* ---------- стрелочные приборы ран и крови ---------- */
+.actor-card .vital-bar {
+  display: none;
+}
+.actor-card .vitals {
+  display: block;
+}
+.gauges {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.gauge {
+  position: relative;
+  text-align: center;
+}
+.gauge svg {
+  display: block;
+  width: 100%;
+  max-width: 150px;
+  margin: 0 auto;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.7));
+}
+.gauge-bezel {
+  fill: #3c3f3c;
+  stroke: #a7aaa2;
+  stroke-width: 2.4;
+}
+.gauge-face {
+  fill: #e6dfc9;
+  stroke: #1b1d1b;
+  stroke-width: 1;
+}
+.gauge-track {
+  fill: none;
+  stroke: #c6bea6;
+  stroke-width: 4;
+}
+.gauge-value {
+  fill: none;
+  stroke-width: 4;
+}
+.gauge-wounds .gauge-value {
+  stroke: #2f8f6a;
+}
+.gauge-blood .gauge-value {
+  stroke: #b4322c;
+}
+.gauge-tick {
+  stroke: #33332e;
+  stroke-width: 1.2;
+}
+.gauge-scale {
+  font:
+    700 7px 'IBM Plex Mono',
+    ui-monospace,
+    monospace;
+  fill: #33332e;
+}
+.gauge-needle {
+  stroke: #c4301f;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  transition: all 0.35s ease;
+}
+.gauge-hub {
+  fill: #262826;
+  stroke: #b9bbb3;
+  stroke-width: 1.2;
+}
+.gauge-name {
+  font:
+    700 6.5px 'IBM Plex Mono',
+    ui-monospace,
+    monospace;
+  letter-spacing: 0.12em;
+  fill: #55534b;
+}
+.gauge-label {
+  display: none;
+}
+.gauge-window {
+  fill: #0b0d0c;
+  stroke: #6f726b;
+  stroke-width: 0.8;
+}
+.gauge-digits {
+  font:
+    700 9.5px 'IBM Plex Mono',
+    ui-monospace,
+    monospace;
+  fill: #f6dd9a;
+}
+.gauge-readout {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  margin-top: -10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.gauge-label-unused {
+  font:
+    700 0.62rem/1 'IBM Plex Mono',
+    ui-monospace,
+    monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #a6ada6;
+}
+.gauge-readout strong {
+  font:
+    700 1.02rem/1.1 'IBM Plex Mono',
+    ui-monospace,
+    monospace;
+  color: #f2e7c4;
+  padding: 2px 8px;
+  background: #0b0d0c;
+  border: 1px solid #2f3330;
+  border-radius: 2px;
+}
+
+/* Низкие окна (≤ 820 px): журнал и порог компактнее, чтобы форма атаки помещалась. */
+
+@media (min-width: 761px) {
+  @media (max-height: 820px) {
+    .layout > .column.right > .panel.log {
+      flex: 1 1 150px;
+      min-height: 130px;
+    }
+    .kit-readout {
+      padding: 2px 4px;
+    }
+    .kit-readout .kit-nixie-lg {
+      transform: scale(0.8);
+      transform-origin: right center;
+    }
+    .layout > .column.right {
+      gap: 6px;
+    }
+  }
+}
+
+/* ===== Phone shell (≤ 760 px): карта сверху, под ней короткая строка и один раздел ===== */
+.mobile-keys,
+.fighter-hud,
+.mobile-strip {
+  display: none;
+}
+@media (max-width: 760px) {
+  body {
+    background: #090a0a;
+  }
+  .app {
+    --m-top: 46px;
+    max-width: none;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+  }
+  .app.view-characters {
+    height: auto;
+    overflow: visible;
+    padding: 8px;
+  }
+  /* Сообщения — над нижней строкой, а не на карте; короткие сами исчезают. */
+  .app > .toast {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    top: auto;
+    bottom: 116px;
+    z-index: 30;
+    width: auto;
+    transform: none;
+    margin: 0;
+    padding: 6px 10px;
+    font-size: 0.82rem;
+    box-shadow: 0 12px 30px #000c;
+  }
+
+  /* ---- верхняя строка: табличка, раунд, меню ---- */
+  .app-header {
+    position: relative;
+    z-index: 45;
+    flex: none;
+    height: var(--m-top);
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    padding: 0 4px;
+    border: 6px solid transparent;
+    border-image: url('./assets/panel-olive-cut.webp') 162 fill / 30px / 5px round;
+    background: transparent;
+    box-shadow: none;
+  }
+  .app-header .brand {
+    flex: 1;
+    min-width: 0;
+    gap: 6px;
+  }
+  .app-header .brand h1 {
+    font-size: 0.86rem;
+    letter-spacing: 0.12em;
+    white-space: nowrap;
+  }
+  .app-header .brand .brand-tag,
+  .app-header .brand .brand-sub {
+    display: none;
+  }
+  .app-header .brand-mark {
+    width: 26px;
+    height: 26px;
+    font-size: 0.8rem;
+  }
+  .mobile-keys {
+    order: 2;
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+  }
+  .mobile-keys .kit-nixie {
+    min-width: 50px;
+    height: 32px;
+    border-width: 7px;
+  }
+  .mobile-keys .kit-nixie-digits {
+    font-size: 1.05rem;
+  }
+  .app-header .mobile-keys button {
+    min-height: 32px;
+    padding: 2px 12px;
+    font-size: 0.76rem;
+  }
+  .app-header .header-actions {
+    display: none;
+  }
+  .app-header.menu-open .header-actions {
+    position: fixed;
+    top: calc(var(--m-top) + 2px);
+    left: 6px;
+    right: 6px;
+    z-index: 60;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 10px;
+    overflow: visible;
+    background: #0b0e0e;
+    border: 1px solid #3c423c;
+    box-shadow: 0 16px 40px #000d;
+  }
+  .app-header.menu-open .header-actions > * {
+    flex: initial;
+  }
+  .app-header .header-actions .divider {
+    display: none;
+  }
+  .app-header .header-actions .menu-body {
+    left: 0;
+    right: auto;
+    min-width: min(300px, calc(100vw - 40px));
+    z-index: 65;
+  }
+
+  /* ---- раскладка: карта, раздел (если открыт), короткая строка ---- */
+  .layout {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+    margin: 0;
+  }
+  .layout > * {
+    margin: 0;
+  }
+  .layout > .column.center {
+    order: 0;
+    flex: 1 1 0;
+    min-height: 140px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .layout > .column.center > .mode-switch {
+    display: none;
+  }
+  .layout > .column.center > .map-shell {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    border-width: 4px;
+    border-image-width: 22px;
+  }
+  .layout .map-shell > .map {
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+    max-height: none;
+    aspect-ratio: auto !important;
+  }
+  /* Инструменты карты — маленькие кнопки в правом верхнем углу поверх карты. */
+  .map-shell > .map-toolbar {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 7;
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 4px;
+    padding: 3px;
+    background: rgba(8, 10, 10, 0.72);
+    border: 1px solid #343a34;
+  }
+  .layout .map-toolbar button {
+    min-height: 30px;
+    min-width: 32px;
+    padding: 1px 7px;
+    font-size: 0.7rem;
+  }
+  .map-toolbar > span:not(.wall-actions),
+  .map-toolbar > .toolbar-end,
+  .map-shell .map-hint {
+    display: none;
+  }
+
+  /* ---- чип бойца поверх карты (левый верхний угол) ---- */
+  .layout .fighter-hud {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    z-index: 7;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    min-height: 0;
+    padding: 3px 6px;
+    color: inherit;
+    text-align: left;
+    background: rgba(8, 10, 10, 0.82);
+    border: 1px solid #434943;
+    border-image: none;
+    border-radius: 2px;
+    box-shadow: 0 4px 12px #000a;
+  }
+  .fighter-hud-name {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    max-width: 92px;
+    font: 700 0.64rem/1.2 var(--kit-mono, monospace);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #8fe3b4;
+  }
+  .fighter-hud-name > strong {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .fighter-hud-name > span {
+    color: #9aa39a;
+    font-weight: 500;
+  }
+  .fighter-hud-gauges {
+    display: flex;
+    gap: 2px;
+  }
+  .fighter-hud .gauge svg {
+    width: 42px;
+    filter: none;
+  }
+  .layout.section-open .fighter-hud {
+    display: none;
+  }
+
+  /* ---- разделы: по умолчанию свёрнуты ---- */
+  .layout .dock-toggle {
+    display: none;
+  }
+  .layout > .column.left,
+  .layout > .column.right {
+    display: none;
+  }
+  /* Свёрнутый левый модуль не занимает места… */
+  .layout > .column.left {
+    display: block;
+    position: fixed;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    visibility: hidden;
+    border: 0;
+    padding: 0;
+  }
+  .layout:not(.section-turn) > .column.left > :not(.pending):not(.pending-banner) {
+    display: none;
+  }
+  /* …но вопрос ведущему и контратака встают под картой, в общем потоке, не поверх неё. */
+  .layout:not(.section-turn) > .column.left:has(> .panel.pending, > .panel.pending-banner) {
+    order: 1;
+    position: static;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: none;
+    width: auto;
+    height: auto;
+    max-height: 45dvh;
+    overflow-y: auto;
+    visibility: visible;
+    padding: 6px;
+    border-top: 2px solid #8a6a2a;
+    background: #0b0e11;
+  }
+  /* Пока ждём ответа ведущего, другие разделы свёрнуты: под картой только вопрос. */
+  .layout:has(> .column.left > .panel.pending) > .column.right {
+    display: none !important;
+  }
+  /* Открытый раздел — под картой, непрозрачный, свой скролл; карта остаётся видна. */
+  .layout.section-turn > .column.left,
+  .layout.section-move > .column.right,
+  .layout.section-attack > .column.right,
+  .layout.section-actions > .column.right,
+  .layout.section-log > .column.right,
+  .layout.section-editor > .column.right {
+    order: 1;
+    position: static;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 0 0 auto;
+    width: auto;
+    height: auto;
+    max-height: 50dvh;
+    overflow-y: auto;
+    visibility: visible;
+    padding: 6px;
+    border: 0;
+    border-top: 2px solid #4a5a6a;
+    border-image: none;
+    background: #0b0e11;
+    scrollbar-width: thin;
+  }
+  .layout.section-turn > .column.left > :not(.dock-toggle) {
+    display: block;
+  }
+  .layout > .column.right > * {
+    display: none;
+  }
+  .layout.section-move > .column.right > .panel.actions,
+  .layout.section-attack > .column.right > .panel.actions,
+  .layout.section-actions > .column.right > .panel.actions,
+  .layout.section-actions > .column.right > .panel.doors,
+  .layout.section-actions > .column.right > .panel.dice,
+  .layout.section-log > .column.right > .panel.log,
+  .layout.section-editor > .column.right > .panel.editor {
+    display: block;
+  }
+  .layout > .column > .panel,
+  .layout > .column .panel.pending-banner {
+    position: relative;
+    border: 1px solid rgba(232, 236, 226, 0.08);
+    border-radius: 2px;
+    border-image: none;
+    background: rgba(16, 20, 22, 0.96);
+    box-shadow: none;
+    padding: 8px;
+  }
+  .layout > .column.right > .panel.log {
+    max-height: none;
+    margin: 0;
+  }
+  /* Вкладки действий — в нижней строке; в разделе их не дублируем. */
+  .layout .panel.actions > .tabs {
+    display: none;
+  }
+  .layout > .column.left > .turn-bar {
+    position: static;
+    background: rgba(16, 20, 22, 0.96);
+  }
+  /* «Начать бой» и «Передать ход» — в нижней строке. */
+  .layout .turn-bar > .stack > button,
+  .layout .turn-bar > .kit-confirm {
+    display: none;
+  }
+  .layout .setup-guide {
+    display: none !important;
+  }
+  /* Порог и «Атаковать» — сразу вверху раздела, поля формы ниже. */
+  .attack-form > * {
+    order: 3;
+  }
+  .attack-form > .kit-readout {
+    order: 1;
+  }
+  .layout .panel.actions .attack-form > .kit-attack-go {
+    order: 2;
+    position: static;
+    min-height: 46px;
+    box-shadow: none;
+  }
+  .kit-readout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 8px;
+    align-items: start;
+    padding: 0 2px;
+  }
+  .kit-readout-head {
+    display: contents;
+  }
+  /* Above the screen glass (::before), as direct children of .kit-screen are. */
+  .kit-readout-head > * {
+    position: relative;
+  }
+  .kit-readout-head > :first-child,
+  .kit-readout > p,
+  .kit-readout > ul {
+    grid-column: 1;
+  }
+  .kit-readout .kit-nixie {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    min-width: 72px;
+    height: 44px;
+  }
+  .kit-readout .kit-nixie-digits {
+    font-size: 1.4rem;
+  }
+  .kit-readout-reason,
+  .kit-readout-note {
+    font-size: 0.74rem;
+    margin-top: 2px;
+  }
+  .kit-readout-mods {
+    margin-top: 4px;
+    font-size: 0.76rem;
+  }
+
+  /* ---- короткая строка под картой: ход, ОД, главная кнопка, разделы ---- */
+  .mobile-strip {
+    order: 2;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 5px 6px 6px;
+    border: 7px solid transparent;
+    border-image: url('./assets/panel-navy-cut.webp') 162 fill / 30px / 5px round;
+  }
+  .strip-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .strip-turn {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 0.8rem;
+    color: #b9c2bb;
+  }
+  .strip-turn strong {
+    color: #f0e6c8;
+  }
+  .strip-od {
+    display: flex;
+    gap: 3px;
+  }
+  .layout .strip-row button {
+    flex: none;
+    min-height: 40px;
+    padding: 2px 14px;
+    font-size: 0.82rem;
+  }
+  .strip-keys {
+    display: flex;
+    gap: 4px;
+  }
+  .layout .strip-keys button {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 38px;
+    padding: 2px 1px;
+    font-size: 0.68rem;
+    letter-spacing: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .attack-form {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  /* Телефон: без теневых фильтров на карте и приборах — плавнее прокрутка и масштаб. */
+  .map.textured .wall .line,
+  .map.textured .obstacle.solid rect,
+  .token-rim,
+  .gauge svg {
+    filter: none;
+  }
+  .gauge-needle {
+    transition: none;
+  }
+}

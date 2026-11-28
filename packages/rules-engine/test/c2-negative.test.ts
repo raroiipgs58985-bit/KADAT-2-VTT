@@ -288,15 +288,14 @@ describe('C-2 transaction/invariant negatives', () => {
       spy.mockRestore();
     }
   });
-  it('zero Agony result is a typed duration intent, not an invented minimum', () => {
+  it('Agony of 0 rounds (бВН 0) is death at once — author ruling 33', () => {
     const initial = deepFreeze(state(0));
     const r = resolvePostDamage(
       request({ state: initial, damage: damage(20, 'Right Arm') }),
       rng(),
     );
-    expect(r.result.status).toBe('CONTEXT_REQUIRED');
-    expect(r.state).toBe(initial);
-    expect(r.result.pendingIntents[0]!.duration).toEqual({ unit: 'round', amount: 0 });
+    expect(r.result.status).not.toBe('CONTEXT_REQUIRED');
+    expect(r.state.actors.B!.life.status).toBe('DEAD');
   });
   it('Agony cannot expire before a complete initiative-chain round', () => {
     const r = resolvePostDamage(request({ damage: damage(20, 'Right Arm') }), rng());
@@ -384,7 +383,7 @@ describe('Fatigue author ruling / frozen recovery boundary', () => {
       r.state.actors.B!.intents.find((i) => i.type === 'FatigueRecoveryIntent')!.details,
     ).toMatchObject({ bVN: 4, perHours: 1 });
   });
-  it('negative unconscious duration stays literal; gain clamp is not generalized', () => {
+  it('1к10 − бСВ ≤ 0 minutes: no unconsciousness — author ruling 33', () => {
     const initial = state(40, 90),
       s = {
         ...initial,
@@ -397,9 +396,8 @@ describe('Fatigue author ruling / frozen recovery boundary', () => {
       request({ state: deepFreeze(s), damage: damage(11) }),
       rng({ sides: 10, value: 10 }, { sides: 10, value: 1 }),
     );
-    expect(r.result.status).toBe('CONTEXT_REQUIRED');
-    expect(r.result.pendingIntents.some((i) => i.duration?.amount === -8)).toBe(true);
-    expect(r.state).toBe(s);
+    expect(r.result.status).not.toBe('CONTEXT_REQUIRED');
+    expect(r.state.actors.B!.conditions.some((c) => c.id.includes('unconscious'))).toBe(false);
   });
   it('a rejected wound-aware ranged action leaves sources and resources unchanged', () => {
     const bleeding = resolveBleedingPulse(

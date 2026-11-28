@@ -109,7 +109,7 @@ export function resolveCharacteristic(
     finalSuper,
     normalBonus,
     finalBonus: normalBonus + finalSuper,
-    superSuccessDegrees: Math.ceil(finalSuper / 2),
+    superSuccessDegrees: Math.floor(finalSuper / 2),
   };
   return {
     result,

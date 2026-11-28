@@ -89,16 +89,34 @@ export function changeMeleeStanceGrip(
 }
 
 export interface MeleeOpposedActionRequest extends ActionRequest {
-  readonly type: 'feint' | 'pressure';
+  readonly type: 'feint' | 'pressure' | 'disarm';
   readonly target: NonNullable<ActionRequest['target']>;
   readonly opponentContext: ResolutionContext;
+  /** «Разоружение»: the target's weapon in hand to knock out. */
+  readonly weaponId?: string;
 }
+/** Talent «Разоружение»: 1 ОД, opposed НР+0 against НР+0 (ruling 107). */
+export const DISARM_TALENT = 'Разоружение';
 export function resolveMeleeOpposedAction(
   state: CombatActionState,
   request: MeleeOpposedActionRequest,
   source: DiceSource,
-): ActionResolution<{ opposed: OpposedResult; distance: number }> {
+): ActionResolution<{ opposed: OpposedResult; distance: number; disarmed?: string }> {
   const melee = requireMelee(state);
+  if (request.type === 'disarm') {
+    if (!(state.actors[request.actor.actorId]?.talents ?? []).includes(DISARM_TALENT))
+      throw new Error('Disarm requires the talent «Разоружение»');
+    const id = request.weaponId;
+    const ranged = id ? state.weapons[id] : undefined;
+    const blade = id ? melee.weapons[id] : undefined;
+    if (
+      !id ||
+      (ranged ?? blade)?.owner.actorId !== request.target.actorId ||
+      !(ranged?.readied || blade?.held) ||
+      blade?.template.profile.family === 'natural'
+    )
+      throw new Error('Disarm needs a weapon in the target hand');
+  }
   const context = meleeContext(state, request.actor, request.context);
   const other = meleeContext(state, request.target, request.opponentContext);
   const action = meleeDefinition(request.type, 1);
@@ -115,12 +133,10 @@ export function resolveMeleeOpposedAction(
   const spent = spendResources(state, request, action, context, 'own-turn');
   let next = spent.state;
   const won = opposed.result.winner?.actorId === request.actor.actorId;
+  if (won && request.type === 'disarm') next = knockOut(next, request.weaponId!);
   const distance =
     won && request.type === 'pressure'
-      ? Math.min(
-          opposed.result.attackerCheck.totalDegrees,
-          state.actors[request.target.actorId]!.movement,
-        )
+      ? Math.min(opposed.result.winnerDegrees ?? 0, state.actors[request.target.actorId]!.movement)
       : 0;
   if (won && request.type === 'feint')
     next = {
@@ -144,7 +160,11 @@ export function resolveMeleeOpposedAction(
         ],
       },
     };
-  const result = { opposed: opposed.result, distance };
+  const result = {
+    opposed: opposed.result,
+    distance,
+    ...(won && request.type === 'disarm' ? { disarmed: request.weaponId! } : {}),
+  };
   return finishMelee(
     state,
     {
@@ -164,6 +184,31 @@ export function resolveMeleeOpposedAction(
     },
     next,
   );
+}
+
+/** The weapon leaves the hand and lies on the floor (ruling 108: picked up where it fell). */
+function knockOut(state: CombatActionState, weaponId: string): CombatActionState {
+  const ranged = state.weapons[weaponId];
+  if (ranged)
+    return {
+      ...state,
+      weapons: {
+        ...state.weapons,
+        [weaponId]: { ...ranged, readied: false, braced: false, dropped: true },
+      },
+    };
+  const melee = requireMelee(state);
+  const blade = melee.weapons[weaponId]!;
+  return {
+    ...state,
+    melee: {
+      ...melee,
+      weapons: {
+        ...melee.weapons,
+        [weaponId]: { ...blade, held: false, readied: false, dropped: true },
+      },
+    },
+  };
 }
 
 export interface BreakthroughRequest extends ActionRequest {

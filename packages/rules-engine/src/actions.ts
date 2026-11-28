@@ -19,6 +19,7 @@ import {
 } from './action-resources.js';
 import { integer } from './validation.js';
 import { resolveModifiers } from './context.js';
+import { clearBraces } from './weapon-actions.js';
 
 export function resolveCombatAction(
   state: CombatActionState,
@@ -48,6 +49,7 @@ export function resolveCombatAction(
     'quick-aim': 1,
     'careful-aim': 2,
     wait: 1,
+    'free-action': 0,
   };
   const cost = costs[request.type];
   if (cost === undefined) throw new Error('Action requires its dedicated resolver');
@@ -68,7 +70,13 @@ export function resolveCombatAction(
         .reduce((n, m) => n + m.value, 0)
     : 0;
   integer(cost + equipmentOd, 'equipment-adjusted action cost', 0);
-  const action = definition(request.type, cost + equipmentOd, reactionCost);
+  // «Первоклассный стрелок»: an aim as the turn's Free Action (ruling 134).
+  const freeAim =
+    (request.type === 'quick-aim' || request.type === 'careful-aim') &&
+    (request as { readonly freeAim?: boolean }).freeAim === true;
+  const action = freeAim
+    ? definition('free-action', 0, 0)
+    : definition(request.type, cost + equipmentOd, reactionCost);
   const own =
     state.session.phase === 'turn-active' &&
     state.session.activeActor?.actorId === request.actor.actorId;
@@ -76,19 +84,25 @@ export function resolveCombatAction(
   validateResources(state, request, action, context, window);
   // Non-random actions never consume the supplied RNG.
   void source;
+  const speed = effectiveMovement(actor);
+  if (speed.crawling && (request.type === 'run' || request.type === 'sprint'))
+    throw new Error('Run and Sprint are unavailable while crawling');
+  const skr = speed.value;
   const distance =
     request.type === 'free-move'
-      ? Math.min(5, Math.ceil(actor.movement / 2))
+      ? Math.min(5, Math.ceil(skr / 2))
       : request.type === 'half-move'
-        ? actor.movement
+        ? skr
         : request.type === 'full-move'
-          ? actor.movement * 2
+          ? skr * 2
           : request.type === 'run'
-            ? actor.movement * 6
+            ? skr * 6
             : request.type === 'sprint'
-              ? actor.movement * 12
+              ? skr * 12
               : 0;
-  const fatigueAdded = request.type === 'sprint' ? 2 : 0;
+  // «Бой» A46: Sprint +2 Fatigue; talent «Спринт» — 1 (author ruling 26).
+  const fatigueAdded =
+    request.type === 'sprint' ? ((actor.talents ?? []).includes('Спринт') ? 1 : 2) : 0;
   integer(actor.fatigue + fatigueAdded, 'resulting fatigue', 0);
   if (!Number.isFinite(distance)) throw new RangeError('Invalid movement result');
   const posture =
@@ -107,6 +121,8 @@ export function resolveCombatAction(
     posture,
     fatigue: actor.fatigue + fatigueAdded,
   });
+  if (['free-move', 'half-move', 'full-move', 'run', 'sprint'].includes(request.type))
+    next = clearBraces(next, request.actor.actorId);
   const logs = [actionLog(state, spent.execution)];
   if (request.type === 'quick-aim' || request.type === 'careful-aim') {
     next = updateActor(next, {
@@ -152,9 +168,44 @@ export function resolveCombatAction(
   return { state: next, execution, result: { distance, fatigueAdded, posture }, logs };
 }
 
+/**
+ * Current СКР for movement: wound penalties (`combat-modifier: movement`) are subtracted first;
+ * a result of 0 or less counts as 0.5 m («Общая механика» A25). Prone or with a useless leg the
+ * character crawls: the same movement actions from СКР / 2, without Run and Sprint («Раны и
+ * лечение» A9, A14; author rulings 4 and 15). Halving is applied once.
+ */
+export function effectiveMovement(actor: CombatActionState['actors'][string]): {
+  readonly value: number;
+  readonly penalty: number;
+  readonly crawling: boolean;
+} {
+  const own = actor.effects.filter((e) => e.targetActor.actorId === actor.actor.actorId);
+  const penalty = own
+    .filter(
+      (e) =>
+        e.definition.target.kind === 'combat-modifier' && e.definition.target.key === 'movement',
+    )
+    .reduce((total, e) => total + e.definition.value, 0);
+  const uselessLeg = own.some(
+    (e) =>
+      e.definition.target.kind === 'permission' &&
+      e.definition.operation === 'restrict' &&
+      (e.definition.condition?.requiresTags ?? []).some((t) => /^uses-limb:.*Leg$/.test(t)),
+  );
+  const crawling = actor.posture === 'prone' || uselessLeg;
+  let value = actor.movement + penalty;
+  if (value <= 0) value = 0.5;
+  if (crawling) value = Math.max(0.5, value / 2);
+  return { value, penalty, crawling };
+}
+
 export function clearMalfunction(
   state: CombatActionState,
-  request: ActionRequest & { readonly weaponId: string },
+  request: ActionRequest & {
+    readonly weaponId: string;
+    /** «Знаток Стаб-/Болт-оружия»: clearing costs 1 round instead of the magazine (ruling 133). */
+    readonly oneRound?: boolean;
+  },
   source: DiceSource,
 ) {
   if (request.type !== 'clear-malfunction')
@@ -172,7 +223,11 @@ export function clearMalfunction(
     [],
     ['action:clear-malfunction'],
   );
-  const action = definition('clear-malfunction', 2);
+  // Talent «Ритуал освобождения (Тех-трюк)»: clearing a jam takes 1 ОД.
+  const ritual = (state.actors[request.actor.actorId]?.talents ?? []).includes(
+    'Ритуал освобождения (Тех-трюк)',
+  );
+  const action = definition('clear-malfunction', ritual ? 1 : 2);
   validateResources(state, request, action, context, 'own-turn');
   const characteristic = resolveCharacteristic('НС', actor.characteristics.НС, context);
   const check = resolveCheck(
@@ -185,9 +240,24 @@ export function clearMalfunction(
   );
   const spent = spendResources(state, request, action, context, 'own-turn');
   const cleared = check.result.outcome === 'success';
+  // Ruling 133: a cleared jam empties the magazine; with the talent only one round is lost.
+  const container = weapon.loadedContainerId
+    ? spent.state.containers[weapon.loadedContainerId]
+    : undefined;
   const next = {
     ...spent.state,
     weapons: { ...state.weapons, [weapon.id]: { ...weapon, jammed: !cleared } },
+    ...(cleared && container
+      ? {
+          containers: {
+            ...spent.state.containers,
+            [container.id]: {
+              ...container,
+              currentRounds: request.oneRound ? Math.max(0, container.currentRounds - 1) : 0,
+            },
+          },
+        }
+      : {}),
   };
   const mutation = {
     type: 'jam-clear',

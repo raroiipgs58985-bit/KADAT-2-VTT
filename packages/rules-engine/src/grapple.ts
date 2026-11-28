@@ -264,7 +264,7 @@ export function resolveGrappleAction(
     );
     opposed = check.result;
     won = opposed.winner?.actorId === request.actor.actorId;
-    degrees = opposed.attackerCheck.totalDegrees + opposed.sizeDegrees.attacker;
+    degrees = won ? (opposed.winnerDegrees ?? 0) : 0;
     logs.push(...check.logs);
   } else if (request.type === 'grapple-slip') {
     const skill = melee.actors[request.actor.actorId]!.skills.acrobatics;

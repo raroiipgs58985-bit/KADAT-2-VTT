@@ -74,12 +74,24 @@ export function resolveWoundTurnStart(
     for (const trigger of injury.triggers.filter(
       (t) => t.kind === 'turn-start-VN' && !t.consumed,
     )) {
-      const checked = resolveWoundCheck(next, 'ВН', context, tape.source, {
+      let checked = resolveWoundCheck(next, 'ВН', context, tape.source, {
         id: `turn:${injury.id}:VN`,
         value: 0,
         provenance: trigger.provenance,
       });
       logs.push(checked.characteristicLog, checked.log);
+      // Talent «Железная челюсть»: a ВН+0 test saves from being stunned (ruling 126).
+      if (
+        checked.result.outcome !== 'success' &&
+        (next.combat.actors[actor.actorId]?.talents ?? []).includes('Железная челюсть')
+      ) {
+        checked = resolveWoundCheck(next, 'ВН', context, tape.source, {
+          id: `turn:${injury.id}:VN:iron-jaw`,
+          value: 0,
+          provenance: trigger.provenance,
+        });
+        logs.push(checked.characteristicLog, checked.log);
+      }
       if (checked.result.outcome !== 'success') {
         const conditionId = `${id}:${injury.id}:stunned`;
         const isArm = injury.consequence.zone === 'ARM';

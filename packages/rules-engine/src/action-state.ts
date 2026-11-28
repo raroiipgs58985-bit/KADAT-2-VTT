@@ -61,6 +61,8 @@ export function clearTransient(
     fatigue: actor.fatigue,
     posture: actor.posture,
     effects: actor.effects,
+    // Talents are part of the character, never a transient of the turn.
+    ...(actor.talents ? { talents: actor.talents } : {}),
     ...(actor.aim && !keys.includes('aim') ? { aim: actor.aim } : {}),
     ...(actor.wait && !keys.includes('wait') ? { wait: actor.wait } : {}),
     ...(actor.overwatch && !keys.includes('overwatch') ? { overwatch: actor.overwatch } : {}),

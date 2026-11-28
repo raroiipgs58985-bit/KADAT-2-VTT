@@ -11,6 +11,7 @@ import { resolveEffects } from './context.js';
 import { resolveCharacteristic } from './characteristics.js';
 import { resolveCheck } from './checks.js';
 import { integer } from './validation.js';
+import { clearTransient, updateActor } from './action-state.js';
 
 export function prepareDodge(state: CombatActionState, request: ActionRequest, dodgeable: boolean) {
   if (request.type !== 'dodge' || !dodgeable) throw new Error('Incoming action is not dodgeable');
@@ -63,8 +64,15 @@ export function resolveDodge(
     cancelledHits,
     survivingHits: generatedHits - cancelledHits,
   };
+  // A Dodge loses aiming and Overwatch; talent «Несбиваемый прицел» keeps them (ruling 129).
+  const dodger = spent.state.actors[request.actor.actorId];
+  const steady = (dodger?.talents ?? []).includes('Несбиваемый прицел');
+  const next =
+    dodger && !steady && (dodger.aim || dodger.overwatch)
+      ? updateActor(spent.state, clearTransient(dodger, ['aim', 'overwatch']))
+      : spent.state;
   return {
-    state: spent.state,
+    state: next,
     execution: spent.execution,
     result,
     logs: [prepared.characteristic.log, check.log, actionLog(state, spent.execution)],

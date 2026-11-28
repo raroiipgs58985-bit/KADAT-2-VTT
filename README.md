@@ -6,18 +6,26 @@ KADAT 2 — разрабатываемая браузерная платформ
 
 ## Статус
 
-**Early development / wound consequences foundation — Phase 2.2C-2.**
+**Early development — локальный VTT для боя по правилам KADAT, без сервера.**
+План — в [ПЛАН-РАЗРАБОТКИ.md](ПЛАН-РАЗРАБОТКИ.md).
 
-Создан минимальный TypeScript workspace: техническая стартовая страница
-клиента и сервер с `GET /health`. В общих пакетах реализован deterministic
-rules kernel: характеристики, проверки, броски, инициатива, раунды и Stunned.
-Поверх ядра добавлены действия, Wait, Overwatch и дистанционная атака с Dodge
-до выдачи неразрешённых HitRecords. Добавлены melee action/reaction,
-стойки, хваты, техники и Grapple. Добавлен protection/damage pipeline до
-`finalDamage`: поля, выбор совместимой защиты, cover, BB и текущий bVN.
-Добавлены source-linked последствия ранений, Injury, Bleeding/Blood, Fatigue,
-Agony/Death и combat-facing stabilization. Игровой интерфейс ещё не реализован.
-Realtime, renderer, база данных, аутентификация и CI не подключены.
+- **Rules Engine** — Infantry Rules Kernel, сверенный с каноном
+  ([СВЕРКА-ЯДРА.md](СВЕРКА-ЯДРА.md)) и дополненный решениями автора
+  ([ВОПРОСЫ-ПО-ПРАВИЛАМ.md](ВОПРОСЫ-ПО-ПРАВИЛАМ.md)): проверки, инициатива,
+  ОД, движение, дальний и ближний бой, реакции, захват, броня и урон, ранения,
+  кровь, подавление, свойства оружия, таланты, гранаты, укрытия.
+- **Клиент** (`apps/client`) — тактическая сцена: карта до 200 × 200 с
+  редактором (подложка, декорации, стены, двери и окна, препятствия, зоны
+  трудного ландшафта, файл `*.kadat-map.json`); бой любого состава из
+  библиотеки персонажей с оружием и бронёй из «Арсенала»; предварительный
+  порог атаки d100 через ядро; журнал и replay. На ПК — интерфейс «Планшет»
+  на KADAT 2 UI Kit, на телефоне — упрощённая вёрстка. Демо-локация — меню
+  «Сценарии» → «Демо: аванпост». Подробно —
+  [тактическая сцена](docs/tactical-scene-client.md) и
+  [редизайн интерфейса](docs/ui-redesign.md).
+- **Генератор персонажей** (`apps/generator`) — открывается из VTT и передаёт
+  персонажа в библиотеку ([ADR 0006](docs/adr/0006-character-generator-in-monorepo.md)).
+- Realtime, сервер боя, база данных, аутентификация и CI не подключены.
 
 ## Основные принципы
 
@@ -32,8 +40,10 @@ Realtime, renderer, база данных, аутентификация и CI н
   не определяет игровые правила.
 - Неизвестные правила требуют уточнения; предложения не становятся
   утверждёнными решениями автоматически.
-- Новый проект развивается с нуля. Использование старых реализаций как
-  справочных материалов требует отдельного решения пользователя.
+- KADAT 2 — собственная VTT под правила KADAT. Чужой код можно встраивать
+  при совместимой лицензии и с указанием авторства
+  ([ADR 0004](docs/adr/0004-own-vtt-and-code-reuse.md)); источником правил
+  он не становится.
 
 ## Техническое направление
 
@@ -46,11 +56,14 @@ Node.js LTS + Fastify для сервера и независимый Rules Engi
 
 ```text
 apps/
-  client/          React + TypeScript + Vite bootstrap
+  client/          React + TypeScript + Vite: тактическая сцена (src/game, src/ui, src/ui/kit)
+  generator/       генератор персонажей (статическое приложение, /generator/)
   server/          Fastify bootstrap и health endpoint
 packages/
+  canonical-data/  снимки канонических таблиц («Арсенал», профили) и их импорт
   contracts/       независимые domain contracts kernel
   rules-engine/    deterministic resolvers и unit tests
+experiments/       прежний прототип локального боя Келус — Пак
 docs/              документация проекта
 ```
 
@@ -74,19 +87,32 @@ pnpm install --frozen-lockfile
 
 Если используется Corepack, команды можно запускать как `corepack pnpm ...`.
 
+## Быстрый запуск на Windows
+
+1. Установите [Node.js 24.19.0](https://nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi)
+   (версии 25 и новее проект не поддерживает) и Git.
+2. Дважды щёлкните `KADAT.cmd` в папке проекта. Файл скачает обновление
+   ветки (`git pull --ff-only`, если папка — клон Git), проверит версию Node,
+   установит зависимости по lockfile через Corepack (права администратора
+   не нужны) и откроет тактическую сцену на http://127.0.0.1:5173.
+3. Чтобы остановить, закройте окно командной строки.
+
+Проверка текущего этапа — по шагам в [ПРОВЕРКА-ЭТАПА.md](ПРОВЕРКА-ЭТАПА.md).
+Открытые вопросы по правилам — в [ВОПРОСЫ-ПО-ПРАВИЛАМ.md](ВОПРОСЫ-ПО-ПРАВИЛАМ.md).
+
 ## Команды из корня репозитория
 
-| Команда             | Назначение                                               |
-| ------------------- | -------------------------------------------------------- |
-| `pnpm typecheck`    | Проверка типов всех четырёх workspace пакетов            |
-| `pnpm lint`         | ESLint для исходников и конфигураций                     |
-| `pnpm format`       | Форматирование Prettier                                  |
-| `pnpm format:check` | Проверка форматирования                                  |
-| `pnpm test`         | Запуск Vitest во всех workspace пакетах                  |
-| `pnpm build`        | Production сборка клиента, сервера и обоих общих пакетов |
-| `pnpm dev:client`   | Локальный Vite dev server                                |
-| `pnpm dev:server`   | Локальный сервер с перезапуском при изменениях           |
-| `pnpm start:server` | Запуск собранного сервера после `pnpm build`             |
+| Команда             | Назначение                                         |
+| ------------------- | -------------------------------------------------- |
+| `pnpm typecheck`    | Проверка типов workspace пакетов                   |
+| `pnpm lint`         | ESLint для исходников и конфигураций               |
+| `pnpm format`       | Форматирование Prettier                            |
+| `pnpm format:check` | Проверка форматирования                            |
+| `pnpm test`         | Запуск Vitest во всех workspace пакетах            |
+| `pnpm build`        | Production сборка клиента, сервера и общих пакетов |
+| `pnpm dev:client`   | Тактическая сцена на http://127.0.0.1:5173         |
+| `pnpm dev:server`   | Локальный сервер с перезапуском при изменениях     |
+| `pnpm start:server` | Запуск собранного сервера после `pnpm build`       |
 
 Сервер по умолчанию слушает `127.0.0.1:3000`. `HOST` и `PORT` позволяют
 переопределить адрес. `GET /health` возвращает `{"status":"ok"}`.
@@ -94,9 +120,10 @@ pnpm install --frozen-lockfile
 Есть технический тест health endpoint через Fastify injection и deterministic
 unit tests Rules Engine. Отдельный запуск ядра:
 `pnpm --filter @kadat/rules-engine test`. Отсутствие тестов в Rules Engine
-больше не допускается. Клиент и contracts пока используют `--passWithNoTests`.
+больше не допускается. Клиент тестирует слой игры (`apps/client/src/game`); contracts пока
+используют `--passWithNoTests`.
 Typecheck Rules Engine также проверяет тесты и предварительно собирает
-объявления contracts. Playwright отложен до браузерного функционала.
+объявления contracts. Браузерная проверка клиента — `node apps/client/scripts/browser-smoke.mjs [адрес] [папка снимков]` (Playwright, Chromium) при запущенном `pnpm dev:client`.
 
 ## Документация
 
@@ -108,4 +135,6 @@ Typecheck Rules Engine также проверяет тесты и предва�
 - [Ближний бой и Grapple Phase 2.2B-2](docs/infantry-melee-actions.md).
 - [Защита и урон Phase 2.2C-1](docs/infantry-protection-damage.md).
 - [Последствия ранений Phase 2.2C-2](docs/infantry-wound-consequences.md).
+- [Тактическая сцена клиента](docs/tactical-scene-client.md).
+- [Редизайн интерфейса и KADAT 2 UI Kit](docs/ui-redesign.md).
 - [Назначение Architecture Decision Records](docs/adr/README.md).

@@ -23,6 +23,28 @@ import { prepareDodge, resolveDodge } from './dodge.js';
 import { calledModifiers, resolveHitLocations, reverseAttackRoll } from './hit-locations.js';
 import { resolveRange } from './range.js';
 import { validateAmmunition } from './weapons.js';
+import { effectiveMovement } from './actions.js';
+import {
+  aimGivesBonus,
+  ammoForAttack,
+  attackTestModifiers,
+  hasTrait,
+  isMalfunction,
+  stormHits,
+} from './weapon-properties.js';
+
+const isBasic = (weaponClass: string) => ['ОС', 'BASIC'].includes(weaponClass);
+const isHeavy = (weaponClass: string) => ['ТО', 'HEAVY'].includes(weaponClass);
+/**
+ * Talent «Бугрящиеся бицепсы» («Профили персонажей», «Таланты (обновлены)», стр. 55): fires a
+ * heavy weapon «с рук» without penalties — as if it stood on a support.
+ */
+export const HEAVY_FROM_HANDS_TALENT = 'Бугрящиеся бицепсы';
+/** The follow-up shot of the same attack action (second weapon or next wide-arc target). */
+const followupOf = (request: RangedAttackRequest) =>
+  request.wideArc?.primaryId ?? request.dualWield?.primaryId;
+const advanceModifier = { 'half-move': 0, 'full-move': -10, charge: -20 } as const;
+const advanceMultiplier = { 'half-move': 1, 'full-move': 2, charge: 3 } as const;
 
 export interface OverwatchEvent {
   readonly actionId: string;
@@ -61,6 +83,11 @@ export function validateOverwatchTrigger(
     throw new Error('Overwatch selected attack mismatch');
 }
 
+/** Wide arc: the rate of fire counts 2 lower for hits; ammo spent stays the same. */
+function hitCap(request: RangedAttackRequest): number {
+  return request.wideArc ? Math.max(0, request.shotsRequested - 2) : request.shotsRequested;
+}
+
 export function prepareRangedAttack(
   state: CombatActionState,
   request: RangedAttackRequest,
@@ -85,7 +112,37 @@ export function prepareRangedAttack(
     ? state.containers[weapon.loadedContainerId]
     : undefined;
   if (!container) throw new Error('No loaded ammunition container');
-  const effective = validateAmmunition(weapon, container, request.mode, request.shotsRequested);
+  const followup = followupOf(request);
+  if (followup) {
+    if (!state.session.turn?.flags.includes(`attack:${followup}`))
+      throw new Error('Follow-up shot requires its primary attack in this turn');
+    if (request.tacticalAdvance) throw new Error('Tactical advance cannot be a follow-up shot');
+  }
+  if (request.wideArc && request.dualWield)
+    throw new Error('Wide arc and two weapons do not combine');
+  // A wide-arc follow-up reuses the burst already paid for: ammo is spent once.
+  const effective = validateAmmunition(
+    weapon,
+    request.wideArc?.primaryId
+      ? { ...container, currentRounds: container.currentRounds + request.shotsRequested }
+      : container,
+    request.mode,
+    request.shotsRequested,
+  );
+  const traits = weapon.template.traits ?? [];
+  const ammoNeeded = request.wideArc?.primaryId ? 0 : ammoForAttack(traits, request.shotsRequested);
+  if (ammoNeeded > container.currentRounds) throw new Error('Insufficient ammunition');
+  const weaponClass = effective.profile.weaponClass;
+  const fromHands = (actor.talents ?? []).includes(HEAVY_FROM_HANDS_TALENT);
+  const supported = !!weapon.braced || fromHands;
+  if (isHeavy(weaponClass) && !supported && request.mode !== 'single')
+    throw new Error('Unbraced heavy weapon cannot fire bursts');
+  if (request.wideArc) {
+    if (request.mode === 'single') throw new Error('Wide arc requires a burst');
+    const maxShots = effective.profile.modes.find((m) => m.mode === request.mode)?.maxShots ?? 0;
+    if (maxShots <= 3 && effective.profile.classification !== 'energy-beam')
+      throw new Error('Wide arc requires a rate of fire above 3');
+  }
   if (effective.profile.malfunction !== 'generic-jam')
     throw new Error('Item-specific malfunction requires authored property handling');
   const called = request.type === 'called-attack';
@@ -99,17 +156,46 @@ export function prepareRangedAttack(
   if (!called && request.calledLocation)
     throw new Error('Ordinary attack cannot select a location');
   const range = resolveRange(request.distance, effective.profile.optimalRange);
+  const familyModifier = effective.profile.modeModifiers?.[request.mode];
   const modeModifier =
-    request.mode === 'single'
-      ? 10
-      : request.mode === 'full-auto' && effective.profile.classification === 'kinetic'
-        ? -10
-        : 0;
+    familyModifier !== undefined
+      ? familyModifier
+      : request.mode === 'single'
+        ? 10
+        : request.mode === 'full-auto' && effective.profile.classification === 'kinetic'
+          ? -10
+          : 0;
+  const dualTalent = (actor.talents ?? []).includes('Парное оружие (Стрелковое)');
   const modifiers = [
     ...request.context.modifiers,
     ruleModifier('ranged:range', range.modifier),
     ruleModifier('ranged:mode', modeModifier),
-    ...(actor.aim ? [ruleModifier('ranged:aim', actor.aim.modifier)] : []),
+    ...(request.oneHanded && isBasic(weaponClass) ? [ruleModifier('ranged:one-handed', -20)] : []),
+    ...(isHeavy(weaponClass) && !supported ? [ruleModifier('ranged:unbraced-heavy', -30)] : []),
+    ...(request.tacticalAdvance
+      ? [
+          ruleModifier(
+            'ranged:tactical-advance',
+            advanceModifier[request.tacticalAdvance.movementMode],
+          ),
+        ]
+      : []),
+    ...(request.dualWield && !dualTalent
+      ? [
+          ruleModifier(
+            'ranged:two-weapons',
+            (actor.talents ?? []).includes('Амбидекстрия') ? -20 : -30,
+          ),
+        ]
+      : []),
+    ...(actor.aim && aimGivesBonus(traits) ? [ruleModifier('ranged:aim', actor.aim.modifier)] : []),
+    ...attackTestModifiers(traits, {
+      kind: 'ranged',
+      aimed: Boolean(actor.aim),
+      mode: request.mode,
+      distance: request.distance,
+      optimalRange: effective.profile.optimalRange,
+    }).map((m) => ruleModifier(`property:${m.property}`, m.value)),
     ...(called && request.calledLocation
       ? [ruleModifier('ranged:called', calledModifiers[request.calledLocation])]
       : []),
@@ -188,7 +274,25 @@ export function prepareRangedAttack(
     state.session.activeActor?.actorId === request.actor.actorId;
   const window: ActionWindow = event ? 'overwatch' : own ? 'own-turn' : 'wait';
   if (event) validateOverwatchTrigger(state, request, event);
-  const action = definition(request.type, event ? 0 : called ? 2 : 1, event ? 1 : 0, true);
+  if (request.tacticalAdvance && (called || event)) throw new Error('Invalid tactical advance');
+  const speed = effectiveMovement(actor);
+  if (
+    request.tacticalAdvance &&
+    speed.crawling &&
+    request.tacticalAdvance.movementMode === 'charge'
+  )
+    throw new Error('Charge is unavailable while crawling');
+  const movementDistance = request.tacticalAdvance
+    ? speed.value * advanceMultiplier[request.tacticalAdvance.movementMode]
+    : undefined;
+  const action = followup
+    ? definition(request.type, 0, 0, false)
+    : definition(
+        request.type,
+        event ? 0 : request.tacticalAdvance ? 2 : called ? 2 : 1,
+        event ? 1 : 0,
+        true,
+      );
   validateResources(state, request, action, context, window);
   const characteristic = resolveCharacteristic('НС', actor.characteristics.НС, context);
   const dodgeRequest: ActionRequest | null = request.dodge
@@ -197,7 +301,15 @@ export function prepareRangedAttack(
         type: 'dodge',
         actor: request.target,
         target: request.actor,
-        context: request.dodge.context,
+        context: request.wideArc
+          ? {
+              ...request.dodge.context,
+              modifiers: [
+                ...request.dodge.context.modifiers,
+                ruleModifier('ranged:wide-arc-dodge', -20),
+              ],
+            }
+          : request.dodge.context,
       }
     : null;
   if (dodgeRequest) {
@@ -216,6 +328,9 @@ export function prepareRangedAttack(
     action,
     characteristic,
     dodgeRequest,
+    movementDistance,
+    traits,
+    ammoNeeded,
   };
 }
 
@@ -235,15 +350,29 @@ export function resolveRangedAttack(
     },
     source,
   );
-  const malfunction = check.result.rawRoll >= 96;
-  const hitsGenerated =
-    check.result.outcome !== 'success' || malfunction
+  // Default 96+; «Надежное» 100, «Ненадежное» 81+ (ruling 69).
+  // «Перегрев» (ruling 137): on 91+ (talent: 99+) the weapon does not fire at all.
+  const overheated =
+    hasTrait(prepared.traits, 'Перегрев') && check.result.rawRoll >= (request.overheatFrom ?? 91);
+  const malfunction = !overheated && isMalfunction(prepared.traits, check.result.rawRoll);
+  // «Шквал лазогня»: +1 degree for burst hits, only on a success (ruling 127).
+  const burstDegrees =
+    check.result.totalDegrees + (request.mode !== 'single' ? (request.bonusDegrees ?? 0) : 0);
+  const baseHits =
+    check.result.outcome !== 'success' || malfunction || overheated
       ? 0
       : request.mode === 'single'
         ? 1
         : request.mode === 'short-burst'
-          ? Math.min(request.shotsRequested, 1 + Math.floor(check.result.totalDegrees / 2))
-          : Math.min(request.shotsRequested, check.result.totalDegrees);
+          ? Math.min(hitCap(request), 1 + Math.floor(burstDegrees / 2))
+          : Math.min(hitCap(request), burstDegrees);
+  // «Шторм (Х)»: +Х hits per degree, never above the declared rate (rulings 66, 70).
+  const hitsGenerated = stormHits(prepared.traits, {
+    mode: request.mode,
+    baseHits,
+    degrees: check.result.totalDegrees,
+    declaredShots: hitCap(request),
+  });
   const spent = spendResources(state, request, prepared.action, prepared.context, prepared.window);
   let next = spent.state;
   const logs = [prepared.characteristic.log, check.log];
@@ -289,10 +418,16 @@ export function resolveRangedAttack(
     context: prepared.context,
     provenance: prepared.effective.provenance,
   }));
-  const nextWeapon = { ...prepared.weapon, jammed: malfunction };
+  const ammoSpent = overheated ? 0 : prepared.ammoNeeded;
+  const nextWeapon = {
+    ...prepared.weapon,
+    jammed: malfunction,
+    // Moving during a tactical advance takes a heavy weapon off its support (ruling 41).
+    ...(request.tacticalAdvance ? { braced: false } : {}),
+  };
   const nextContainer = {
     ...prepared.container,
-    currentRounds: prepared.container.currentRounds - request.shotsRequested,
+    currentRounds: prepared.container.currentRounds - ammoSpent,
   };
   next = {
     ...next,
@@ -340,9 +475,10 @@ export function resolveRangedAttack(
     modeModifier: prepared.modeModifier,
     aim: prepared.actor.aim ?? null,
     shotsRequested: request.shotsRequested,
-    shotsFired: request.shotsRequested,
-    ammoSpent: request.shotsRequested,
+    shotsFired: overheated ? 0 : request.shotsRequested,
+    ammoSpent,
     malfunction,
+    ...(overheated ? { overheated } : {}),
     jammed: nextWeapon.jammed,
     hitsGenerated,
     dodge: dodge?.result ?? null,
@@ -354,6 +490,9 @@ export function resolveRangedAttack(
         ? reverseAttackRoll(check.result.rawRoll)
         : null,
     hits,
+    ...(prepared.movementDistance !== undefined
+      ? { movementDistance: prepared.movementDistance }
+      : {}),
   };
   logs.push({
     ...actionLog(state, execution),

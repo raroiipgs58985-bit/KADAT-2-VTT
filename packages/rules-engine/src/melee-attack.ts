@@ -21,6 +21,7 @@ import {
   meleeSource,
 } from './melee-profile.js';
 import { requireMelee, updateMeleeActor } from './melee-state.js';
+import { swiftAttackAllowed } from './weapon-properties.js';
 import {
   meleeCharacteristic,
   meleeContext,
@@ -30,13 +31,14 @@ import {
 } from './melee-context.js';
 import {
   prepareMeleeDodge,
-  resolveMeleeDodge,
+  resolveMeleeDodgeHits,
   prepareParry,
   resolveParry,
 } from './melee-reactions.js';
 import { calledModifiers, firstHitLocation } from './hit-locations.js';
 import { resolveCheck } from './checks.js';
 import { rollDie } from './dice.js';
+import { isMalfunction } from './weapon-properties.js';
 import { resolutionLog, sessionLog } from './log.js';
 import { clearTransient, updateActor } from './action-state.js';
 import { opposedMeleeCheck } from './melee-opposed.js';
@@ -102,7 +104,19 @@ export function prepareMeleeAttack(state: CombatActionState, request: MeleeAttac
     !(request.technique in meleeTechniques)
   )
     throw new Error('Invalid melee composition');
+  const talentFor = { swift: 'Стремительная атака', lightning: 'Молниеносная атака' } as const;
+  if (
+    (request.base === 'swift' || request.base === 'lightning') &&
+    !(state.actors[request.actor.actorId]?.talents ?? []).includes(talentFor[request.base])
+  )
+    throw new Error(`The attack needs the talent «${talentFor[request.base]}»`);
   const weapon = requireHeldWeapon(state, request.actor, request.weaponId);
+  // «Громоздкое»: no swift attacks with this weapon.
+  if (
+    (request.base === 'swift' || request.base === 'lightning') &&
+    !swiftAttackAllowed(weapon.template.traits ?? [])
+  )
+    throw new Error('Unwieldy weapon cannot make swift attacks');
   const composition = composeMeleeProfile(weapon, actor.grip, request.technique);
   if (
     request.targets.length === 0 ||
@@ -234,7 +248,14 @@ export function prepareMeleeAttack(state: CombatActionState, request: MeleeAttac
       cost = 2;
     }
   } else throw new Error('Unsupported melee action origin');
-  const canonicalAction = meleeDefinition('melee-attack', cost, true);
+  const followup = request.dualWield?.primaryId;
+  if (followup) {
+    if (window !== 'own-turn' || !state.session.turn?.flags.includes(`attack:${followup}`))
+      throw new Error('Follow-up blow requires its primary attack in this turn');
+    if (request.base === 'charge') throw new Error('Charge cannot be a follow-up blow');
+    cost = 0;
+  }
+  const canonicalAction = meleeDefinition('melee-attack', cost, !followup);
   const action = {
     ...canonicalAction,
     prerequisites: [
@@ -258,6 +279,17 @@ export function prepareMeleeAttack(state: CombatActionState, request: MeleeAttac
     meleeModifier('melee:base', baseModifier),
     meleeModifier('melee:technique', meleeTechniques[request.technique].nr),
     meleeModifier('melee:grip', composition.nrModifier),
+    ...(request.dualWield &&
+    !(state.actors[request.actor.actorId]!.talents ?? []).includes('Парное оружие (Рукопашное)')
+      ? [
+          meleeModifier(
+            'melee:two-weapons',
+            (state.actors[request.actor.actorId]!.talents ?? []).includes('Амбидекстрия')
+              ? -20
+              : -30,
+          ),
+        ]
+      : []),
     ...(opportunity ? [meleeModifier('melee:counterattack', opportunity.modifier)] : []),
     ...(request.calledLocation
       ? [meleeModifier('melee:called', calledModifiers[request.calledLocation])]
@@ -382,18 +414,39 @@ export function resolveMeleeAttack(
       dice: [],
       baseValues: { ...check.log.baseValues, sharedAttackRawRoll: raw.value },
     });
+    // Swift / lightning attacks land several hits; avoidance works as against a burst (ruling 130).
+    const generated =
+      check.result.outcome !== 'success'
+        ? 0
+        : request.base === 'swift'
+          ? 1 + Math.floor(check.result.totalDegrees / 2)
+          : request.base === 'lightning'
+            ? Math.max(
+                1,
+                Math.min(
+                  1 + check.result.totalDegrees,
+                  meleeCharacteristic(state, request.actor, 'НР', entry.context).result.finalBonus,
+                ),
+              )
+            : 1;
     let avoidance: MeleeAttackResult['targets'][number]['avoidance'] = null;
     if (check.result.outcome === 'success' && entry.avoidance) {
       const defense =
         entry.avoidance.type === 'parry'
-          ? resolveParry(next, entry.avoidance, 1, source)
-          : resolveMeleeDodge(next, entry.avoidance, entry.target.avoidance!.pool, source);
+          ? resolveParry(next, entry.avoidance, generated, source)
+          : resolveMeleeDodgeHits(
+              next,
+              entry.avoidance,
+              entry.target.avoidance!.pool,
+              generated,
+              source,
+            );
       next = defense.state;
       avoidance = defense.result;
       logs.push(...defense.logs);
     }
-    const survived =
-      check.result.outcome === 'success' && (!avoidance || avoidance.survivingHits === 1);
+    const hitCount = avoidance ? avoidance.survivingHits : generated;
+    const survived = check.result.outcome === 'success' && hitCount > 0;
     const intents: MeleeEffectIntent[] = [];
     let hit: MeleeHitRecord | null = null;
     if (survived) {
@@ -469,10 +522,13 @@ export function resolveMeleeAttack(
       chosenAvoidance: entry.avoidance?.type ?? null,
       avoidance,
       hit,
+      ...(hit && hitCount > 1 ? { hitCount } : {}),
       intents,
     });
   }
-  if (raw.value >= 96)
+  // Dropped on 96+; «Надежное» only 100, «Ненадежное» 81+ (ruling 69).
+  const dropped = isMalfunction(prepared.weapon.template.traits ?? [], raw.value);
+  if (dropped)
     next = {
       ...next,
       melee: {
@@ -520,7 +576,7 @@ export function resolveMeleeAttack(
     origin: request.origin,
     base: request.base,
     stance: prepared.actor.stance,
-    dropped: raw.value >= 96,
+    dropped,
     request,
     targets: results,
   };

@@ -2,3 +2,11 @@
 **/dist/
 **/coverage/
 pnpm-lock.yaml
+apps/client/src/game/fixtures/
+
+# Canonical data: snapshots and generated datasets stay byte-stable
+packages/canonical-data/sources/
+packages/canonical-data/dataset/
+
+# Character generator keeps its own Prettier settings and checks (apps/generator)
+apps/generator/

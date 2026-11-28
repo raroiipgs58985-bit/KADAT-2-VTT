@@ -1,7 +1,7 @@
 export { createSequenceDice, rollDice, rollDie } from './dice.js';
 export { resolveCharacteristic, halveCharacteristic } from './characteristics.js';
 export { resolveEffects, resolveModifiers } from './context.js';
-export { resolveCheck } from './checks.js';
+export { checkTarget, resolveCheck } from './checks.js';
 export { resolveDamageRoll } from './damage.js';
 export {
   createCombatSession,
@@ -18,14 +18,14 @@ export {
   beginActionRound,
   emptyActionContext,
 } from './action-state.js';
-export { resolveCombatAction, clearMalfunction } from './actions.js';
+export { resolveCombatAction, clearMalfunction, effectiveMovement } from './actions.js';
 export {
   activateOverwatch,
   orderOverwatchInterrupts,
   resolveOverwatchInterrupts,
 } from './overwatch.js';
 export type { OverwatchActivationRequest } from './overwatch.js';
-export { resolveRangedAttack } from './ranged.js';
+export { prepareRangedAttack, resolveRangedAttack, HEAVY_FROM_HANDS_TALENT } from './ranged.js';
 export type { OverwatchEvent } from './ranged.js';
 export { resolveDodge } from './dodge.js';
 export { resolveRange } from './range.js';
@@ -36,6 +36,7 @@ export { composeMeleeProfile, meleeBases, meleeTechniques } from './melee-profil
 export {
   changeMeleeStanceGrip,
   resolveMeleeOpposedAction,
+  DISARM_TALENT,
   resolveBreakthrough,
 } from './melee-actions.js';
 export type {
@@ -43,8 +44,13 @@ export type {
   MeleeOpposedActionRequest,
   BreakthroughRequest,
 } from './melee-actions.js';
-export { resolveMeleeAttack, resolveKnockdown, resolvePalisadeInterrupts } from './melee-attack.js';
-export { resolveParry, resolveMeleeDodge } from './melee-reactions.js';
+export {
+  prepareMeleeAttack,
+  resolveMeleeAttack,
+  resolveKnockdown,
+  resolvePalisadeInterrupts,
+} from './melee-attack.js';
+export { resolveParry, resolveMeleeDodge, COUNTERATTACK_TALENT } from './melee-reactions.js';
 export { resolveGrappleAction } from './grapple.js';
 export { prepareDamageExpression, rollAndTransformDamage } from './damage-transformations.js';
 export { resolveFieldProtection, coversLocation } from './field-protection.js';
@@ -67,7 +73,7 @@ export { planWoundCondition, removeWoundCondition } from './wound-conditions.js'
 export { resolveFatigueGain } from './wound-fatigue.js';
 export { bloodThresholds } from './wound-blood.js';
 export { resolveBleedingPulse } from './wound-bleeding.js';
-export { resolveWoundRoundEnd, resolveStabilization } from './wound-life.js';
+export { planDeath, resolveWoundRoundEnd, resolveStabilization } from './wound-life.js';
 export { resolvePostDamage, consequenceZoneFor } from './wound-resolution.js';
 export { resolveWoundAwareAction } from './wound-action-context.js';
 
@@ -93,8 +99,49 @@ export {
   suppressionTrigger,
   suppressionTargetAffected,
 } from './suppression-triggers.js';
-export { createSuppressionEquipmentState, resolveSuppression } from './suppression.js';
+export {
+  createSuppressionEquipmentState,
+  resolveSuppression,
+  STEEL_NERVE_TALENT,
+  FEARLESS_TALENT,
+} from './suppression.js';
 export {
   resolveSuppressionTurnStart,
   beginSuppressionEquipmentTurn,
 } from './suppression-lifecycle.js';
+export { opposedMeleeCheck } from './melee-opposed.js';
+export { FREE_ACTION_TYPES, usesFreeAction } from './action-resources.js';
+export {
+  braceWeapon,
+  clearBraces,
+  dropWeapon,
+  pickUpWeapon,
+  putInHand,
+  readyWeapon,
+  reloadWeapon,
+  QUICK_DRAW_TALENT,
+  AMBIDEXTROUS_TALENT,
+  transferWeapon,
+  twoHandedWeapon,
+  RAPID_RELOAD_TALENT,
+  type DropWeaponRequest,
+  type PickUpWeaponRequest,
+  type ReadyWeaponRequest,
+  resolveOverpenetration,
+  type BraceWeaponRequest,
+  type ReloadRequest,
+  type ReloadResult,
+} from './weapon-actions.js';
+export {
+  MELEE_CONDITIONS,
+  RANGED_CONDITIONS,
+  conditionModifiers,
+  type CombatCondition,
+} from './combat-conditions.js';
+export {
+  skillCheckValue,
+  type SkillCheckValue as SkillTestValue,
+  type SkillLevel,
+} from './skills.js';
+export * from './weapon-properties.js';
+export * from './talent-effects.js';

@@ -9,9 +9,23 @@ import type {
 } from './identity.js';
 import type { EffectDefinition, ResolutionContext } from './resolution.js';
 import type { CalledLocation, DodgeResult } from './ranged.js';
-import type { DamageProfileReference, PenetrationReference } from './weapons.js';
+import type {
+  DamageProfileReference,
+  PenetrationReference,
+  WeaponTraitReference,
+} from './weapons.js';
 
-export type MeleeBase = 'simple' | 'cautious' | 'reckless' | 'charge' | 'free' | 'called';
+export type MeleeBase =
+  | 'simple'
+  | 'cautious'
+  | 'reckless'
+  | 'charge'
+  | 'free'
+  | 'called'
+  /** Talent «Стремительная атака»: 1 ОД, НР+0, +1 hit per 2nd degree (ruling 130). */
+  | 'swift'
+  /** Talent «Молниеносная атака»: 1 ОД, НР−10, +1 hit per degree, at most бНР (ruling 130). */
+  | 'lightning';
 export type MeleeTechnique = 'normal' | 'wide-sweep' | 'stun' | 'knockdown' | 'grapple' | 'lunge';
 export type MeleeStance = 'standard' | 'defensive' | 'palisade';
 export type MeleeGrip = 'one-handed' | 'two-handed' | 'close' | 'fist' | 'mordhau';
@@ -44,6 +58,8 @@ export interface MeleeWeaponTemplate {
   readonly profile: MeleeProfile;
   readonly effects: readonly EffectDefinition[];
   readonly provenance: Provenance;
+  /** Arsenal properties applied by the rules engine («Свойства оружия»). */
+  readonly traits?: readonly WeaponTraitReference[];
 }
 
 export interface MeleeWeaponInstance {
@@ -53,6 +69,8 @@ export interface MeleeWeaponInstance {
   readonly held: boolean;
   readonly readied: boolean;
   readonly dropped: boolean;
+  /** Hangs on a sling or chain after being let go (ruling 81). */
+  readonly hanging?: boolean;
   readonly pattern?: MeleeContribution;
   readonly modifications: readonly MeleeContribution[];
   /** Explicit canonical substitute, not a guessed mace catalog entry. */
@@ -185,6 +203,11 @@ export interface MeleeAttackRequest extends ActionRequest {
   readonly calledLocation?: CalledLocation;
   readonly trigger?: MeleeTrigger;
   readonly opportunityId?: string;
+  /**
+   * Two weapons («Бой» H52–L56): one attack action, one roll per weapon (ruling 40); −30 without
+   * the talent «Парное оружие (Рукопашное)». The second weapon's blow names `primaryId`.
+   */
+  readonly dualWield?: { readonly primaryId?: string };
 }
 
 export interface ParryRequest extends ActionRequest {
@@ -243,6 +266,8 @@ export interface MeleeAttackResult {
     readonly chosenAvoidance: 'parry' | 'dodge' | null;
     readonly avoidance: ParryResult | DodgeResult | null;
     readonly hit: MeleeHitRecord | null;
+    /** Hits that got through (swift / lightning attacks may land several, ruling 130). */
+    readonly hitCount?: number;
     readonly intents: readonly MeleeEffectIntent[];
   }[];
 }
@@ -254,6 +279,10 @@ export interface OpposedResult {
   readonly defenderCheck: CheckResult;
   readonly sizeDegrees: { readonly attacker: number; readonly defender: number };
   readonly winner: ActorReference | null;
+  /** How the winner was decided («Общая механика» C5). */
+  readonly decidedBy: 'degrees' | 'characteristic-bonus' | 'super-threshold' | 'none';
+  /** Winner's effective degrees (1 when decided by the Super threshold rule); null without a winner. */
+  readonly winnerDegrees: number | null;
 }
 
 export type GrappleAction =

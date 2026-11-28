@@ -202,6 +202,8 @@ export interface WoundFacts {
   readonly activity?: BleedingActivity;
   readonly eyeCountBefore?: number;
   readonly consequenceZone?: ConsequenceZone;
+  /** «Калечащий удар / выстрел»: added to the critical consequence die (к10) when rolled. */
+  readonly criticalBonus?: number;
 }
 export interface BleedingPulseEntry {
   readonly source: BleedingSource;

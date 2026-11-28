@@ -89,7 +89,8 @@ export function resolvePostDamage(
     zone = consequenceZoneFor(input.location, request.facts?.consequenceZone),
     tape = woundDice(source, request.resumeDice);
   const die = damage.criticalConsequenceDiceCount === 1 ? rollDie(10, tape.source) : null;
-  const severity = damage.finalDamage! + (die?.value ?? 0);
+  const severity =
+    damage.finalDamage! + (die ? die.value + (request.facts?.criticalBonus ?? 0) : 0);
   integer(severity, 'consequence severity', 0);
   const damageTakenAfter = before.damageTaken + damage.finalDamage!;
   integer(damageTakenAfter, 'damageTaken after', 0);

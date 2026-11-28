@@ -4,7 +4,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig([
-  { ignores: ['**/node_modules/**', '**/dist/**', '**/coverage/**'] },
+  { ignores: ['**/node_modules/**', '**/dist/**', '**/coverage/**', 'apps/generator/**'] },
   {
     files: ['**/*.{js,mjs,cjs,ts,tsx}'],
     extends: [js.configs.recommended],
@@ -20,5 +20,10 @@ export default defineConfig([
   {
     files: ['*.mjs', '**/*.config.ts', 'apps/server/**/*.ts'],
     languageOptions: { globals: globals.node },
+  },
+  {
+    // Node scripts that drive a browser page (page.evaluate callbacks run in the browser).
+    files: ['apps/client/scripts/**/*.mjs'],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
   },
 ]);

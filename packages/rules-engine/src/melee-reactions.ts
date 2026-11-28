@@ -23,6 +23,9 @@ import {
 import { requireMelee, updateMeleeActor } from './melee-state.js';
 import { integer } from './validation.js';
 
+/** Talent «Контратака»: a counterattack after a parry with 1 degree of success. */
+export const COUNTERATTACK_TALENT = 'Контратака';
+
 function scopedReactionState(
   state: CombatActionState,
   actorId: string,
@@ -95,13 +98,23 @@ export function resolveMeleeDodge(
   pool: AvoidancePool,
   source: DiceSource,
 ) {
+  return resolveMeleeDodgeHits(state, request, pool, 1, source);
+}
+/** Dodge against several melee hits at once (swift / lightning attacks, ruling 130). */
+export function resolveMeleeDodgeHits(
+  state: CombatActionState,
+  request: ActionRequest,
+  pool: AvoidancePool,
+  hits: number,
+  source: DiceSource,
+) {
   const prepared = prepareMeleeDodge(state, request, pool);
   return restoreScopedReaction(
     state,
     resolveDodge(
       scopedReactionState(state, request.actor.actorId, pool),
       { ...request, context: prepared.context },
-      1,
+      hits,
       true,
       source,
     ),
@@ -224,8 +237,16 @@ export function resolveParry(
       effect.definition.target.permission === 'counterattack' &&
       effect.definition.operation === 'restrict',
   );
+  // Talent «Контратака»: the counterattack comes already at 1 degree of the parry instead of 3.
+  const counterDegrees = (state.actors[request.actor.actorId]?.talents ?? []).includes(
+    COUNTERATTACK_TALENT,
+  )
+    ? 1
+    : 3;
   const granted =
-    !prohibited && success && (close || check.result.totalDegrees >= 3 || effectGrant.length > 0);
+    !prohibited &&
+    success &&
+    (close || check.result.totalDegrees >= counterDegrees || effectGrant.length > 0);
   const melee = requireMelee(state);
   if (
     granted &&

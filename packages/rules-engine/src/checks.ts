@@ -4,7 +4,12 @@ import { rollDie } from './dice.js';
 import { resolutionLog } from './log.js';
 import { integer } from './validation.js';
 
-export function resolveCheck(request: CheckRequest, source: DiceSource): LoggedResult<CheckResult> {
+/**
+ * Target number of a check without a roll: applicable modifiers and check effects, the ±60 cap
+ * of the summed modifier (author ruling), base + modifier. Pure; `resolveCheck` uses it, so the
+ * formula lives in one place. Used by the client's attack preview (ADR 0007).
+ */
+export function checkTarget(request: CheckRequest) {
   integer(request.baseValue, 'check base value', 0);
   integer(request.finalSuper, 'check Super-characteristic', 0);
   const effectTraces = resolveEffects(request.context);
@@ -28,13 +33,18 @@ export function resolveCheck(request: CheckRequest, source: DiceSource): LoggedR
   const finalModifier = Math.max(-60, Math.min(60, rawModifierSum));
   const target = request.baseValue + finalModifier;
   integer(target, 'check target');
+  return { modifiers, rawModifierSum, finalModifier, target };
+}
+
+export function resolveCheck(request: CheckRequest, source: DiceSource): LoggedResult<CheckResult> {
+  const { modifiers, rawModifierSum, finalModifier, target } = checkTarget(request);
   const roll = rollDie(100, source);
   const criticalBand = roll.value <= 5 ? 'success' : roll.value >= 96 ? 'failure' : 'none';
   const success =
     criticalBand === 'success' || (criticalBand !== 'failure' && roll.value <= target);
   const rescued = criticalBand === 'success' && roll.value > target;
   const baseDegrees = rescued ? 1 : success ? 1 + Math.floor((target - roll.value) / 10) : 0;
-  const superDegrees = success && !rescued ? Math.ceil(request.finalSuper / 2) : 0;
+  const superDegrees = success && !rescued ? Math.floor(request.finalSuper / 2) : 0;
   const result: CheckResult = {
     rawRoll: roll.value,
     baseValue: request.baseValue,

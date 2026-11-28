@@ -9,7 +9,9 @@ export function suppressionEventFromRanged(input: SuppressionAttackSource): Supp
   const { result, weaponClass: _weaponClass, ...source } = input;
   void _weaponClass;
   integer(result.shotsFired, 'resolved shots', 0);
-  if (result.ammoSpent !== result.shotsFired)
+  // «Заряд (Х)» and «Шторм» spend more rounds than shots; a wide-arc follow-up spends none.
+  // Suppression counts shots («Бой» A12), never rounds.
+  if (result.ammoSpent !== 0 && result.ammoSpent < result.shotsFired)
     throw new Error('Inconsistent accepted firing quantity');
   return result.mode === 'single'
     ? {

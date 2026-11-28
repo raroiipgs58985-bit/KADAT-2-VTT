@@ -26,6 +26,8 @@ export const meleeBases: Readonly<Record<MeleeBase, Readonly<{ od: number; nr: n
     charge: Object.freeze({ od: 2, nr: 20 }),
     free: Object.freeze({ od: 0, nr: 0 }),
     called: Object.freeze({ od: 2, nr: 0 }),
+    swift: Object.freeze({ od: 1, nr: 0 }),
+    lightning: Object.freeze({ od: 1, nr: -10 }),
   });
 
 export const meleeTechniques: Readonly<

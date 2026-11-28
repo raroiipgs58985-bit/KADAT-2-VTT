@@ -28,7 +28,14 @@ export type CombatActionType =
   | 'change-stance-grip'
   | 'feint'
   | 'pressure'
+  | 'disarm'
   | 'breakthrough'
+  | 'free-action'
+  | 'reload'
+  | 'brace-weapon'
+  | 'ready-weapon'
+  | 'drop-weapon'
+  | 'pick-up-weapon'
   | GrappleAction;
 
 export interface ActionDefinition {
@@ -97,6 +104,8 @@ export interface CombatActorRuntime {
   readonly fatigue: number;
   readonly posture: 'standing' | 'prone' | 'kneeling';
   readonly effects: readonly EffectInstance[];
+  /** Canonical talent names that the engine reads directly (e.g. «Спринт»). */
+  readonly talents?: readonly string[];
   readonly aim?: AimState;
   readonly wait?: WaitState;
   readonly overwatch?: OverwatchState;

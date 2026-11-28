@@ -50,31 +50,12 @@ export function planFatigueGain(
       },
     },
   };
-  let blocked = false;
+  const blocked = false;
   if (gain.appliedFatigueGain > 0 && gain.fatigueAfter > bVN + bSV) {
     const roll = rollDie(10, source),
       amount = roll.value - bSV;
-    if (amount <= 0) {
-      blocked = true;
-      const intent = woundIntent(
-        `${id}:duration-required`,
-        'DurationInterpretationRequired',
-        actor,
-        provenance,
-        'Fatigue unconscious duration is literal 1d10-bSV; no minimum/conversion is inferred',
-        { duration: { unit: 'minute', amount }, details: { roll: roll.value, bSV } },
-      );
-      next = {
-        ...next,
-        actors: {
-          ...next.actors,
-          [actor.actorId]: {
-            ...next.actors[actor.actorId]!,
-            intents: [...next.actors[actor.actorId]!.intents, intent],
-          },
-        },
-      };
-    } else {
+    // Author ruling 33: 1к10 − бСВ ≤ 0 minutes — no unconsciousness.
+    if (amount > 0) {
       next = planWoundCondition(next, actor, `${id}:unconscious`, 'Unconscious', provenance, {
         unit: 'minute',
         amount,
