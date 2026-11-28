@@ -317,26 +317,30 @@ export function weaponTraits(w: ArsenalWeapon): {
       // «Сила (4+)» is the same as «Сила (4)» (ruling 179); «Оборонительное (-/6/6/-)» keeps
       // the ОБ by zones as text (ruling 180, read by `shieldArmour`).
       const strength = p.property === 'Сила' ? /^(\d+)\+$/.exec(v) : null;
+      // «Дуга (Х/Y)» (ruling 182): the die value Х and the arc length Y in metres.
+      const arc = p.property === 'Дуга' ? /^(\d+)\/(\d+)$/.exec(v) : null;
       trait = strength
         ? { name: p.property, value: Number(strength[1]) }
-        : p.property === 'Оборонительное' && shieldZones(v)
-          ? { name: p.property, text: v }
-          : WORD_RATED[p.property]?.includes(v)
+        : arc
+          ? { name: p.property, value: Number(arc[1]), text: arc[2]! }
+          : p.property === 'Оборонительное' && shieldZones(v)
             ? { name: p.property, text: v }
-            : split
-              ? { name: p.property, value: Number(split[1]), duration: Number(split[2]) }
-              : /^\d+$/.test(v)
-                ? { name: p.property, value: Number(v) }
-                : DECIMAL_RATED.has(p.property) && /^\d+[.,]\d+$/.test(v)
-                  ? { name: p.property, value: Number(v.replace(',', '.')) }
-                  : dice
-                    ? {
-                        name: p.property,
-                        dice: { count: Number(dice[1]), sides: Number(dice[2]) },
-                        ...(dice[3] ? { value: Number(dice[3]) } : {}),
-                        ...(dice[4] ? { duration: Number(dice[4]) } : {}),
-                      }
-                    : null;
+            : WORD_RATED[p.property]?.includes(v)
+              ? { name: p.property, text: v }
+              : split
+                ? { name: p.property, value: Number(split[1]), duration: Number(split[2]) }
+                : /^\d+$/.test(v)
+                  ? { name: p.property, value: Number(v) }
+                  : DECIMAL_RATED.has(p.property) && /^\d+[.,]\d+$/.test(v)
+                    ? { name: p.property, value: Number(v.replace(',', '.')) }
+                    : dice
+                      ? {
+                          name: p.property,
+                          dice: { count: Number(dice[1]), sides: Number(dice[2]) },
+                          ...(dice[3] ? { value: Number(dice[3]) } : {}),
+                          ...(dice[4] ? { duration: Number(dice[4]) } : {}),
+                        }
+                      : null;
     }
     if (!trait) unread.push(p.raw);
     else (p.optional ? optional : traits).push(trait);

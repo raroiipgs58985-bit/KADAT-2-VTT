@@ -561,11 +561,11 @@ const zoneOf = (location: string): Zone | null =>
     ? 'head'
     : location === 'Torso'
       ? 'torso'
-      : location.includes('Arm')
+      : location.endsWith(' Arm')
         ? 'arms'
-        : location.includes('Leg')
+        : location.endsWith(' Leg')
           ? 'legs'
-          : null;
+          : null; // «Armor Joints» and «Eyes» — the GM gives the ОБ and the table (ruling 75)
 const zoneName: Record<Zone, string> = {
   head: 'голова',
   torso: 'торс',
@@ -1693,6 +1693,79 @@ function resolveHit(
     ];
     logs.push({ type: 'emi', roll, radius: emi.value, stage: emiStage(roll) });
   }
+  // «Дуга (Х/Y)» (ruling 182): every damage die of Х or more sends a 45° arc from the target
+  // onwards along the blow, Y m long: 3к10 Э into the joints, «Шоковое», «ЭМИ (1)»; dodge allowed.
+  const arcTrait = traits.find((t) => t.name === 'Дуга');
+  const arcs =
+    arcTrait?.value !== undefined && arcTrait.text
+      ? [...dice.rolls, ...extra].filter((d) => d.value >= arcTrait.value!).length
+      : 0;
+  const arcHits: unknown[] = [];
+  if (arcs > 0 && b.positions[command.target]) {
+    const reach = Number(arcTrait!.text);
+    const from = posOf(b, command.actor),
+      at = posOf(b, command.target);
+    const heading = Math.atan2(at.y - from.y, at.x - from.x);
+    const inside = actorIds(b).filter((id) => {
+      if (id === command.actor || id === command.target) return false;
+      if (state.wounds.actors[id]?.life.status === 'DEAD') return false;
+      const p = posOf(b, id);
+      const d = Math.hypot(p.x - at.x, p.y - at.y);
+      if (d === 0 || d > reach + 1e-9) return false;
+      let diff = Math.abs(Math.atan2(p.y - at.y, p.x - at.x) - heading);
+      if (diff > Math.PI) diff = 2 * Math.PI - diff;
+      if (diff > Math.PI / 8 + 1e-9) return false;
+      return !sightLine(at, p, sceneGeometry(b)).blocker;
+    });
+    const src = { kind: 'weapon-property', id: 'Свойства оружия: Дуга' };
+    for (let n = 0; n < arcs; n++)
+      for (const id of inside) {
+        if (state.wounds.actors[id]?.life.status === 'DEAD') continue;
+        const arcCommand = { ...command, id: `${command.id}:arc${n}`, target: id };
+        if (zoneDodge(b, state, arcCommand, id, 'arc', rng, logs)) {
+          arcHits.push({ actor: id, avoided: true });
+          continue;
+        }
+        const p = posOf(b, id);
+        arcHits.push({
+          actor: id,
+          avoided: false,
+          ...resolveHit(
+            b,
+            state,
+            arcCommand,
+            {
+              hitId: `${command.id}:arc${n}:${id}`,
+              attackId: command.id,
+              attacker: ref(command.actor),
+              target: ref(id),
+              location: 'Armor Joints',
+              profile: { source: src, expression: { count: 3, sides: 10, modifier: 0 } },
+              penetration: { source: src, value: 0 },
+              transformations: [],
+              tags: ['arc'],
+              context: context(state.wounds.combat, command.actor, id),
+              provenance: [{ source: src, reason: 'Дуга: разряд в сочленения' }],
+            },
+            {
+              kind: 'ranged',
+              degrees: 0,
+              traits: [
+                { name: 'Шоковое', value: 1 },
+                { name: 'ЭМИ', value: 1 },
+              ],
+              weaponClass: info.weaponClass,
+              distance: Math.hypot(p.x - at.x, p.y - at.y),
+              optimalRange: reach,
+              family: 'other',
+            },
+            rng,
+            logs,
+          ),
+        });
+      }
+    logs.push({ type: 'arc', arcs, reach, targets: inside });
+  }
   // «Галлюциногенное (Х)» (ruling 170): ВН test −10 × Х; a failure — effect к10 by the GM's
   // table, for 1 + degrees of failure rounds.
   const hallucinogen = traits.find((t) => t.name === 'Галлюциногенное');
@@ -2060,7 +2133,7 @@ function resolveHit(
       }) === 1;
     if (stuck) {
       const loc = hit.location;
-      const skr = loc === 'Torso' || loc.includes('Leg');
+      const skr = loc === 'Torso' || loc.endsWith(' Leg');
       const combat = state.wounds.combat;
       const blade = combat.melee?.weapons[command.weapon];
       const runtime = combat.actors[command.target]!;
@@ -2096,7 +2169,7 @@ function resolveHit(
       effects.push({
         property: 'Проникающее',
         passed: false,
-        state: `оружие в ране (${locationLabel(loc)}): ${skr ? '−1 СКР' : loc.includes('Arm') ? '−10 к атакам' : 'ведущему'}`,
+        state: `оружие в ране (${locationLabel(loc)}): ${skr ? '−1 СКР' : loc.endsWith(' Arm') ? '−10 к атакам' : 'ведущему'}`,
       });
     }
   }
@@ -3272,12 +3345,12 @@ function zoneDodge(
   state: EngineState,
   command: AttackCommand,
   id: ActorId,
-  kind: 'spray' | 'blast',
+  kind: 'spray' | 'blast' | 'arc',
   rng: DiceSource,
   logs: unknown[],
 ) {
   const name = actorName(b, id);
-  const label = kind === 'spray' ? '«Спрей»' : '«Взрыв»';
+  const label = kind === 'spray' ? '«Спрей»' : kind === 'arc' ? '«Дуга»' : '«Взрыв»';
   if (state.partial?.[id]?.zone === 'torso') return false; // no dodging (ruling 161)
   const canLeave =
     ask(command, {
@@ -3812,7 +3885,7 @@ function resolveAttack(
   // «Проникающее»: a weapon stuck in the attacker's arm — −10 to actions with it (ruling 118).
   if (
     Object.values(state.impaled ?? {}).some(
-      (x) => x.target === command.actor && x.location.includes('Arm'),
+      (x) => x.target === command.actor && x.location.endsWith(' Arm'),
     )
   ) {
     const src = { kind: 'weapon-property', id: 'Свойства оружия: Проникающее' };
@@ -6618,9 +6691,9 @@ export const LOOSE_REACH = 1.5;
 const locationLabel = (loc: string) =>
   loc === 'Torso'
     ? 'торс'
-    : loc.includes('Arm')
+    : loc.endsWith(' Arm')
       ? 'рука'
-      : loc.includes('Leg')
+      : loc.endsWith(' Leg')
         ? 'нога'
         : loc === 'Head'
           ? 'голова'
